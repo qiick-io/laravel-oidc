@@ -58,7 +58,7 @@ What the package implements, from the accepted Signaculum SSO design (2026-11-05
 
 ## Usage
 
-> The routes, the user linking (`user_identities`) and the login itself land in the next pull requests. Today the package provides the protocol layer.
+> The redirect and callback routes, the user linking (`user_identities`) and the login itself land in the next pull requests. Today the package provides the protocol layer, logout and the back-channel logout endpoint.
 
 ```php
 use Qiick\Oidc\Services\AuthorizationCodeFlowService;
@@ -75,10 +75,42 @@ public function callback(Request $request, AuthorizationCodeFlowService $flow): 
     $identity = $flow->handleCallback($request); // throws an OidcException subclass on any failure
 
     // $identity->issuer, $identity->subject (the identity key), $identity->claims, $identity->sessionId
+
+    // ...find or create the local user, then:
+    Auth::login($user);
+    $request->session()->regenerate();
+    app(IdentitySessionService::class)->remember($request->session(), $identity);
 }
 ```
 
 `redirect()` stores `state`, `nonce` and the PKCE verifier in the session and sends the browser to the IdP. `handleCallback()` accepts each `state` once, exchanges the code with the verifier and validates the `id_token`. Every failure throws a subclass of `Qiick\Oidc\Exceptions\OidcException` whose message is safe to log (no tokens, codes or secrets).
+
+`$identity->claims` holds the validated `id_token` claims plus the userinfo claims (`oidc.userinfo`, on by default). The userinfo `sub` must match the `id_token`, and the signed `id_token` wins any conflict.
+
+### Logout
+
+RP-initiated logout ends the IdP session too. Read the URL before invalidating the session, because it needs the stored `id_token`:
+
+```php
+$endSessionUrl = app(RpInitiatedLogoutService::class)->endSessionUrl($request->session()); // null for a local login
+
+Auth::logout();
+$request->session()->invalidate();
+$request->session()->regenerateToken();
+
+return $endSessionUrl !== null ? redirect()->away($endSessionUrl) : redirect('/');
+```
+
+Register `oidc.post_logout_redirect_uri` (default `{APP_URL}/`) as a post-logout redirect URI at the IdP.
+
+### Back-channel logout
+
+The package registers `POST /auth/oidc/backchannel-logout` (route `oidc.backchannel-logout`, no session, no CSRF). Register its absolute URL at the IdP as the back-channel logout URI. The endpoint validates the signed `logout_token`: signature, `iss`, `aud`, `exp`, `iat`, the logout `events` member, no `nonce`, `sub` or `sid`, and a single-use `jti`. It then records the logout in the cache. `EnsureOidcSessionIsActiveMiddleware`, appended to the `web` group, ends the matching local sessions on their next request:
+
+- with `sid`, only the sessions that came from that IdP session;
+- with `sub` alone, every session of the user created before the logout.
+
+The cache store must be shared by all app servers. `oidc.backchannel_logout.revocation_ttl` (default `session.lifetime`) must cover your longest session.
 
 ### Settings from the database
 
@@ -92,6 +124,10 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 
 | Config key | Default | Meaning |
 | --- | --- | --- |
+| `oidc.post_logout_redirect_uri` | `null` | `null` means `{APP_URL}/`. Sent on RP-initiated logout. |
+| `oidc.userinfo` | `true` | Merge the userinfo claims into the identity. |
+| `oidc.routes.enabled` / `oidc.routes.prefix` | `true` / `auth/oidc` | The package routes (today the back-channel logout endpoint). |
+| `oidc.backchannel_logout.revocation_ttl` | `null` | Seconds a back-channel logout is remembered; `null` uses `session.lifetime`. |
 | `oidc.redirect_uri` | `null` | `null` means `{APP_URL}/auth/oidc/callback`, the URI Externa and Excubia App already register. |
 | `oidc.scopes` | `openid profile email` | `openid` is always sent. Add `qiick.orgs` for Signaculum's organisation claims. |
 | `oidc.token_endpoint_auth_method` | `client_secret_basic` | Or `client_secret_post`. A client without secret is a public client. |
@@ -119,7 +155,7 @@ $callbackUrl = $identityProvider->authorize($authorizationUrl, ['sub' => 'user-4
 $this->get($callbackUrl);
 ```
 
-It checks the PKCE verifier, the code, the redirect URI and the client secret like a strict IdP, and signs `id_token`s with a key generated per test. `withDiscovery()`, `rotateSigningKey()`, `sign()` and `modifyTokenResponseUsing()` cover the failure cases.
+It checks the PKCE verifier, the code, the redirect URI and the client secret like a strict IdP, and signs `id_token`s with a key generated per test. `authorize()` also takes userinfo claims, and `logoutTokenClaims()` + `sign()` build back-channel logout tokens. `withDiscovery()`, `rotateSigningKey()`, `sign()` and `modifyTokenResponseUsing()` cover the failure cases.
 
 ## Development
 

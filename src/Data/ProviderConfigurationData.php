@@ -23,6 +23,7 @@ final readonly class ProviderConfigurationData
         public string $redirectUri,
         public array $scopes,
         public TokenEndpointAuthMethodEnum $tokenEndpointAuthMethod = TokenEndpointAuthMethodEnum::ClientSecretBasic,
+        public ?string $postLogoutRedirectUri = null,
     ) {}
 
     public function isPublicClient(): bool

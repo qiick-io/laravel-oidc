@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Http;
 use OpenSSLAsymmetricKey;
+use Qiick\Oidc\Services\BackChannelLogoutService;
 use Qiick\Oidc\Services\DiscoveryService;
 use Qiick\Oidc\Services\RemoteUrlGuardService;
 use RuntimeException;
@@ -38,6 +39,8 @@ final class FakeIdentityProvider
 
     public int $tokenRequestCount = 0;
 
+    public int $userinfoRequestCount = 0;
+
     /**
      * Signing keys by `kid`. The newest one signs; older ones stay published
      * until removed, like an IdP during key rotation.
@@ -49,9 +52,16 @@ final class FakeIdentityProvider
     private string $currentKeyId = '';
 
     /**
-     * @var array<string, array{redirect_uri: string, code_challenge: string, nonce: ?string, claims: array<string, mixed>}>
+     * @var array<string, array{redirect_uri: string, code_challenge: string, nonce: ?string, claims: array<string, mixed>, userinfo_claims: array<string, mixed>}>
      */
     private array $issuedCodes = [];
+
+    /**
+     * Userinfo responses by access token.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    private array $issuedAccessTokens = [];
 
     /**
      * @var array<string, mixed>
@@ -117,8 +127,9 @@ final class FakeIdentityProvider
      * the redirect URI with `code` and `state`, as the IdP would after login.
      *
      * @param  array<string, mixed>  $claims  id_token claims for this login (overrides the defaults)
+     * @param  array<string, mixed>  $userinfoClaims  userinfo claims for this login, on top of the id_token's `sub` and profile claims
      */
-    public function authorize(string $authorizationUrl, array $claims = []): string
+    public function authorize(string $authorizationUrl, array $claims = [], array $userinfoClaims = []): string
     {
         parse_str((string) parse_url($authorizationUrl, PHP_URL_QUERY), $parameters);
         $redirectUri = $this->stringParameter($parameters, 'redirect_uri');
@@ -138,6 +149,7 @@ final class FakeIdentityProvider
             'code_challenge' => (string) $codeChallenge,
             'nonce' => $this->stringParameter($parameters, 'nonce'),
             'claims' => $claims,
+            'userinfo_claims' => $userinfoClaims,
         ];
 
         return $redirectUri.'?'.http_build_query(['code' => $code, 'state' => $this->stringParameter($parameters, 'state')]);
@@ -186,6 +198,31 @@ final class FakeIdentityProvider
             'name' => 'Sso User',
             ...$overrides,
         ];
+    }
+
+    /**
+     * Valid back-channel logout_token claims for this client (Back-Channel
+     * Logout 1.0, 2.4); sign them with sign() and POST them to the app.
+     *
+     * @param  array<string, mixed>  $overrides  null removes a claim
+     * @return array<string, mixed>
+     */
+    public function logoutTokenClaims(array $overrides = []): array
+    {
+        $now = Date::now()->getTimestamp();
+        $claims = [
+            'iss' => $this->issuer,
+            'aud' => $this->clientId,
+            'iat' => $now,
+            'exp' => $now + 120,
+            'jti' => bin2hex(random_bytes(8)),
+            'sub' => 'fake-subject-1',
+            'sid' => 'fake-session-1',
+            'events' => [BackChannelLogoutService::LOGOUT_EVENT => new \stdClass],
+            ...$overrides,
+        ];
+
+        return array_filter($claims, fn (mixed $value): bool => $value !== null);
     }
 
     /**
@@ -305,6 +342,10 @@ final class FakeIdentityProvider
             return Http::response($this->jwks());
         }
 
+        if ($path === $issuerPath.'/protocol/openid-connect/userinfo') {
+            return $this->handleUserinfoRequest($request);
+        }
+
         if ($path === $issuerPath.'/protocol/openid-connect/token') {
             return $this->handleTokenRequest($request);
         }
@@ -335,11 +376,17 @@ final class FakeIdentityProvider
         }
 
         $nonceClaim = $issuedCode['nonce'] === null ? [] : ['nonce' => $issuedCode['nonce']];
+        $idTokenClaims = $this->idTokenClaims([...$nonceClaim, ...$issuedCode['claims']]);
+        $accessToken = bin2hex(random_bytes(16));
+        $this->issuedAccessTokens[$accessToken] = [
+            ...array_intersect_key($idTokenClaims, array_flip(['sub', 'email', 'email_verified', 'name'])),
+            ...$issuedCode['userinfo_claims'],
+        ];
         $tokenResponse = [
-            'access_token' => bin2hex(random_bytes(16)),
+            'access_token' => $accessToken,
             'token_type' => 'Bearer',
             'expires_in' => 300,
-            'id_token' => $this->sign($this->idTokenClaims([...$nonceClaim, ...$issuedCode['claims']])),
+            'id_token' => $this->sign($idTokenClaims),
         ];
 
         if ($this->tokenResponseModifier !== null) {
@@ -347,6 +394,20 @@ final class FakeIdentityProvider
         }
 
         return Http::response($tokenResponse);
+    }
+
+    private function handleUserinfoRequest(HttpRequest $request): PromiseInterface
+    {
+        $this->userinfoRequestCount++;
+        $authorizationHeader = $request->header('Authorization')[0] ?? null;
+        $authorization = is_string($authorizationHeader) ? $authorizationHeader : '';
+        $userinfoClaims = $this->issuedAccessTokens[substr($authorization, strlen('Bearer '))] ?? null;
+
+        if (! str_starts_with($authorization, 'Bearer ') || $userinfoClaims === null) {
+            return Http::response(['error' => 'invalid_token'], 401);
+        }
+
+        return Http::response($userinfoClaims);
     }
 
     /**

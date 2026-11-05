@@ -27,13 +27,14 @@ final readonly class IdentityProviderHttpService
     ) {}
 
     /**
+     * @param  array<string, string>  $headers
      * @return array<string, mixed>
      *
      * @throws IdentityProviderRequestException
      */
-    public function getJson(string $url): array
+    public function getJson(string $url, #[\SensitiveParameter] array $headers = []): array
     {
-        return $this->send($url, fn (PendingRequest $request): Response => $request->get($url));
+        return $this->send($url, fn (PendingRequest $request): Response => $request->withHeaders($headers)->get($url));
     }
 
     /**

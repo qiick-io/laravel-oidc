@@ -25,7 +25,7 @@ use Qiick\Oidc\Exceptions\OidcNotConfiguredException;
  * redirect() stores a pending login in the session, keyed by its `state`, and
  * sends the browser to the IdP. handleCallback() consumes that pending login
  * exactly once, exchanges the code with the PKCE verifier and returns the
- * identity from the validated id_token.
+ * identity from the validated id_token, enriched with the userinfo claims.
  *
  * Several pending logins can coexist (two tabs), up to MAXIMUM_PENDING_LOGINS;
  * each expires after PENDING_LOGIN_SECONDS.
@@ -53,6 +53,8 @@ final readonly class AuthorizationCodeFlowService
         private DiscoveryService $discovery,
         private IdentityProviderHttpService $identityProviderHttp,
         private IdTokenValidatorService $idTokenValidator,
+        private UserinfoService $userinfo,
+        private bool $shouldFetchUserinfo,
     ) {}
 
     /**
@@ -155,11 +157,16 @@ final readonly class AuthorizationCodeFlowService
         }
 
         $claims = $this->idTokenValidator->validate($idToken, $discovery, $configuration, $pendingLogin['nonce']);
+        $subject = $claims['sub'];
         $sessionId = $claims['sid'] ?? null;
+
+        if ($this->shouldFetchUserinfo) {
+            $claims = [...$this->userinfo->fetch($discovery, $accessToken, $subject), ...$claims];
+        }
 
         return new AuthenticatedIdentityData(
             issuer: $discovery->issuer,
-            subject: $claims['sub'],
+            subject: $subject,
             claims: $claims,
             idToken: $idToken,
             accessToken: $accessToken,

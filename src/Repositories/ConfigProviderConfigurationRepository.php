@@ -49,6 +49,7 @@ final readonly class ConfigProviderConfigurationRepository implements ProviderCo
             scopes: array_values(array_unique(['openid', ...$scopes])),
             tokenEndpointAuthMethod: TokenEndpointAuthMethodEnum::tryFrom((string) $this->string('oidc.token_endpoint_auth_method'))
                 ?? TokenEndpointAuthMethodEnum::ClientSecretBasic,
+            postLogoutRedirectUri: $this->string('oidc.post_logout_redirect_uri') ?? $this->urlGenerator->to('/'),
         );
     }
 
