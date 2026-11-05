@@ -12,6 +12,7 @@ use Qiick\Oidc\Exceptions\LoginRefusedException;
 use Qiick\Oidc\Exceptions\OidcException;
 use Qiick\Oidc\Services\AuthorizationCodeFlowService;
 use Qiick\Oidc\Services\OidcLoginService;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * `GET {prefix}/callback`: the redirect URI registered at the IdP.
@@ -27,16 +28,16 @@ final class OidcCallbackController
         ProviderConfigurationRepositoryContract $configurationRepository,
         AuthorizationCodeFlowService $authorizationCodeFlow,
         OidcLoginService $oidcLogin,
-    ): RedirectResponse {
+    ): Response {
         abort_unless($configurationRepository->isEnabled(), 404);
 
         try {
-            $oidcLogin->login($request, $authorizationCodeFlow->handleCallback($request));
+            $secondFactorChallenge = $oidcLogin->login($request, $authorizationCodeFlow->handleCallback($request));
         } catch (OidcException $exception) {
             return self::backToLogin($exception);
         }
 
-        return redirect()->intended(Config::string('oidc.home', '/'));
+        return $secondFactorChallenge ?? redirect()->intended(Config::string('oidc.home', '/'));
     }
 
     /**

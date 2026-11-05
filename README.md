@@ -89,13 +89,46 @@ $this->app->bind(UserProvisioningContract::class, ProvisionSsoUserService::class
 
 The events `OidcIdentityLinkedEvent`, `OidcUserProvisionedEvent` and `OidcLoginSucceededEvent` carry the user and the identity, for activity logs and role mapping.
 
+### Role mapping
+
+Off by default (`oidc.roles.enabled`). At every SSO login, before the user is signed in, the IdP's roles are mapped to app roles:
+
+```php
+'roles' => [
+    'enabled' => true,
+    'claim' => 'orgs',            // Signaculum with the qiick.orgs scope
+    'organization' => 'acme',     // id or slug of the org this app belongs to
+    'map' => ['owner' => 'admin', 'admin' => 'admin', 'member' => 'editor'],
+    'forbidden' => [],
+],
+```
+
+- Only the app roles that appear as values of `map` are ever granted or revoked. Every other local role is left alone.
+- `super-admin` and the `forbidden` roles are never granted, even when mapped, and never revoked, so the break-glass admin stays local.
+- Without the claim in the login, local roles stay as they are. A user missing from the configured organisation loses the mapped roles.
+- For an IdP with a flat role or group list, set `claim` to its path (Keycloak `realm_access.roles`, Entra ID `roles`) and leave `organization` null.
+
+The default `RoleSynchronizationContract` calls spatie/laravel-permission's `hasRole` / `assignRole` / `removeRole`. A mapped role missing in the app is skipped with a warning.
+
+### Second factor (MFA)
+
+When the app requires 2FA for a user, an SSO login counts only if the signed `id_token` proves MFA: an `amr` value in `oidc.mfa.amr_values` (default `['mfa']`, RFC 8176), or an `acr` in `oidc.mfa.acr_values`. Otherwise the callback hands over to the app's own challenge instead of signing the user in. The challenge must end with `Auth::login()`, and the package then completes the SSO session (identity for logout). `amr` and `acr` are never taken from the unsigned userinfo response.
+
+The default `SecondFactorChallengeContract` reads `oidc.mfa.required` and starts Laravel Fortify's two-factor challenge (`login.id` / `login.remember` and the `two-factor.login` route) for a user with a confirmed TOTP secret. A user without a second factor is signed in, and the app's own enrollment rules apply, as after a password login. Apps bind their own implementation to read their "2FA required" setting:
+
+```php
+$this->app->bind(SecondFactorChallengeContract::class, SsoSecondFactorChallengeService::class);
+```
+
+`oidc.mfa.request_acr_values` asks the IdP for a stronger login (`acr_values` on the authorization request).
+
 ### Using the protocol layer directly
 
 An app with its own routes can call the services:
 
 ```php
 $identity = app(AuthorizationCodeFlowService::class)->handleCallback($request); // throws an OidcException subclass
-$user = app(OidcLoginService::class)->login($request, $identity);               // throws LoginRefusedException
+$challenge = app(OidcLoginService::class)->login($request, $identity);          // null when signed in, else the 2FA challenge; throws LoginRefusedException
 ```
 
 `$identity->claims` holds the validated `id_token` claims plus the userinfo claims (`oidc.userinfo`, on by default). The userinfo `sub` must match the `id_token`, and the signed `id_token` wins any conflict.
@@ -143,6 +176,8 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.home` / `oidc.login_url` | `/` / `/login` | Where a successful and a failed SSO login land. |
 | `oidc.users.model` | `null` | The user model; `null` uses `auth.providers.users.model`. |
 | `oidc.users.table` / `email_column` / `active_column` | `users` / `email` / `null` | The users table, its email column and an optional boolean "active" column. |
+| `oidc.roles.*` | disabled | Role mapping, see above. |
+| `oidc.mfa.required` / `amr_values` / `acr_values` / `request_acr_values` | `false` / `['mfa']` / `[]` / `null` | Second factor, see above. |
 | `oidc.post_logout_redirect_uri` | `null` | `null` means `{APP_URL}/`. Sent on RP-initiated logout. |
 | `oidc.userinfo` | `true` | Merge the userinfo claims into the identity. |
 | `oidc.routes.enabled` / `prefix` / `middleware` | `true` / `auth/oidc` / `['web', 'guest']` | The package routes; `middleware` applies to redirect and callback. |

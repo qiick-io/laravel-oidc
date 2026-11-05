@@ -28,7 +28,8 @@ src/Data/              readonly *Data value objects
 src/Enums/             *Enum
 src/Events/            *Event (readonly)
 src/Exceptions/        *Exception, all extending OidcException
-src/Http/              *Controller (back-channel logout) and *Middleware (session revocation)
+src/Http/              *Controller (redirect, callback, back-channel logout) and *Middleware (session revocation)
+src/Listeners/         *Listener (completes the SSO session after the app's 2FA)
 src/Laravel/           OidcServiceProvider (auto-discovered)
 src/Models/            UserIdentity (bare noun)
 src/Repositories/      *Repository (config-backed provider settings)

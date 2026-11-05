@@ -115,6 +115,66 @@ return [
     ],
 
     /*
+     * Role mapping, run at every SSO login before the user is signed in.
+     * Off by default. The IdP can only grant and revoke the app roles listed
+     * as values of `map`; every other local role is left alone, and
+     * `super-admin` can never be granted (break-glass stays local).
+     *
+     * Signaculum (`qiick.orgs` scope) sends `orgs: [{id, slug, roles: [...]}]`:
+     * set `claim` to `orgs` and `organization` to the id or slug of the org
+     * this app belongs to. Other IdPs send a flat list of role or group names,
+     * for example Keycloak `realm_access.roles` or Entra ID `roles`: set
+     * `claim` to that path and leave `organization` null.
+     *
+     * Without the claim in the login, local roles stay as they are.
+     */
+    'roles' => [
+
+        'enabled' => false,
+
+        'claim' => 'orgs',
+
+        'organization' => null,
+
+        /*
+         * IdP role => app role, or a list of app roles. For example Externa:
+         * ['owner' => 'admin', 'admin' => 'admin', 'member' => 'editor'].
+         */
+        'map' => [],
+
+        /*
+         * App roles the mapping may never grant, on top of `super-admin`.
+         */
+        'forbidden' => [],
+
+    ],
+
+    /*
+     * Second factor. When the app requires 2FA for a user, an SSO login counts
+     * only if the IdP says MFA happened: an `amr` value (RFC 8176) in
+     * `amr_values`, or an `acr` in `acr_values`. Otherwise the app runs its
+     * own TOTP or passkey challenge after the callback (Laravel Fortify is
+     * supported out of the box). Apps bind SecondFactorChallengeContract to
+     * read their own "2FA required" setting; `required` is the default.
+     */
+    'mfa' => [
+
+        'required' => false,
+
+        'amr_values' => ['mfa'],
+
+        'acr_values' => [],
+
+        /*
+         * Sent as `acr_values` on the authorization request to ask the IdP
+         * for a stronger login (for example Keycloak step-up). Null sends
+         * nothing.
+         */
+        'request_acr_values' => null,
+
+    ],
+
+    /*
      * Where the IdP sends the browser after RP-initiated logout. Null means
      * `{APP_URL}/`. It must be registered at the IdP as a post-logout
      * redirect URI, or the IdP shows its own confirmation page instead.

@@ -6,6 +6,7 @@ namespace Qiick\Oidc\Http\Controllers;
 
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Config;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Exceptions\OidcException;
 use Qiick\Oidc\Services\AuthorizationCodeFlowService;
@@ -23,7 +24,12 @@ final class OidcRedirectController
         abort_unless($configurationRepository->isEnabled(), 404);
 
         try {
-            return $authorizationCodeFlow->redirect($request);
+            $requestedAuthenticationContext = Config::get('oidc.mfa.request_acr_values');
+
+            return $authorizationCodeFlow->redirect(
+                $request,
+                is_string($requestedAuthenticationContext) && $requestedAuthenticationContext !== '' ? ['acr_values' => $requestedAuthenticationContext] : [],
+            );
         } catch (OidcException $exception) {
             return OidcCallbackController::backToLogin($exception);
         }
