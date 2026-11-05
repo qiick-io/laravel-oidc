@@ -59,3 +59,13 @@ arch('controllers are thin and suffixed')
 arch('middleware use the middleware suffix')
     ->expect('Qiick\Oidc\Http\Middleware')
     ->toHaveSuffix('Middleware');
+
+arch('models use bare domain nouns')
+    ->expect('Qiick\Oidc\Models')
+    ->classes()
+    ->not->toHaveSuffix('Model');
+
+arch('events use the event suffix and are readonly')
+    ->expect('Qiick\Oidc\Events')
+    ->toHaveSuffix('Event')
+    ->toBeReadonly();

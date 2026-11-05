@@ -58,32 +58,45 @@ What the package implements, from the accepted Signaculum SSO design (2026-11-05
 
 ## Usage
 
-> The redirect and callback routes, the user linking (`user_identities`) and the login itself land in the next pull requests. Today the package provides the protocol layer, logout and the back-channel logout endpoint.
-
-```php
-use Qiick\Oidc\Services\AuthorizationCodeFlowService;
-
-// GET /auth/oidc/redirect
-public function redirect(Request $request, AuthorizationCodeFlowService $flow): RedirectResponse
-{
-    return $flow->redirect($request);
-}
-
-// GET /auth/oidc/callback
-public function callback(Request $request, AuthorizationCodeFlowService $flow): RedirectResponse
-{
-    $identity = $flow->handleCallback($request); // throws an OidcException subclass on any failure
-
-    // $identity->issuer, $identity->subject (the identity key), $identity->claims, $identity->sessionId
-
-    // ...find or create the local user, then:
-    Auth::login($user);
-    $request->session()->regenerate();
-    app(IdentitySessionService::class)->remember($request->session(), $identity);
-}
+```bash
+php artisan migrate   # creates user_identities
 ```
 
-`redirect()` stores `state`, `nonce` and the PKCE verifier in the session and sends the browser to the IdP. `handleCallback()` accepts each `state` once, exchanges the code with the verifier and validates the `id_token`. Every failure throws a subclass of `Qiick\Oidc\Exceptions\OidcException` whose message is safe to log (no tokens, codes or secrets).
+The package registers these routes under `oidc.routes.prefix` (`auth/oidc`):
+
+| Route | Name | Middleware | Purpose |
+| --- | --- | --- | --- |
+| `GET /auth/oidc/redirect` | `oidc.redirect` | `web`, `guest` | The SSO button: sends the browser to the IdP. |
+| `GET /auth/oidc/callback` | `oidc.callback` | `web`, `guest` | The redirect URI to register at the IdP. |
+| `POST /auth/oidc/backchannel-logout` | `oidc.backchannel-logout` | none | The back-channel logout URI to register at the IdP. |
+
+Point your SSO button at `route('oidc.redirect')`. The callback validates everything (see the protocol profile), finds or creates the local user, logs them in on the default guard, regenerates the session and redirects to `redirect()->intended(config('oidc.home'))`. On failure it redirects to `oidc.login_url` with a message under the `email` key: a refusal says why (inactive user, no linked account, ...), and a protocol or IdP failure shows a generic message and logs the technical one.
+
+### Linking SSO identities to local users
+
+The identity key is (`issuer`, `sub`), stored in `user_identities`. On each login:
+
+1. If (issuer, sub) is already linked, that user signs in. The email does not matter.
+2. Otherwise, with `OIDC_AUTO_LINK`, the local user with the same **verified** email is linked, unless that user is already linked to another identity of this issuer. Turn it on only for an IdP where users cannot choose an arbitrary email.
+3. Otherwise, with `OIDC_JIT`, a new user is created if the email domain is in `oidc.allowed_domains` (empty allows all). An existing account with that email is never duplicated.
+4. Otherwise the login is refused.
+
+Users with `false` in `oidc.users.active_column` (for example `is_active`) are always refused. The default JIT provisioning fills `name`, `email`, an unusable random password and `email_verified_at`. Apps with other columns or a default role bind their own provisioning:
+
+```php
+$this->app->bind(UserProvisioningContract::class, ProvisionSsoUserService::class);
+```
+
+The events `OidcIdentityLinkedEvent`, `OidcUserProvisionedEvent` and `OidcLoginSucceededEvent` carry the user and the identity, for activity logs and role mapping.
+
+### Using the protocol layer directly
+
+An app with its own routes can call the services:
+
+```php
+$identity = app(AuthorizationCodeFlowService::class)->handleCallback($request); // throws an OidcException subclass
+$user = app(OidcLoginService::class)->login($request, $identity);               // throws LoginRefusedException
+```
 
 `$identity->claims` holds the validated `id_token` claims plus the userinfo claims (`oidc.userinfo`, on by default). The userinfo `sub` must match the `id_token`, and the signed `id_token` wins any conflict.
 
@@ -124,9 +137,15 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 
 | Config key | Default | Meaning |
 | --- | --- | --- |
+| `oidc.allowed_domains` | `[]` | JIT only for these email domains; empty allows all. |
+| `oidc.require_verified_email` | `true` | Auto-link and JIT need `email_verified: true`. Turn off only for an IdP whose emails the organisation controls (Entra ID sends no `email_verified`). |
+| `oidc.remember` | `false` | Use the remember-me cookie for SSO logins. |
+| `oidc.home` / `oidc.login_url` | `/` / `/login` | Where a successful and a failed SSO login land. |
+| `oidc.users.model` | `null` | The user model; `null` uses `auth.providers.users.model`. |
+| `oidc.users.table` / `email_column` / `active_column` | `users` / `email` / `null` | The users table, its email column and an optional boolean "active" column. |
 | `oidc.post_logout_redirect_uri` | `null` | `null` means `{APP_URL}/`. Sent on RP-initiated logout. |
 | `oidc.userinfo` | `true` | Merge the userinfo claims into the identity. |
-| `oidc.routes.enabled` / `oidc.routes.prefix` | `true` / `auth/oidc` | The package routes (today the back-channel logout endpoint). |
+| `oidc.routes.enabled` / `prefix` / `middleware` | `true` / `auth/oidc` / `['web', 'guest']` | The package routes; `middleware` applies to redirect and callback. |
 | `oidc.backchannel_logout.revocation_ttl` | `null` | Seconds a back-channel logout is remembered; `null` uses `session.lifetime`. |
 | `oidc.redirect_uri` | `null` | `null` means `{APP_URL}/auth/oidc/callback`, the URI Externa and Excubia App already register. |
 | `oidc.scopes` | `openid profile email` | `openid` is always sent. Add `qiick.orgs` for Signaculum's organisation claims. |
