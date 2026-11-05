@@ -1,0 +1,14 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: max
+    paths:
+        - src
+        - config
+    tmpDir: build/phpstan
+    bootstrapFiles:
+        - phpstan-bootstrap.php
+    # The package config reads env vars like any Laravel config file.
+    configDirectories:
+        - config
