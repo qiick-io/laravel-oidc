@@ -28,7 +28,18 @@ SSO is optional. An app that installs the package keeps its local login (email a
 ```bash
 composer require qiick/laravel-oidc
 php artisan vendor:publish --tag=oidc-config
+php artisan migrate
+php artisan oidc:configure --issuer=https://idp.example.com/realms/acme --client-id=my-app --client-secret=...
 ```
+
+`oidc:configure` checks the setup against the IdP without a browser:
+- settings, discovery (exact issuer, code flow, PKCE `S256`), end-session support;
+- signing algorithms and JWKS keys, client type, redirect URI;
+- in SSO-only mode, that a break-glass account exists.
+
+It prints the URIs to register at the IdP: the redirect URI, the post-logout redirect URI and the back-channel logout URI. `--json` prints a machine-readable report for agents. `--write-env` writes `OIDC_ENABLED`, `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` to `.env`, only when every check passed. The exit code is `0` without failures. The client secret is never printed.
+
+Apps that use [Laravel Boost](https://github.com/laravel/boost) also get the package's agent guidelines (`resources/boost/guidelines/core.blade.php`).
 
 ## Configuration
 
@@ -122,6 +133,21 @@ $this->app->bind(SecondFactorChallengeContract::class, SsoSecondFactorChallengeS
 
 `oidc.mfa.request_acr_values` asks the IdP for a stronger login (`acr_values` on the authorization request).
 
+### SSO-only mode and break-glass
+
+With `OIDC_ONLY=true` the login page shows only the SSO button, and local logins are refused except for break-glass accounts. A break-glass account has one of `oidc.break_glass.roles` (default `super-admin`) and a confirmed second factor (`oidc.break_glass.require_two_factor`). A broken IdP therefore never locks out the owner. The mode is active only while SSO itself is configured, so turning SSO off restores local login for everyone.
+
+- The login page reads `app(SsoOnlyModeService::class)->loginOptions($request)->toArray()`: `isSsoAvailable`, `isSsoOnly`, `isPasswordLoginVisible`, `buttonLabel`, `redirectUrl`. The password form is shown again with `?local=1` (`oidc.break_glass.query_parameter`). Hiding it is only cosmetic; the server enforces the rule.
+- Password logins through `Auth::attempt()` are refused by the package (`Validated` event).
+- Login callbacks that bypass `attempt()` must ask the package themselves:
+
+```php
+Fortify::authenticateUsing(fn (Request $request) => /* ...password check... */ $user !== null && app(SsoOnlyModeService::class)->canUseLocalLogin($user) ? $user : null);
+Passkeys::authorizeLoginUsing(fn (Request $request, $user) => /* ... */ app(SsoOnlyModeService::class)->canUseLocalLogin($user));
+```
+
+An app with another notion of owner binds `BreakGlassPolicyContract`.
+
 ### Using the protocol layer directly
 
 An app with its own routes can call the services:
@@ -176,6 +202,7 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.home` / `oidc.login_url` | `/` / `/login` | Where a successful and a failed SSO login land. |
 | `oidc.users.model` | `null` | The user model; `null` uses `auth.providers.users.model`. |
 | `oidc.users.table` / `email_column` / `active_column` | `users` / `email` / `null` | The users table, its email column and an optional boolean "active" column. |
+| `oidc.break_glass.roles` / `require_two_factor` / `query_parameter` | `['super-admin']` / `true` / `local` | SSO-only mode, see above. |
 | `oidc.roles.*` | disabled | Role mapping, see above. |
 | `oidc.mfa.required` / `amr_values` / `acr_values` / `request_acr_values` | `false` / `['mfa']` / `[]` / `null` | Second factor, see above. |
 | `oidc.post_logout_redirect_uri` | `null` | `null` means `{APP_URL}/`. Sent on RP-initiated logout. |

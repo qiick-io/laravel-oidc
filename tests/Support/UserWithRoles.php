@@ -9,9 +9,18 @@ use RuntimeException;
 /**
  * A user with the three HasRoles methods the Spatie synchronization calls,
  * backed by an in-memory list. `ghost` behaves like a role missing in the app.
+ * $rolesByEmail gives roles to users loaded fresh from the database (for
+ * Auth::attempt()).
  */
 class UserWithRoles extends User
 {
+    protected $table = 'users';
+
+    /**
+     * @var array<string, list<string>>
+     */
+    public static array $rolesByEmail = [];
+
     /**
      * @var list<string>
      */
@@ -19,7 +28,7 @@ class UserWithRoles extends User
 
     public function hasRole(string $role): bool
     {
-        return in_array($role, $this->roleNames, true);
+        return in_array($role, [...$this->roleNames, ...(self::$rolesByEmail[(string) $this->email] ?? [])], true);
     }
 
     public function assignRole(string $role): static

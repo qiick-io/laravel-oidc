@@ -23,7 +23,9 @@ Guidance for Claude Code in this repository. Read it fully before any change.
 config/oidc.php        defaults; env vars OIDC_* (see README)
 routes/oidc.php        package routes under oidc.routes.prefix
 database/migrations/   user_identities (immutable once released: forward-only changes)
-src/Contracts/         *Contract interfaces (ProviderConfigurationRepositoryContract)
+resources/boost/       Laravel Boost guidelines for agents in consuming apps
+src/Console/           *Command (oidc:configure)
+src/Contracts/         *Contract interfaces (bound by apps to customise)
 src/Data/              readonly *Data value objects
 src/Enums/             *Enum
 src/Events/            *Event (readonly)

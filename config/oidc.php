@@ -115,6 +115,26 @@ return [
     ],
 
     /*
+     * The local accounts that can still sign in with a password in SSO-only
+     * mode (`OIDC_ONLY`), so a broken IdP never locks out the owner. A user
+     * qualifies with one of `roles` and, when `require_two_factor` is on, a
+     * confirmed second factor (Fortify `two_factor_confirmed_at`, or
+     * `two_factor_secret` when the app does not confirm 2FA).
+     *
+     * The password form stays hidden in SSO-only mode; add
+     * `?{query_parameter}=1` to the login URL to show it.
+     */
+    'break_glass' => [
+
+        'roles' => ['super-admin'],
+
+        'require_two_factor' => true,
+
+        'query_parameter' => 'local',
+
+    ],
+
+    /*
      * Role mapping, run at every SSO login before the user is signed in.
      * Off by default. The IdP can only grant and revoke the app roles listed
      * as values of `map`; every other local role is left alone, and
