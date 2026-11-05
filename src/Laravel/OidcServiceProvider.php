@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Qiick\Oidc\Laravel;
 
 use Illuminate\Auth\Events\Login;
+use Illuminate\Auth\Events\Validated;
 use Illuminate\Cache\CacheManager;
 use Illuminate\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Auth\Factory as AuthFactory;
@@ -16,11 +17,14 @@ use Illuminate\Foundation\Http\Kernel as HttpKernel;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
+use Qiick\Oidc\Console\ConfigureOidcCommand;
+use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Contracts\RoleSynchronizationContract;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
 use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
+use Qiick\Oidc\Listeners\EnforceSsoOnlyListener;
 use Qiick\Oidc\Listeners\PromotePendingIdentityListener;
 use Qiick\Oidc\Repositories\ConfigProviderConfigurationRepository;
 use Qiick\Oidc\Services\AuthorizationCodeFlowService;
@@ -36,9 +40,11 @@ use Qiick\Oidc\Services\JwtValidatorService;
 use Qiick\Oidc\Services\MultiFactorClaimService;
 use Qiick\Oidc\Services\OidcLoginService;
 use Qiick\Oidc\Services\RemoteUrlGuardService;
+use Qiick\Oidc\Services\RoleBreakGlassPolicyService;
 use Qiick\Oidc\Services\RoleMappingService;
 use Qiick\Oidc\Services\SessionRevocationService;
 use Qiick\Oidc\Services\SpatieRoleSynchronizationService;
+use Qiick\Oidc\Services\SsoOnlyModeService;
 use Qiick\Oidc\Services\UserinfoService;
 use Qiick\Oidc\Services\UserLinkingService;
 
@@ -149,6 +155,19 @@ final class OidcServiceProvider extends ServiceProvider
             shouldRemember: $this->config($app)->boolean('oidc.remember'),
         ));
 
+        $this->app->bind(BreakGlassPolicyContract::class, fn (Application $app): BreakGlassPolicyContract => new RoleBreakGlassPolicyService(
+            roles: $this->stringList($app, 'oidc.break_glass.roles'),
+            isTwoFactorRequired: $this->config($app)->boolean('oidc.break_glass.require_two_factor', true),
+        ));
+
+        $this->app->bind(SsoOnlyModeService::class, fn (Application $app): SsoOnlyModeService => new SsoOnlyModeService(
+            configurationRepository: $app->make(ProviderConfigurationRepositoryContract::class),
+            breakGlassPolicy: $app->make(BreakGlassPolicyContract::class),
+            isOnlyModeConfigured: $this->config($app)->boolean('oidc.only'),
+            buttonLabel: $this->optionalString($app, 'oidc.button_label'),
+            breakGlassQueryParameter: $this->optionalString($app, 'oidc.break_glass.query_parameter') ?? 'local',
+        ));
+
         $this->app->bind(SessionRevocationService::class, fn (Application $app): SessionRevocationService => new SessionRevocationService(
             cache: $this->cacheStore($app),
             revocationSeconds: $this->revocationSeconds($app),
@@ -166,6 +185,7 @@ final class OidcServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->app->make(Dispatcher::class)->listen(Login::class, PromotePendingIdentityListener::class);
+        $this->app->make(Dispatcher::class)->listen(Validated::class, EnforceSsoOnlyListener::class);
 
         $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
@@ -185,6 +205,8 @@ final class OidcServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__.'/../../config/oidc.php' => config_path('oidc.php'),
             ], 'oidc-config');
+
+            $this->commands([ConfigureOidcCommand::class]);
 
             $this->publishesMigrations([
                 __DIR__.'/../../database/migrations' => database_path('migrations'),

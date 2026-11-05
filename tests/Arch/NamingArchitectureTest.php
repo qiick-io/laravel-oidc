@@ -73,3 +73,7 @@ arch('events use the event suffix and are readonly')
 arch('listeners use the listener suffix')
     ->expect('Qiick\Oidc\Listeners')
     ->toHaveSuffix('Listener');
+
+arch('console commands use the command suffix')
+    ->expect('Qiick\Oidc\Console')
+    ->toHaveSuffix('Command');

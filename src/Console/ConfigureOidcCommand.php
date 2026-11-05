@@ -1,0 +1,328 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Qiick\Oidc\Console;
+
+use Illuminate\Console\Command;
+use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Route;
+use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
+use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
+use Qiick\Oidc\Data\DiscoveryDocumentData;
+use Qiick\Oidc\Data\ProviderConfigurationData;
+use Qiick\Oidc\Exceptions\OidcException;
+use Qiick\Oidc\Models\UserIdentity;
+use Qiick\Oidc\Services\DiscoveryService;
+use Qiick\Oidc\Services\IdentityProviderHttpService;
+use Qiick\Oidc\Services\JwtValidatorService;
+
+/**
+ * `php artisan oidc:configure`: checks an SSO setup end to end, so a human or
+ * an agent can configure it without clicking through the login (design
+ * section 4, "Agent-first").
+ *
+ * It reads the current settings, overridden by the options, then checks the
+ * discovery document, the JWKS, the signing algorithms, the redirect and
+ * logout URIs and, in SSO-only mode, that a break-glass account exists. It
+ * prints the URIs to register at the IdP. With `--write-env` it writes the
+ * settings to `.env`, only when no check failed. `--json` prints a machine
+ * readable report. The exit code is 0 without failures, 1 otherwise.
+ *
+ * It never prints the client secret.
+ */
+final class ConfigureOidcCommand extends Command
+{
+    protected $signature = 'oidc:configure
+        {--issuer= : Issuer URL, exactly as the IdP publishes it}
+        {--client-id= : Client id registered at the IdP}
+        {--client-secret= : Client secret (omit for a public client)}
+        {--write-env : Write OIDC_ENABLED, OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET to .env when every check passes}
+        {--json : Print the report as JSON}';
+
+    protected $description = 'Check the OpenID Connect setup against the IdP and print the URIs to register there';
+
+    /**
+     * @var list<array{check: string, status: 'ok'|'warning'|'failure', detail: string}>
+     */
+    private array $results = [];
+
+    public function handle(
+        ProviderConfigurationRepositoryContract $configurationRepository,
+        DiscoveryService $discovery,
+        IdentityProviderHttpService $identityProviderHttp,
+        BreakGlassPolicyContract $breakGlassPolicy,
+    ): int {
+        $this->applyOptions();
+        $configuration = $this->resolveConfiguration($configurationRepository);
+
+        if ($configuration !== null) {
+            $discoveryDocument = $this->checkDiscovery($discovery, $configuration);
+
+            if ($discoveryDocument !== null) {
+                $this->checkSigningKeys($identityProviderHttp, $discoveryDocument);
+            }
+
+            $this->checkClient($configuration);
+            $this->checkRedirectUri($configuration->redirectUri);
+            $this->checkBreakGlass($breakGlassPolicy);
+        }
+
+        if (! $this->hasFailure() && $this->option('write-env')) {
+            $this->writeEnvironment();
+        }
+
+        $hasFailure = $this->hasFailure();
+        $urisToRegister = $configuration === null ? [] : $this->urisToRegister($configuration);
+
+        $this->report($hasFailure, $urisToRegister);
+
+        return $hasFailure ? self::FAILURE : self::SUCCESS;
+    }
+
+    /**
+     * Options override the current settings for this run only (and for
+     * `--write-env`). SSO is treated as enabled while checking.
+     */
+    private function applyOptions(): void
+    {
+        foreach (['issuer' => 'oidc.issuer', 'client-id' => 'oidc.client_id', 'client-secret' => 'oidc.client_secret'] as $option => $configKey) {
+            $value = $this->option($option);
+
+            if (is_string($value) && $value !== '') {
+                Config::set($configKey, $value);
+            }
+        }
+
+        Config::set('oidc.enabled', true);
+    }
+
+    private function resolveConfiguration(ProviderConfigurationRepositoryContract $configurationRepository): ?ProviderConfigurationData
+    {
+        try {
+            $configuration = $configurationRepository->configuration();
+        } catch (OidcException) {
+            $this->record('settings', 'failure', 'Issuer and client id are required (--issuer, --client-id or OIDC_ISSUER, OIDC_CLIENT_ID).');
+
+            return null;
+        }
+
+        $this->record('settings', 'ok', "Issuer {$configuration->issuer}, client {$configuration->clientId}.");
+
+        return $configuration;
+    }
+
+    private function checkDiscovery(DiscoveryService $discovery, ProviderConfigurationData $configuration): ?DiscoveryDocumentData
+    {
+        $discovery->forget($configuration);
+
+        try {
+            $discoveryDocument = $discovery->discover($configuration);
+        } catch (OidcException $exception) {
+            $this->record('discovery', 'failure', $exception->getMessage());
+
+            return null;
+        }
+
+        $this->record('discovery', 'ok', 'Issuer matches; authorization code flow with PKCE S256 is available.');
+        $this->record(
+            'end session',
+            $discoveryDocument->endSessionEndpoint === null ? 'warning' : 'ok',
+            $discoveryDocument->endSessionEndpoint === null
+                ? 'The IdP has no end_session_endpoint: logout ends the local session only.'
+                : 'RP-initiated logout is available.',
+        );
+
+        return $discoveryDocument;
+    }
+
+    private function checkSigningKeys(IdentityProviderHttpService $identityProviderHttp, DiscoveryDocumentData $discoveryDocument): void
+    {
+        $allowedAlgorithms = array_values(array_intersect(JwtValidatorService::SUPPORTED_ALGORITHMS, $this->configuredStrings('oidc.id_token.algorithms')));
+        $commonAlgorithms = array_values(array_intersect($allowedAlgorithms, $discoveryDocument->idTokenSigningAlgorithms));
+
+        if ($commonAlgorithms === []) {
+            $this->record('algorithms', 'failure', 'The IdP signs id_tokens with '.implode(', ', $discoveryDocument->idTokenSigningAlgorithms)
+                .'; oidc.id_token.algorithms allows '.implode(', ', $allowedAlgorithms).'.');
+        } else {
+            $this->record('algorithms', 'ok', 'id_token signed with '.implode(', ', $commonAlgorithms).'.');
+        }
+
+        try {
+            $publishedKeys = $identityProviderHttp->getJson($discoveryDocument->jwksUri)['keys'] ?? null;
+        } catch (OidcException $exception) {
+            $this->record('signing keys', 'failure', $exception->getMessage());
+
+            return;
+        }
+
+        $signingKeys = array_filter(
+            is_array($publishedKeys) ? $publishedKeys : [],
+            fn (mixed $publishedKey): bool => is_array($publishedKey) && ($publishedKey['use'] ?? 'sig') === 'sig' && in_array($publishedKey['kty'] ?? null, ['RSA', 'EC'], true),
+        );
+
+        $this->record(
+            'signing keys',
+            $signingKeys === [] ? 'failure' : 'ok',
+            $signingKeys === [] ? 'The JWKS has no RSA or EC signing key.' : count($signingKeys).' signing key(s) in the JWKS.',
+        );
+    }
+
+    private function checkClient(ProviderConfigurationData $configuration): void
+    {
+        $this->record(
+            'client',
+            $configuration->isPublicClient() ? 'warning' : 'ok',
+            $configuration->isPublicClient()
+                ? 'No client secret: the IdP client must be public (PKCE only).'
+                : "Confidential client ({$configuration->tokenEndpointAuthMethod->value}).",
+        );
+    }
+
+    private function checkRedirectUri(string $redirectUri): void
+    {
+        $scheme = parse_url($redirectUri, PHP_URL_SCHEME);
+        $host = parse_url($redirectUri, PHP_URL_HOST);
+        $isLocalHost = in_array($host, ['localhost', '127.0.0.1', '::1'], true) || (is_string($host) && str_ends_with($host, '.test'));
+
+        if (! is_string($host) || ! in_array($scheme, ['http', 'https'], true)) {
+            $this->record('redirect uri', 'failure', "[{$redirectUri}] is not an absolute URL. Set APP_URL or oidc.redirect_uri.");
+
+            return;
+        }
+
+        if ($scheme === 'http' && ! $isLocalHost) {
+            $this->record('redirect uri', 'warning', "[{$redirectUri}] uses plain http outside localhost; most IdPs refuse it.");
+
+            return;
+        }
+
+        $this->record('redirect uri', 'ok', $redirectUri);
+    }
+
+    /**
+     * In SSO-only mode at least one account must still be able to sign in
+     * locally, or a broken IdP locks everyone out.
+     */
+    private function checkBreakGlass(BreakGlassPolicyContract $breakGlassPolicy): void
+    {
+        if (! Config::boolean('oidc.only')) {
+            return;
+        }
+
+        foreach (UserIdentity::userModel()::query()->cursor() as $user) {
+            if ($user instanceof Authenticatable && $breakGlassPolicy->isBreakGlassAccount($user)) {
+                $this->record('break-glass', 'ok', 'At least one break-glass account can still sign in with a password.');
+
+                return;
+            }
+        }
+
+        $this->record('break-glass', 'failure', 'OIDC_ONLY is on but no account qualifies as break-glass ('
+            .implode(', ', $this->configuredStrings('oidc.break_glass.roles')).' with a confirmed second factor).');
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function urisToRegister(ProviderConfigurationData $configuration): array
+    {
+        return array_filter([
+            'redirect_uri' => $configuration->redirectUri,
+            'post_logout_redirect_uri' => $configuration->postLogoutRedirectUri,
+            'backchannel_logout_uri' => Route::has('oidc.backchannel-logout') ? route('oidc.backchannel-logout') : null,
+        ], fn (?string $uri): bool => $uri !== null);
+    }
+
+    /**
+     * Sets or replaces the four keys in `.env`; other lines stay untouched.
+     * Values with special characters are single-quoted, which phpdotenv reads
+     * literally (no escapes, no `${...}` interpolation). A value containing a
+     * single quote or a line break cannot be written that way and is refused.
+     */
+    private function writeEnvironment(): void
+    {
+        $environmentPath = $this->laravel->environmentFilePath();
+        $contents = is_file($environmentPath) ? (string) file_get_contents($environmentPath) : '';
+        $values = [
+            'OIDC_ENABLED' => 'true',
+            'OIDC_ISSUER' => Config::string('oidc.issuer'),
+            'OIDC_CLIENT_ID' => Config::string('oidc.client_id'),
+            'OIDC_CLIENT_SECRET' => is_string(Config::get('oidc.client_secret')) ? Config::string('oidc.client_secret') : '',
+        ];
+
+        foreach ($values as $key => $value) {
+            if (preg_match("/['\r\n]/", $value) === 1) {
+                $this->record('env', 'failure', "{$key} contains a quote or a line break; write .env by hand.");
+
+                return;
+            }
+        }
+
+        foreach ($values as $key => $value) {
+            $line = $key.'='.(preg_match('/^[\w.:\/-]*$/', $value) === 1 ? $value : "'{$value}'");
+            $pattern = '/^'.$key.'=.*$/m';
+
+            $contents = preg_match($pattern, $contents) === 1
+                ? (string) preg_replace($pattern, str_replace(['\\', '$'], ['\\\\', '\\$'], $line), $contents)
+                : rtrim($contents, "\n").($contents === '' ? '' : "\n").$line."\n";
+        }
+
+        file_put_contents($environmentPath, $contents);
+        $this->record('env', 'ok', "Wrote OIDC_ENABLED, OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET to {$environmentPath}.");
+    }
+
+    private function hasFailure(): bool
+    {
+        return in_array('failure', array_column($this->results, 'status'), true);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function configuredStrings(string $key): array
+    {
+        return array_values(array_filter(Config::array($key, []), is_string(...)));
+    }
+
+    /**
+     * @param  'ok'|'warning'|'failure'  $status
+     */
+    private function record(string $check, string $status, string $detail): void
+    {
+        $this->results[] = ['check' => $check, 'status' => $status, 'detail' => $detail];
+    }
+
+    /**
+     * @param  array<string, string>  $urisToRegister
+     */
+    private function report(bool $hasFailure, array $urisToRegister): void
+    {
+        if ($this->option('json')) {
+            $this->line((string) json_encode([
+                'ok' => ! $hasFailure,
+                'checks' => $this->results,
+                'register_at_identity_provider' => $urisToRegister,
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+            return;
+        }
+
+        $this->table(['Check', 'Status', 'Detail'], array_map(
+            fn (array $result): array => [$result['check'], strtoupper($result['status']), $result['detail']],
+            $this->results,
+        ));
+
+        if ($urisToRegister !== []) {
+            $this->newLine();
+            $this->line('Register at the IdP:');
+
+            foreach ($urisToRegister as $name => $uri) {
+                $this->line("  {$name}: {$uri}");
+            }
+        }
+
+        $hasFailure ? $this->error('The OIDC setup has failures.') : $this->info('The OIDC setup looks good.');
+    }
+}
