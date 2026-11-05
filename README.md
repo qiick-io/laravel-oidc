@@ -238,6 +238,10 @@ $this->get($callbackUrl);
 
 It checks the PKCE verifier, the code, the redirect URI and the client secret like a strict IdP, and signs `id_token`s with a key generated per test. `authorize()` also takes userinfo claims, and `logoutTokenClaims()` + `sign()` build back-channel logout tokens. `withDiscovery()`, `rotateSigningKey()`, `sign()` and `modifyTokenResponseUsing()` cover the failure cases.
 
+## Migrating Externa and Excubia App
+
+[`docs/MIGRATION.md`](./docs/MIGRATION.md) replaces the copied Socialite client step by step. It covers the behaviour changes to announce, `oidc:import-legacy-subjects` for `users.oidc_sub`, settings from the database, provisioning, 2FA, SSO-only mode, the login page, logout, the files to delete and the tests.
+
 ## Development
 
 ```bash
@@ -247,7 +251,14 @@ composer lint      # Pint
 composer analyse   # PHPStan, level max
 ```
 
-Tests never use the network.
+The default suite never uses the network. The end-to-end tests against a real Keycloak 26 run in CI (`keycloak` job) and locally with Docker:
+
+```bash
+docker run -d --name laravel-oidc-keycloak -p 8180:8080 \
+  -v "$PWD/tests/Fixtures/Keycloak:/opt/keycloak/data/import:ro" \
+  quay.io/keycloak/keycloak:26.2 start-dev --import-realm
+KEYCLOAK_URL=http://localhost:8180 vendor/bin/pest --group=keycloak
+```
 
 ## Contributing and security
 
