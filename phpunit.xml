@@ -10,6 +10,12 @@
             <directory>tests</directory>
         </testsuite>
     </testsuites>
+    <groups>
+        <exclude>
+            <!-- Needs a running Keycloak: KEYCLOAK_URL=http://localhost:8080 vendor/bin/pest with the group option set to keycloak -->
+            <group>keycloak</group>
+        </exclude>
+    </groups>
     <source>
         <include>
             <directory>src</directory>

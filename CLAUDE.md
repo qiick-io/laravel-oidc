@@ -39,6 +39,9 @@ src/Services/          *Service (discovery, JWKS, JWT validation, code flow, SSR
 src/Testing/           Fake* test doubles shipped for apps (FakeIdentityProvider)
 tests/Arch             NamingArchitectureTest
 tests/Feature          Pest on Testbench
+tests/Integration      end to end against Keycloak (group keycloak, KEYCLOAK_URL; CI job keycloak)
+tests/Fixtures         Keycloak realm for CI (test-only credentials)
+docs/MIGRATION.md      migration of Externa and Excubia App
 tests/Support          PackageTestCase
 ```
 

@@ -71,3 +71,42 @@ jobs:
 
       - name: Pest
         run: vendor/bin/pest
+
+  keycloak:
+    name: Keycloak 26 end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # Not a `services:` container: Keycloak needs the `start-dev --import-realm` arguments.
+      - name: Start Keycloak
+        run: |
+          docker run -d --name keycloak -p 8080:8080 \
+            -v "$PWD/tests/Fixtures/Keycloak:/opt/keycloak/data/import:ro" \
+            quay.io/keycloak/keycloak:26.2 start-dev --import-realm
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer update --no-interaction --prefer-dist
+
+      - name: Wait for Keycloak
+        run: |
+          for attempt in $(seq 1 60); do
+            curl -sf http://localhost:8080/realms/laravel-oidc/.well-known/openid-configuration > /dev/null && exit 0
+            sleep 3
+          done
+          docker logs keycloak
+          exit 1
+
+      - name: Pest (Keycloak)
+        env:
+          KEYCLOAK_URL: http://localhost:8080
+        run: vendor/bin/pest --group=keycloak

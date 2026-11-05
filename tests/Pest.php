@@ -15,7 +15,7 @@ use Qiick\Oidc\Testing\FakeIdentityProvider;
 use Qiick\Oidc\Tests\Support\PackageTestCase;
 use Qiick\Oidc\Tests\Support\User;
 
-pest()->extend(PackageTestCase::class)->in('Feature', 'Unit');
+pest()->extend(PackageTestCase::class)->in('Feature', 'Unit', 'Integration');
 
 /**
  * A request on the app with the given session, as the browser would send it.
