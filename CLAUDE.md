@@ -21,10 +21,17 @@ Guidance for Claude Code in this repository. Read it fully before any change.
 
 ```
 config/oidc.php        defaults; env vars OIDC_* (see README)
+src/Contracts/         *Contract interfaces (ProviderConfigurationRepositoryContract)
+src/Data/              readonly *Data value objects
+src/Enums/             *Enum
+src/Exceptions/        *Exception, all extending OidcException
 src/Laravel/           OidcServiceProvider (auto-discovered)
+src/Repositories/      *Repository (config-backed provider settings)
+src/Services/          *Service (discovery, JWKS, JWT validation, code flow, SSRF guard, IdP HTTP)
+src/Testing/           Fake* test doubles shipped for apps (FakeIdentityProvider)
 tests/Arch             NamingArchitectureTest
-tests/Feature|Unit     Pest on Testbench
-tests/Support          PackageTestCase, the in-test fake IdP
+tests/Feature          Pest on Testbench
+tests/Support          PackageTestCase
 ```
 
 ## Commands
