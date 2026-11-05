@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Pinned to <1.31 on purpose (same as qiick/excubia-core) so formatting
+      # stays identical locally and in CI. Bump it by hand.
+      - dependency-name: laravel/pint
   - package-ecosystem: github-actions
     directory: /
     schedule:
