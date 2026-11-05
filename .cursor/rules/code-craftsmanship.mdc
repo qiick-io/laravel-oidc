@@ -1,0 +1,36 @@
+---
+description: Codice Perfetto for the qiick/laravel-oidc package. The protocol profile in README "Protocol profile" wins if this rule disagrees.
+alwaysApply: true
+---
+
+# Codice Perfetto for laravel-oidc
+
+The accepted Signaculum SSO design (2026-11-05) and the "Protocol profile" section of the README are the source of truth. This rule does not add product scope.
+
+## Ponytail
+
+Pick the simplest solution that works. Stop at the first rung that holds: YAGNI, standard library, platform, installed dependency, one line, then the minimum code.
+
+- No unrequested abstractions, dependencies, or boilerplate.
+- Deletion over addition. Boring over clever. Fewest files possible.
+- Mark an intentional shortcut with a `ponytail:` comment that names the ceiling and the upgrade path.
+- Never lazy about trust-boundary validation, token validation, SSRF, or anything security-relevant. This package is an authentication boundary.
+- Non-trivial logic leaves one runnable check behind.
+
+## Generic, not Signaculum
+
+- The package must work with any standard OIDC provider: Keycloak, Zitadel, Authentik, Entra ID, Google, Signaculum.
+- Anything provider-specific (the `orgs` claim, the `qiick.orgs` scope, non-standard `amr` values) goes behind config or a mapping. Never hard-code it.
+
+## Names
+
+- Full words. No `cfg`, `res`, `req`, `val`, `ctx`, or `idx`.
+- Booleans and boolean methods use `is`, `has`, `can`, or `should`.
+- Role suffixes match the architecture test (`tests/Arch/NamingArchitectureTest.php`).
+
+## Documentation
+
+- `declare(strict_types=1)` in every PHP file.
+- English PHPDoc on classes and non-trivial methods: why, array shapes, side effects, and `@throws`. Cite the spec section (OIDC Core 3.1.3.7, RFC 7636, ...) when a check exists because a spec requires it.
+- Explicit curly braces and a blank line around control-flow blocks.
+- Do not call `dd`, `dump`, `var_dump`, or `env()` outside `config/`.

@@ -1,0 +1,14 @@
+---
+description: Pest, Pint, and PHPStan for the laravel-oidc package.
+globs: "**/*Test.php"
+alwaysApply: false
+---
+
+# Testing
+
+- Prefer behavior-focused Pest tests over assertions on private structure.
+- Do not delete or weaken an existing test. Add coverage for a behavior change.
+- Every security check (signature, `iss`, `aud`, `exp`, `iat`, `nonce`, `state`, PKCE, SSRF) has a test that proves a bad value is refused.
+- `tests/Arch/NamingArchitectureTest.php` stays green.
+- No real network. Use `Http::fake()` and the in-test fake IdP.
+- Quality gate before a pull request: `composer lint`, `composer analyse`, and `composer test`.
