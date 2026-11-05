@@ -69,3 +69,7 @@ arch('events use the event suffix and are readonly')
     ->expect('Qiick\Oidc\Events')
     ->toHaveSuffix('Event')
     ->toBeReadonly();
+
+arch('listeners use the listener suffix')
+    ->expect('Qiick\Oidc\Listeners')
+    ->toHaveSuffix('Listener');

@@ -6,10 +6,14 @@ use Illuminate\Contracts\Session\Session;
 use Illuminate\Http\Request;
 use Illuminate\Session\ArraySessionHandler;
 use Illuminate\Session\Store;
+use Illuminate\Testing\TestResponse;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
+use Qiick\Oidc\Enums\LoginRefusalReasonEnum;
+use Qiick\Oidc\Models\UserIdentity;
 use Qiick\Oidc\Services\AuthorizationCodeFlowService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
 use Qiick\Oidc\Tests\Support\PackageTestCase;
+use Qiick\Oidc\Tests\Support\User;
 
 pest()->extend(PackageTestCase::class)->in('Feature', 'Unit');
 
@@ -69,4 +73,40 @@ function queryParameters(string $url): array
 
     /** @var array<string, string> $parameters */
     return $parameters;
+}
+
+/**
+ * Clicks the SSO button, logs in at the fake IdP and follows the callback.
+ *
+ * @param  array<string, mixed>  $claims
+ */
+function ssoLogin(PackageTestCase $testCase, FakeIdentityProvider $identityProvider, array $claims = []): TestResponse
+{
+    $authorizationUrl = (string) $testCase->get('/auth/oidc/redirect')->assertRedirect()->headers->get('Location');
+
+    return $testCase->get($identityProvider->authorize($authorizationUrl, $claims));
+}
+
+function localUser(string $email = 'ada@example.com', array $attributes = []): User
+{
+    return User::query()->forceCreate(['name' => 'Ada', 'email' => $email, 'password' => 'not-used', ...$attributes]);
+}
+
+function linkIdentity(User $user, string $subject = 'fake-subject-1', string $issuer = 'https://idp.example.com/realms/test'): UserIdentity
+{
+    return UserIdentity::query()->create(['user_id' => $user->id, 'issuer' => $issuer, 'subject' => $subject]);
+}
+
+/**
+ * @param  array<string, mixed>  $configOverrides
+ */
+function fakeProvider(array $configOverrides = []): FakeIdentityProvider
+{
+    return FakeIdentityProvider::fake(configOverrides: $configOverrides);
+}
+
+function assertRefused(TestResponse $response, LoginRefusalReasonEnum $reason): void
+{
+    $response->assertRedirect('/login')->assertSessionHasErrors(['email' => $reason->message()]);
+    expect(auth()->check())->toBeFalse();
 }

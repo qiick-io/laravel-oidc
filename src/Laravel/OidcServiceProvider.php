@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Qiick\Oidc\Laravel;
 
+use Illuminate\Auth\Events\Login;
 use Illuminate\Cache\CacheManager;
 use Illuminate\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Auth\Factory as AuthFactory;
@@ -16,21 +17,28 @@ use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
+use Qiick\Oidc\Contracts\RoleSynchronizationContract;
+use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
 use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
+use Qiick\Oidc\Listeners\PromotePendingIdentityListener;
 use Qiick\Oidc\Repositories\ConfigProviderConfigurationRepository;
 use Qiick\Oidc\Services\AuthorizationCodeFlowService;
 use Qiick\Oidc\Services\BackChannelLogoutService;
 use Qiick\Oidc\Services\DiscoveryService;
 use Qiick\Oidc\Services\EloquentUserProvisioningService;
+use Qiick\Oidc\Services\FortifySecondFactorChallengeService;
 use Qiick\Oidc\Services\IdentityProviderHttpService;
 use Qiick\Oidc\Services\IdentitySessionService;
 use Qiick\Oidc\Services\IdTokenValidatorService;
 use Qiick\Oidc\Services\JwksService;
 use Qiick\Oidc\Services\JwtValidatorService;
+use Qiick\Oidc\Services\MultiFactorClaimService;
 use Qiick\Oidc\Services\OidcLoginService;
 use Qiick\Oidc\Services\RemoteUrlGuardService;
+use Qiick\Oidc\Services\RoleMappingService;
 use Qiick\Oidc\Services\SessionRevocationService;
+use Qiick\Oidc\Services\SpatieRoleSynchronizationService;
 use Qiick\Oidc\Services\UserinfoService;
 use Qiick\Oidc\Services\UserLinkingService;
 
@@ -110,8 +118,31 @@ final class OidcServiceProvider extends ServiceProvider
             activeColumn: $this->optionalString($app, 'oidc.users.active_column'),
         ));
 
+        $this->app->bind(RoleSynchronizationContract::class, SpatieRoleSynchronizationService::class);
+
+        $this->app->bind(RoleMappingService::class, fn (Application $app): RoleMappingService => new RoleMappingService(
+            roleSynchronization: $app->make(RoleSynchronizationContract::class),
+            isEnabled: $this->config($app)->boolean('oidc.roles.enabled'),
+            claimPath: $this->optionalString($app, 'oidc.roles.claim') ?? 'orgs',
+            organization: $this->optionalString($app, 'oidc.roles.organization'),
+            roleMap: $this->roleMap($app),
+            forbiddenRoles: $this->stringList($app, 'oidc.roles.forbidden'),
+        ));
+
+        $this->app->bind(SecondFactorChallengeContract::class, fn (Application $app): SecondFactorChallengeContract => new FortifySecondFactorChallengeService(
+            isRequiredByDefault: $this->config($app)->boolean('oidc.mfa.required'),
+        ));
+
+        $this->app->bind(MultiFactorClaimService::class, fn (Application $app): MultiFactorClaimService => new MultiFactorClaimService(
+            acceptedAmrValues: $this->stringList($app, 'oidc.mfa.amr_values'),
+            acceptedAcrValues: $this->stringList($app, 'oidc.mfa.acr_values'),
+        ));
+
         $this->app->bind(OidcLoginService::class, fn (Application $app): OidcLoginService => new OidcLoginService(
             userLinking: $app->make(UserLinkingService::class),
+            roleMapping: $app->make(RoleMappingService::class),
+            multiFactorClaims: $app->make(MultiFactorClaimService::class),
+            secondFactorChallenge: $app->make(SecondFactorChallengeContract::class),
             identitySession: $app->make(IdentitySessionService::class),
             auth: $app->make(AuthFactory::class),
             events: $app->make(Dispatcher::class),
@@ -134,6 +165,8 @@ final class OidcServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->app->make(Dispatcher::class)->listen(Login::class, PromotePendingIdentityListener::class);
+
         $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
         $httpKernel = $this->app->make(HttpKernelContract::class);
@@ -172,6 +205,26 @@ final class OidcServiceProvider extends ServiceProvider
         }
 
         return max(1, $this->config($app)->integer('session.lifetime', 120)) * 60;
+    }
+
+    /**
+     * `oidc.roles.map` with every value normalised to a list of role names.
+     *
+     * @return array<string, list<string>>
+     */
+    private function roleMap(Application $app): array
+    {
+        $roleMap = [];
+
+        foreach ($this->config($app)->array('oidc.roles.map', []) as $identityProviderRole => $appRoles) {
+            $appRoleList = array_values(array_filter(is_array($appRoles) ? $appRoles : [$appRoles], is_string(...)));
+
+            if (is_string($identityProviderRole) && $appRoleList !== []) {
+                $roleMap[$identityProviderRole] = $appRoleList;
+            }
+        }
+
+        return $roleMap;
     }
 
     private function config(Application $app): ConfigRepository

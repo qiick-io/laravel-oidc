@@ -48,6 +48,13 @@ final readonly class AuthorizationCodeFlowService
         'response_type', 'client_id', 'redirect_uri', 'scope', 'state', 'nonce', 'code_challenge', 'code_challenge_method',
     ];
 
+    /**
+     * Claims that only count when they come from the signed id_token. The
+     * userinfo response is not signed, so these are dropped from it (an `amr`
+     * there could otherwise fake MFA).
+     */
+    private const array ID_TOKEN_ONLY_CLAIMS = ['iss', 'aud', 'azp', 'exp', 'iat', 'nbf', 'nonce', 'sid', 'auth_time', 'amr', 'acr'];
+
     public function __construct(
         private ProviderConfigurationRepositoryContract $configurationRepository,
         private DiscoveryService $discovery,
@@ -161,7 +168,8 @@ final readonly class AuthorizationCodeFlowService
         $sessionId = $claims['sid'] ?? null;
 
         if ($this->shouldFetchUserinfo) {
-            $claims = [...$this->userinfo->fetch($discovery, $accessToken, $subject), ...$claims];
+            $userinfoClaims = array_diff_key($this->userinfo->fetch($discovery, $accessToken, $subject), array_flip(self::ID_TOKEN_ONLY_CLAIMS));
+            $claims = [...$userinfoClaims, ...$claims];
         }
 
         return new AuthenticatedIdentityData(
