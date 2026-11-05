@@ -58,10 +58,15 @@ jobs:
             composer update --no-interaction --prefer-dist --with-all-dependencies
           fi
 
+      # Static analysis depends on the tool versions, not on the runtime floor:
+      # with --prefer-lowest, old polyfills (paragonie/random_compat 2.x via
+      # symfony/polyfill-uuid) redefine core functions without types.
       - name: Pint
+        if: matrix.dependency-version == 'stable'
         run: vendor/bin/pint --test
 
       - name: PHPStan
+        if: matrix.dependency-version == 'stable'
         run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
 
       - name: Pest
