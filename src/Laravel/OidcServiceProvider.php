@@ -6,7 +6,9 @@ namespace Qiick\Oidc\Laravel;
 
 use Illuminate\Cache\CacheManager;
 use Illuminate\Config\Repository as ConfigRepository;
+use Illuminate\Contracts\Auth\Factory as AuthFactory;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\Http\Kernel as HttpKernelContract;
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
@@ -14,18 +16,23 @@ use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
+use Qiick\Oidc\Contracts\UserProvisioningContract;
 use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
 use Qiick\Oidc\Repositories\ConfigProviderConfigurationRepository;
 use Qiick\Oidc\Services\AuthorizationCodeFlowService;
 use Qiick\Oidc\Services\BackChannelLogoutService;
 use Qiick\Oidc\Services\DiscoveryService;
+use Qiick\Oidc\Services\EloquentUserProvisioningService;
 use Qiick\Oidc\Services\IdentityProviderHttpService;
+use Qiick\Oidc\Services\IdentitySessionService;
 use Qiick\Oidc\Services\IdTokenValidatorService;
 use Qiick\Oidc\Services\JwksService;
 use Qiick\Oidc\Services\JwtValidatorService;
+use Qiick\Oidc\Services\OidcLoginService;
 use Qiick\Oidc\Services\RemoteUrlGuardService;
 use Qiick\Oidc\Services\SessionRevocationService;
 use Qiick\Oidc\Services\UserinfoService;
+use Qiick\Oidc\Services\UserLinkingService;
 
 /**
  * Registers the package in a Laravel app. Auto-discovered through
@@ -90,6 +97,27 @@ final class OidcServiceProvider extends ServiceProvider
             shouldFetchUserinfo: $this->config($app)->boolean('oidc.userinfo', true),
         ));
 
+        $this->app->bind(UserProvisioningContract::class, EloquentUserProvisioningService::class);
+
+        $this->app->bind(UserLinkingService::class, fn (Application $app): UserLinkingService => new UserLinkingService(
+            userProvisioning: $app->make(UserProvisioningContract::class),
+            events: $app->make(Dispatcher::class),
+            isAutoLinkEnabled: $this->config($app)->boolean('oidc.auto_link'),
+            isJitEnabled: $this->config($app)->boolean('oidc.jit'),
+            isVerifiedEmailRequired: $this->config($app)->boolean('oidc.require_verified_email', true),
+            allowedDomains: array_map(mb_strtolower(...), $this->stringList($app, 'oidc.allowed_domains')),
+            emailColumn: $this->optionalString($app, 'oidc.users.email_column') ?? 'email',
+            activeColumn: $this->optionalString($app, 'oidc.users.active_column'),
+        ));
+
+        $this->app->bind(OidcLoginService::class, fn (Application $app): OidcLoginService => new OidcLoginService(
+            userLinking: $app->make(UserLinkingService::class),
+            identitySession: $app->make(IdentitySessionService::class),
+            auth: $app->make(AuthFactory::class),
+            events: $app->make(Dispatcher::class),
+            shouldRemember: $this->config($app)->boolean('oidc.remember'),
+        ));
+
         $this->app->bind(SessionRevocationService::class, fn (Application $app): SessionRevocationService => new SessionRevocationService(
             cache: $this->cacheStore($app),
             revocationSeconds: $this->revocationSeconds($app),
@@ -106,6 +134,8 @@ final class OidcServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
+
         $httpKernel = $this->app->make(HttpKernelContract::class);
 
         if ($httpKernel instanceof HttpKernel) {
@@ -122,6 +152,10 @@ final class OidcServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__.'/../../config/oidc.php' => config_path('oidc.php'),
             ], 'oidc-config');
+
+            $this->publishesMigrations([
+                __DIR__.'/../../database/migrations' => database_path('migrations'),
+            ], 'oidc-migrations');
         }
     }
 

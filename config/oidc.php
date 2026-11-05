@@ -64,6 +64,57 @@ return [
     'redirect_uri' => null,
 
     /*
+     * JIT provisioning only for these email domains (for example
+     * ['example.com']). Empty allows every domain.
+     */
+    'allowed_domains' => [],
+
+    /*
+     * Auto-link and JIT need `email_verified: true` from the IdP. Microsoft
+     * Entra ID sends no `email_verified` claim; turn this off only for an IdP
+     * whose emails are verified by the organisation (never for an IdP where
+     * users pick their own address). Logins of already linked users never
+     * depend on the email.
+     */
+    'require_verified_email' => true,
+
+    /*
+     * Use Laravel's "remember me" cookie for SSO logins. Off by default: the
+     * IdP session is the long-lived one, and a remember cookie would outlive
+     * a back-channel logout.
+     */
+    'remember' => false,
+
+    /*
+     * Where the user lands after an SSO login (`redirect()->intended()`), and
+     * where a failed SSO login sends the user, with the message in the
+     * `email` error bag key.
+     */
+    'home' => '/',
+
+    'login_url' => '/login',
+
+    'users' => [
+
+        /*
+         * The Eloquent user model. Null uses `auth.providers.users.model`.
+         */
+        'model' => null,
+
+        'table' => 'users',
+
+        'email_column' => 'email',
+
+        /*
+         * A boolean column; users with false there cannot sign in through
+         * SSO. Null when the app has no such column. Externa and Excubia App
+         * use `is_active`.
+         */
+        'active_column' => null,
+
+    ],
+
+    /*
      * Where the IdP sends the browser after RP-initiated logout. Null means
      * `{APP_URL}/`. It must be registered at the IdP as a post-logout
      * redirect URI, or the IdP shows its own confirmation page instead.
@@ -78,15 +129,21 @@ return [
     'userinfo' => true,
 
     /*
-     * The package registers its own routes under this prefix: today only
-     * `POST {prefix}/backchannel-logout`. The path matches the redirect and
-     * callback routes Externa and Excubia App already use.
+     * The package registers its routes under this prefix: `GET {prefix}/redirect`,
+     * `GET {prefix}/callback` and `POST {prefix}/backchannel-logout`. The path
+     * matches the routes Externa and Excubia App already use.
      */
     'routes' => [
 
         'enabled' => true,
 
         'prefix' => 'auth/oidc',
+
+        /*
+         * Middleware of the redirect and callback routes. The back-channel
+         * logout route never gets a session or CSRF middleware.
+         */
+        'middleware' => ['web', 'guest'],
 
     ],
 
