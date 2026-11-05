@@ -56,6 +56,71 @@ What the package implements, from the accepted Signaculum SSO design (2026-11-05
 - **Claims:** `sub`, `email`, `email_verified`, `name`, `preferred_username`, `picture`, `locale`, `amr` / `acr`. Provider-specific claims, such as an `orgs` claim for roles, are read through config, never hard-coded.
 - **Identity key:** the pair (`issuer`, `sub`), stored in a `user_identities` table.
 
+## Usage
+
+> The routes, the user linking (`user_identities`) and the login itself land in the next pull requests. Today the package provides the protocol layer.
+
+```php
+use Qiick\Oidc\Services\AuthorizationCodeFlowService;
+
+// GET /auth/oidc/redirect
+public function redirect(Request $request, AuthorizationCodeFlowService $flow): RedirectResponse
+{
+    return $flow->redirect($request);
+}
+
+// GET /auth/oidc/callback
+public function callback(Request $request, AuthorizationCodeFlowService $flow): RedirectResponse
+{
+    $identity = $flow->handleCallback($request); // throws an OidcException subclass on any failure
+
+    // $identity->issuer, $identity->subject (the identity key), $identity->claims, $identity->sessionId
+}
+```
+
+`redirect()` stores `state`, `nonce` and the PKCE verifier in the session and sends the browser to the IdP. `handleCallback()` accepts each `state` once, exchanges the code with the verifier and validates the `id_token`. Every failure throws a subclass of `Qiick\Oidc\Exceptions\OidcException` whose message is safe to log (no tokens, codes or secrets).
+
+### Settings from the database
+
+Externa and Excubia App keep their OIDC settings in a settings table. Bind your own repository after the package provider:
+
+```php
+$this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSettingsRepository::class);
+```
+
+### Advanced configuration
+
+| Config key | Default | Meaning |
+| --- | --- | --- |
+| `oidc.redirect_uri` | `null` | `null` means `{APP_URL}/auth/oidc/callback`, the URI Externa and Excubia App already register. |
+| `oidc.scopes` | `openid profile email` | `openid` is always sent. Add `qiick.orgs` for Signaculum's organisation claims. |
+| `oidc.token_endpoint_auth_method` | `client_secret_basic` | Or `client_secret_post`. A client without secret is a public client. |
+| `oidc.id_token.algorithms` | `['RS256']` | Accepted signing algorithms; only `RS*`, `PS256` and `ES*` can be enabled. |
+| `oidc.id_token.leeway` | `60` | Clock skew in seconds. |
+| `oidc.id_token.trusted_audiences` | `[]` | Extra `aud` values to accept; `azp` must then be the client id. |
+| `oidc.cache.store` | `null` | Cache store for discovery and JWKS. |
+| `oidc.cache.discovery_ttl` / `jwks_ttl` | `21600` / `3600` | Cache lifetimes in seconds. |
+| `oidc.cache.jwks_refetch_cooldown` | `30` | Minimum seconds between JWKS refetches on an unknown `kid`. |
+| `oidc.http.timeout` | `10` | Seconds per IdP request. |
+| `oidc.http.discovery_base` (`OIDC_DISCOVERY_BASE`) | `null` | Docker: fetch discovery from this base instead of the issuer. |
+| `oidc.http.server_origin` (`OIDC_SERVER_ORIGIN`) | `null` | Docker: scheme and host for the token, userinfo and JWKS calls. |
+| `oidc.http.allow_private_hosts` (`OIDC_ALLOW_PRIVATE_HOSTS`) | `false` | Allow an IdP on a private network and plain http. Cloud metadata stays blocked. |
+
+### Testing your app
+
+The package ships an in-memory IdP, so app tests need no network:
+
+```php
+use Qiick\Oidc\Testing\FakeIdentityProvider;
+
+$identityProvider = FakeIdentityProvider::fake(); // Http::fake() + config('oidc.*')
+$authorizationUrl = $this->get('/auth/oidc/redirect')->headers->get('Location');
+$callbackUrl = $identityProvider->authorize($authorizationUrl, ['sub' => 'user-42', 'email' => 'ada@example.com']);
+$this->get($callbackUrl);
+```
+
+It checks the PKCE verifier, the code, the redirect URI and the client secret like a strict IdP, and signs `id_token`s with a key generated per test. `withDiscovery()`, `rotateSigningKey()`, `sign()` and `modifyTokenResponseUsing()` cover the failure cases.
+
 ## Development
 
 ```bash
