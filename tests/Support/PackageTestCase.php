@@ -22,4 +22,15 @@ abstract class PackageTestCase extends TestCase
     {
         return [OidcServiceProvider::class];
     }
+
+    /**
+     * The web group encrypts cookies, so the app needs a key. It is random
+     * per run: nothing secret is committed.
+     *
+     * @param  Application  $app
+     */
+    protected function defineEnvironment($app): void
+    {
+        $app['config']->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
+    }
 }

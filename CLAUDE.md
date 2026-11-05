@@ -21,10 +21,12 @@ Guidance for Claude Code in this repository. Read it fully before any change.
 
 ```
 config/oidc.php        defaults; env vars OIDC_* (see README)
+routes/oidc.php        package routes under oidc.routes.prefix
 src/Contracts/         *Contract interfaces (ProviderConfigurationRepositoryContract)
 src/Data/              readonly *Data value objects
 src/Enums/             *Enum
 src/Exceptions/        *Exception, all extending OidcException
+src/Http/              *Controller (back-channel logout) and *Middleware (session revocation)
 src/Laravel/           OidcServiceProvider (auto-discovered)
 src/Repositories/      *Repository (config-backed provider settings)
 src/Services/          *Service (discovery, JWKS, JWT validation, code flow, SSRF guard, IdP HTTP)

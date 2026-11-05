@@ -64,6 +64,43 @@ return [
     'redirect_uri' => null,
 
     /*
+     * Where the IdP sends the browser after RP-initiated logout. Null means
+     * `{APP_URL}/`. It must be registered at the IdP as a post-logout
+     * redirect URI, or the IdP shows its own confirmation page instead.
+     */
+    'post_logout_redirect_uri' => null,
+
+    /*
+     * Fetch the userinfo endpoint after the code exchange and merge its claims
+     * under the id_token claims (the signed id_token wins on any conflict).
+     * Turn off for an IdP that puts every claim in the id_token.
+     */
+    'userinfo' => true,
+
+    /*
+     * The package registers its own routes under this prefix: today only
+     * `POST {prefix}/backchannel-logout`. The path matches the redirect and
+     * callback routes Externa and Excubia App already use.
+     */
+    'routes' => [
+
+        'enabled' => true,
+
+        'prefix' => 'auth/oidc',
+
+    ],
+
+    'backchannel_logout' => [
+
+        /*
+         * How long a back-channel logout is remembered, in seconds. It must
+         * cover the longest local session. Null uses `session.lifetime`.
+         */
+        'revocation_ttl' => null,
+
+    ],
+
+    /*
      * Scopes requested on login. `openid` is always sent. Add provider
      * specific scopes here, for example `qiick.orgs` for Signaculum's
      * organisation and role claims.

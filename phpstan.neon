@@ -7,6 +7,8 @@ parameters:
         - src
         - config
     tmpDir: build/phpstan
+    # Container bindings are only PHPDoc-certain: an app may bind its own HTTP kernel.
+    treatPhpDocTypesAsCertain: false
     bootstrapFiles:
         - phpstan-bootstrap.php
     # The package config reads env vars like any Laravel config file.

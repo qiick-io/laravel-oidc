@@ -10,7 +10,7 @@ arch('does not call debug functions or env')
     ->expect('Qiick\Oidc')
     ->not->toUse(['dd', 'dump', 'var_dump', 'env', 'ray']);
 
-arch('the service provider is the only class in the Laravel namespace')
+arch('the Laravel namespace only holds the service provider')
     ->expect('Qiick\Oidc\Laravel')
     ->toHaveSuffix('ServiceProvider');
 
@@ -50,3 +50,12 @@ arch('test doubles shipped for apps start with Fake')
 arch('only the test doubles use the Http facade directly')
     ->expect('Illuminate\Support\Facades\Http')
     ->toOnlyBeUsedIn('Qiick\Oidc\Testing');
+
+arch('controllers are thin and suffixed')
+    ->expect('Qiick\Oidc\Http\Controllers')
+    ->toHaveSuffix('Controller')
+    ->not->toUse('Illuminate\Support\Facades\DB');
+
+arch('middleware use the middleware suffix')
+    ->expect('Qiick\Oidc\Http\Middleware')
+    ->toHaveSuffix('Middleware');
