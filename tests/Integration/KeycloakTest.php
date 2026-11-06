@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 use GuzzleHttp\Client;
 use GuzzleHttp\Cookie\CookieJar;
+use GuzzleHttp\Cookie\SetCookie;
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Middleware;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Config;
+use Psr\Http\Message\ResponseInterface;
 use Qiick\Oidc\Contracts\RoleSynchronizationContract;
 use Qiick\Oidc\Models\UserIdentity;
 use Qiick\Oidc\Services\IdentitySessionService;
@@ -36,9 +40,8 @@ const KEYCLOAK_CLIENT_SECRET = 'ci-only-not-a-real-secret';
  */
 function loginAtKeycloak(string $authorizationUrl, CookieJar $cookies, string $password = 'ci-only-password'): string
 {
-    $browser = new Client(['cookies' => $cookies, 'allow_redirects' => false, 'http_errors' => false]);
+    $browser = keycloakBrowser($cookies);
     $loginPage = (string) $browser->get($authorizationUrl)->getBody();
-    allowInsecureKeycloakCookies($cookies);
 
     if (preg_match('/id="kc-form-login"[^>]*action="([^"]+)"/', $loginPage, $matches) !== 1) {
         throw new RuntimeException('Keycloak did not show its login form.');
@@ -54,15 +57,27 @@ function loginAtKeycloak(string $authorizationUrl, CookieJar $cookies, string $p
 pest()->group('keycloak');
 
 /**
- * Keycloak marks its cookies Secure even on plain http, and a real browser
- * treats http://localhost as a secure context. Guzzle does not, so the flag
- * is dropped for the CI container.
+ * A browser for the Keycloak container. Keycloak marks its cookies Secure even
+ * on plain http, where a real browser treats http://localhost as a secure
+ * context. Guzzle 7 stores those cookies but does not send them back, and
+ * Guzzle 8 does not store them at all (RFC 6265bis). So this client stores
+ * every Set-Cookie itself, without the Secure flag.
  */
-function allowInsecureKeycloakCookies(CookieJar $cookies): void
+function keycloakBrowser(CookieJar $cookies): Client
 {
-    foreach ($cookies as $cookie) {
-        $cookie->setSecure(false);
-    }
+    $handlerStack = HandlerStack::create();
+    $handlerStack->push(Middleware::mapResponse(function (ResponseInterface $response) use ($cookies): ResponseInterface {
+        foreach ($response->getHeader('Set-Cookie') as $setCookieHeader) {
+            $cookie = SetCookie::fromString($setCookieHeader);
+            $cookie->setSecure(false);
+            $cookie->setDomain($cookie->getDomain() ?? 'localhost');
+            $cookies->setCookie($cookie);
+        }
+
+        return $response;
+    }));
+
+    return new Client(['handler' => $handlerStack, 'cookies' => $cookies, 'allow_redirects' => false, 'http_errors' => false]);
 }
 
 beforeEach(function (): void {
@@ -113,22 +128,19 @@ it('signs in end to end: PKCE, state, nonce, RFC 9207 iss, id_token, userinfo, J
 });
 
 it('ends the Keycloak session through RP-initiated logout', function (): void {
-    $browser = new Client(['cookies' => $this->keycloakCookies, 'allow_redirects' => false, 'http_errors' => false]);
+    $browser = keycloakBrowser($this->keycloakCookies);
     $authorizationUrl = (string) $this->get('/auth/oidc/redirect')->headers->get('Location');
     $this->get(loginAtKeycloak($authorizationUrl, $this->keycloakCookies))->assertRedirect('/');
     $endSessionUrl = (string) app(RpInitiatedLogoutService::class)->endSessionUrl(session()->driver());
 
     auth()->logout();
-    allowInsecureKeycloakCookies($this->keycloakCookies);
     $silentLogin = $browser->get((string) $this->get('/auth/oidc/redirect')->headers->get('Location'));
 
     expect($silentLogin->getStatusCode())->toBe(302)
         ->and($silentLogin->getHeaderLine('Location'))->toStartWith('http://localhost/auth/oidc/callback?');
 
-    allowInsecureKeycloakCookies($this->keycloakCookies);
     expect($browser->get($endSessionUrl)->getHeaderLine('Location'))->toBe('http://localhost');
 
-    allowInsecureKeycloakCookies($this->keycloakCookies);
     $afterLogout = $browser->get((string) $this->get('/auth/oidc/redirect')->headers->get('Location'));
 
     expect($afterLogout->getStatusCode())->toBe(200)
