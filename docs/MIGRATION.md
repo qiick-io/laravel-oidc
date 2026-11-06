@@ -81,9 +81,11 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, OidcSettingsRep
 ## 4. Linking and JIT
 
 - **Auto-link.** Today linking by email is always on. To keep logins working for users who have never signed in through SSO since the import, add a setting `oidc_auto_link`: default `true` on installs where `oidc_enabled` was already true, `false` on new ones. Show it next to the JIT switch with the warning from the README. **Decision for Luca.**
-- **Provisioning.** Bind `UserProvisioningContract` with the user creation each app does today:
-  - **Externa:** first and last name split from `name`, `password = null`, `email_verified_at = now()`, `is_active = true`, then `default_user_role()` if it exists and `is_assignable`;
+- **Provisioning.** Bind `UserProvisioningContract` with the user creation each app does today. Take the names from `$identity->personName()`: it returns `given_name` → `first_name` and `family_name` → `last_name`, the rule agreed with Signaculum (its `profile` scope sends both). For IdPs without `given_name` it splits `name`, with the **last** word as the last name.
+  - **Externa:** first and last name from `personName()`, `password = null`, `email_verified_at = now()`, `is_active = true`, then `default_user_role()` if it exists and `is_assignable`;
   - **Excubia App:** the same fields, plus the `reader` role (`RoleEnum::Reader`).
+
+  Behaviour change: today both apps take the **first** word of `name` as the first name and the rest as the last name, and copy the first name into the last name for a one-word name. With the package, "Maria Luisa Rossi" becomes `Maria Luisa` / `Rossi` instead of `Maria` / `Luisa Rossi`, and a one-word name gets an empty last name. If the `last_name` column is not nullable, store `''` or keep the old copy for that case. The package does not update names on later logins. To refresh them, listen to `OidcLoginSucceededEvent`.
 - **Messages.** The refusal messages keep Externa's English wording (`LoginRefusalReasonEnum::message()`), so existing translations still match.
 
 ## 5. 2FA

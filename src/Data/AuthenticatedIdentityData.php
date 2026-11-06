@@ -32,4 +32,13 @@ final readonly class AuthenticatedIdentityData
     {
         return $this->claims[$name] ?? null;
     }
+
+    /**
+     * Given and family name from `given_name` / `family_name`, or from `name`
+     * split on its last word; null when the IdP sent no name at all.
+     */
+    public function personName(): ?PersonNameData
+    {
+        return PersonNameData::fromClaims($this->claims);
+    }
 }
