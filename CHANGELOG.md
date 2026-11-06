@@ -27,3 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `php artisan oidc:import-legacy-subjects` (#7): copies `users.oidc_sub` into `user_identities` with the configured issuer; idempotent, `--dry-run`, conflicts reported and never moved.
 - End-to-end tests against Keycloak 26 (#7): login through the real login form (PKCE, RFC 9207 `iss`, `id_token`, userinfo, JIT, realm-role mapping), RP-initiated logout ending the Keycloak session, a wrong client secret, and `oidc:configure`; CI job `keycloak`, group `keycloak` excluded from the default run.
 - `docs/MIGRATION.md` (#7): step-by-step migration of Externa and Excubia App from their copied Socialite client.
+
+### Dependencies
+
+- PHP `^8.3`, Laravel 12 and 13 (`illuminate/support`, `illuminate/http`, `illuminate/cache`), `firebase/php-jwt` `^7.0`, `guzzlehttp/guzzle` `^7.8 || ^8.0` (Guzzle 8 allowed since #10; Laravel 13 accepts it, Laravel 12 stays on Guzzle 7).
