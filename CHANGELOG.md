@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `php artisan oidc:import-legacy-subjects` (#7): copies `users.oidc_sub` into `user_identities` with the configured issuer; idempotent, `--dry-run`, conflicts reported and never moved.
 - End-to-end tests against Keycloak 26 (#7): login through the real login form (PKCE, RFC 9207 `iss`, `id_token`, userinfo, JIT, realm-role mapping), RP-initiated logout ending the Keycloak session, a wrong client secret, and `oidc:configure`; CI job `keycloak`, group `keycloak` excluded from the default run.
 - `docs/MIGRATION.md` (#7): step-by-step migration of Externa and Excubia App from their copied Socialite client.
+- `AuthenticatedIdentityData::personName()` and `PersonNameData` (#13): given and family name from `given_name` / `family_name`, or from `name` split with the last word as the family name, for apps with `first_name` / `last_name` columns (agreed with Signaculum, whose `profile` scope now sends `given_name`, `family_name` and `locale`). The default JIT provisioning falls back to `given_name` + `family_name` when the IdP sends no `name`; `FakeIdentityProvider` emits both claims.
 
 ### Dependencies
 

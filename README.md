@@ -64,7 +64,7 @@ What the package implements, from the accepted Signaculum SSO design (2026-11-05
 - **`id_token`:** signed `RS256` (`ES256` optional), validated on every login: signature through the JWKS (cached, refetched on an unknown `kid`), `iss`, `aud`, `exp`, `iat`, `nonce`, and `azp` when present.
 - **Session:** after the callback the app keeps its own Laravel session, regenerated. Access and refresh tokens are not stored.
 - **Logout:** RP-initiated logout (`end_session_endpoint`, `id_token_hint`, `post_logout_redirect_uri`) and back-channel logout (signed `logout_token`, matched by `sid` / `sub`). No front-channel logout.
-- **Claims:** `sub`, `email`, `email_verified`, `name`, `preferred_username`, `picture`, `locale`, `amr` / `acr`. Provider-specific claims, such as an `orgs` claim for roles, are read through config, never hard-coded.
+- **Claims:** `sub`, `email`, `email_verified`, `name`, `given_name`, `family_name`, `preferred_username`, `picture`, `locale`, `amr` / `acr`. Provider-specific claims, such as an `orgs` claim for roles, are read through config, never hard-coded.
 - **Identity key:** the pair (`issuer`, `sub`), stored in a `user_identities` table.
 
 ## Usage
@@ -92,7 +92,7 @@ The identity key is (`issuer`, `sub`), stored in `user_identities`. On each logi
 3. Otherwise, with `OIDC_JIT`, a new user is created if the email domain is in `oidc.allowed_domains` (empty allows all). An existing account with that email is never duplicated.
 4. Otherwise the login is refused.
 
-Users with `false` in `oidc.users.active_column` (for example `is_active`) are always refused. The default JIT provisioning fills `name`, `email`, an unusable random password and `email_verified_at`. Apps with other columns or a default role bind their own provisioning:
+Users with `false` in `oidc.users.active_column` (for example `is_active`) are always refused. The default JIT provisioning fills `name` (the `name` claim, else `given_name` + `family_name`), `email`, an unusable random password and `email_verified_at`. Apps with `first_name` / `last_name` columns use `$identity->personName()`: it returns `given_name` / `family_name`, or `name` split with the last word as the family name. Apps with other columns or a default role bind their own provisioning:
 
 ```php
 $this->app->bind(UserProvisioningContract::class, ProvisionSsoUserService::class);

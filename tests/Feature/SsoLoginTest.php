@@ -143,6 +143,28 @@ it('provisions a new user just in time and reuses it on the next login', functio
     expect(User::query()->count())->toBe(1)->and(UserIdentity::query()->count())->toBe(1);
 });
 
+it('provisions the name from given_name and family_name when the IdP sends no name', function (): void {
+    ssoLogin($this, fakeProvider(['jit' => true]), ['name' => null, 'given_name' => 'Grace', 'family_name' => 'Hopper'])->assertRedirect('/');
+
+    expect(User::query()->sole()->name)->toBe('Grace Hopper');
+});
+
+it('exposes the person name of the identity for first_name / last_name apps', function (): void {
+    app()->bind(UserProvisioningContract::class, fn () => new class implements UserProvisioningContract
+    {
+        public function provision(AuthenticatedIdentityData $identity, string $email): User
+        {
+            $personName = $identity->personName();
+
+            return localUser($email, ['name' => $personName?->familyName.', '.$personName?->givenName]);
+        }
+    });
+
+    ssoLogin($this, fakeProvider(['jit' => true]), ['given_name' => 'Ada', 'family_name' => 'Lovelace'])->assertRedirect('/');
+
+    expect(User::query()->sole()->name)->toBe('Lovelace, Ada');
+});
+
 it('provisions only allowed email domains', function (): void {
     $identityProvider = fakeProvider(['jit' => true, 'allowed_domains' => ['Example.com']]);
 

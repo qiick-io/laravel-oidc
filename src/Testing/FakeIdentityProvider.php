@@ -196,6 +196,8 @@ final class FakeIdentityProvider
             'email' => 'sso.user@example.com',
             'email_verified' => true,
             'name' => 'Sso User',
+            'given_name' => 'Sso',
+            'family_name' => 'User',
             ...$overrides,
         ];
     }
@@ -379,7 +381,7 @@ final class FakeIdentityProvider
         $idTokenClaims = $this->idTokenClaims([...$nonceClaim, ...$issuedCode['claims']]);
         $accessToken = bin2hex(random_bytes(16));
         $this->issuedAccessTokens[$accessToken] = [
-            ...array_intersect_key($idTokenClaims, array_flip(['sub', 'email', 'email_verified', 'name'])),
+            ...array_intersect_key($idTokenClaims, array_flip(['sub', 'email', 'email_verified', 'name', 'given_name', 'family_name'])),
             ...$issuedCode['userinfo_claims'],
         ];
         $tokenResponse = [
