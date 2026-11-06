@@ -53,7 +53,7 @@ composer lint      # Pint --test
 composer analyse   # PHPStan
 ```
 
-Run all three before every push. CI (`.github/workflows/ci.yml`) runs PHP 8.3/8.4/8.5 × lowest/stable and Laravel 12/13.
+Run all three before every push. CI (`.github/workflows/ci.yml`) runs Pest on PHP 8.3/8.4/8.5 × Laravel 12/13 × lowest/stable, Pint and PHPStan on the stable cells, and the `keycloak` job (`pest --group=keycloak` against Keycloak 26).
 
 ## Code conventions ("Codice Perfetto")
 
@@ -71,7 +71,7 @@ Also in `.cursor/rules/code-craftsmanship.mdc` and `.cursor/rules/testing.mdc`; 
 - Branch from `develop` as `<type>/<slug>`; Conventional Commits in English; PRs into `develop`, squash-merged.
 - Merge only with Luca's explicit OK. Never push to `main`. No tags, releases or Packagist (`.cursor/rules/no-auto-release.mdc`).
 - The repository is **private**. Never change its visibility.
-- The GitHub token has no `workflow` scope: a push that adds or changes `.github/workflows/*` fails. Put workflow changes in their own commit and give Luca the push command.
+- The `LucaGiardi20` gh token has the `workflow` scope (since 2026-11-05), so workflow changes go through normal PRs. If a push is refused for a missing `workflow` scope, ask Luca to run `gh auth refresh -h github.com -s workflow`.
 
 ## Identity and security
 
