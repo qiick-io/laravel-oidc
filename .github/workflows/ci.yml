@@ -69,6 +69,10 @@ jobs:
         if: matrix.dependency-version == 'stable'
         run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
 
+      # Level max with no baseline: the ratchet fails if a baseline ever appears.
+      - name: Larastan baseline only shrinks
+        run: node scripts/qiick-ratchet.mjs phpstan
+
       - name: Pest
         run: vendor/bin/pest
 
@@ -110,3 +114,10 @@ jobs:
         env:
           KEYCLOAK_URL: http://localhost:8080
         run: vendor/bin/pest --group=keycloak
+
+  # The qiick standards pack (agent files, architecture test) must match app-ui.
+  standards:
+    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@develop
+    with:
+      standards: true
+      registry: false
