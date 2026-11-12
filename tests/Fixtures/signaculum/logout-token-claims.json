@@ -1,0 +1,12 @@
+{
+    "iss": "https://id.example.test",
+    "aud": "signaculum-test-client",
+    "iat": 1762984800,
+    "exp": 1762984920,
+    "jti": "01m78examplejti000000000000",
+    "sub": "019a0000-0000-7000-8000-000000000001",
+    "sid": "01m78examplesid000000000000",
+    "events": {
+        "http://schemas.openid.net/event/backchannel-logout": {}
+    }
+}
