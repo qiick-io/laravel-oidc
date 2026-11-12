@@ -63,7 +63,7 @@ it('builds a Signaculum-shaped logout_token that back-channel logout accepts', f
             'jti' => $fixtureClaims['jti'],
             'iat' => $now,
             'exp' => $now + 120,
-            'events' => [BackChannelLogoutService::LOGOUT_EVENT => new \stdClass],
+            'events' => [BackChannelLogoutService::LOGOUT_EVENT => new stdClass],
         ]),
         ['typ' => 'logout+jwt'],
     );
