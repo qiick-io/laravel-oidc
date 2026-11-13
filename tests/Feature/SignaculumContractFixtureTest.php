@@ -34,6 +34,9 @@ it('accepts the Signaculum discovery fixture as a valid IdP profile', function (
         ->and($discovery['response_types_supported'])->toContain('code')
         ->and($discovery['code_challenge_methods_supported'])->toContain('S256')
         ->and($discovery['claims_supported'])->toContain('sid')
+        ->and($discovery['claims_supported'])->toContain('amr')
+        ->and($discovery['claims_supported'])->toContain('acr')
+        ->and($discovery['acr_values_supported'])->toBe(['urn:qiick:loa:pwd', 'urn:qiick:loa:mfa'])
         ->and($discovery['backchannel_logout_supported'])->toBeTrue()
         ->and($discovery['backchannel_logout_session_supported'])->toBeTrue();
 });

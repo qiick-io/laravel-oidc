@@ -132,7 +132,7 @@ The default `RoleSynchronizationContract` calls spatie/laravel-permission's `has
 
 ### Second factor (MFA)
 
-When the app requires 2FA for a user, an SSO login counts only if the signed `id_token` proves MFA: an `amr` value in `oidc.mfa.amr_values` (default `['mfa']`, RFC 8176), or an `acr` in `oidc.mfa.acr_values`. Otherwise the callback hands over to the app's own challenge instead of signing the user in. The challenge must end with `Auth::login()`, and the package then completes the SSO session (identity for logout). `amr` and `acr` are never taken from the unsigned userinfo response.
+When the app requires 2FA for a user, an SSO login counts only if the signed `id_token` proves MFA: an `amr` value in `oidc.mfa.amr_values` (default `['mfa']`, RFC 8176), or an `acr` in `oidc.mfa.acr_values` (default `['urn:qiick:loa:mfa']`, Signaculum). Signaculum also emits `urn:qiick:loa:pwd` for password-only logins when `acr` was requested; that value is not accepted as MFA. Otherwise the callback hands over to the app's own challenge instead of signing the user in. The challenge must end with `Auth::login()`, and the package then completes the SSO session (identity for logout). `amr` and `acr` are never taken from the unsigned userinfo response. `amr` is always present on Signaculum id_tokens.
 
 The default `SecondFactorChallengeContract` reads `oidc.mfa.required` and starts Laravel Fortify's two-factor challenge (`login.id` / `login.remember` and the `two-factor.login` route) for a user with a confirmed TOTP secret. A user without a second factor is signed in, and the app's own enrollment rules apply, as after a password login. Apps bind their own implementation to read their "2FA required" setting:
 
@@ -213,7 +213,7 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.users.table` / `email_column` / `active_column` | `users` / `email` / `null` | The users table, its email column and an optional boolean "active" column. |
 | `oidc.break_glass.roles` / `require_two_factor` / `query_parameter` | `['super-admin']` / `true` / `local` | SSO-only mode, see above. |
 | `oidc.roles.*` | disabled | Role mapping, see above. |
-| `oidc.mfa.required` / `amr_values` / `acr_values` / `request_acr_values` | `false` / `['mfa']` / `[]` / `null` | Second factor, see above. |
+| `oidc.mfa.required` / `amr_values` / `acr_values` / `request_acr_values` | `false` / `['mfa']` / `['urn:qiick:loa:mfa']` / `null` | Second factor, see above. |
 | `oidc.post_logout_redirect_uri` | `null` | `null` means `{APP_URL}/`. Sent on RP-initiated logout. |
 | `oidc.userinfo` | `true` | Merge the userinfo claims into the identity. |
 | `oidc.routes.enabled` / `prefix` / `middleware` | `true` / `auth/oidc` / `['web', 'guest']` | The package routes; `middleware` applies to redirect and callback. |

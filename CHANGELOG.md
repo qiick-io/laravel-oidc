@@ -9,10 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Default `oidc.mfa.acr_values` is `['urn:qiick:loa:mfa']` so Signaculum MFA `acr` counts without extra config (pairs with signaculum-core #69). `urn:qiick:loa:pwd` is password-only and is not accepted as MFA.
 - Documented L4 defaults (Decision Luca, 2026-11-13): `oidc.auto_link` off, `oidc.require_verified_email` on with per-provider opt-out, no remember-me for SSO, and 2FA after SSO via the app challenge when `amr`/`acr` are missing.
 
 ### Upgrade notes
 
+- **`oidc.mfa.acr_values` now defaults to `['urn:qiick:loa:mfa']`.** Apps that relied on an empty list (accepting no `acr`) and only checked `amr` are unchanged in practice when Signaculum always sends `amr`. To ignore Signaculum `acr`, set `acr_values` back to `[]`.
 - **Auto-link is off by default.** Existing apps that relied on always-on email linking must set `OIDC_AUTO_LINK=true` (or the equivalent settings key) after adopting the package, or import identities with `oidc:import-legacy-subjects`.
 - **Verified email is required by default.** For Entra ID (no `email_verified`), set `oidc.require_verified_email` to `false` for that provider.
 - **SSO does not set a remember-me cookie** (`oidc.remember` defaults to `false`). Enable only if you accept cookies that outlive IdP logout.

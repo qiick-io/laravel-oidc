@@ -65,6 +65,7 @@ it('accepts MFA proven by the IdP', function (array $configOverrides, array $cla
     'amr mfa (RFC 8176)' => [[], ['amr' => ['pwd', 'mfa']]],
     'amr otp when accepted' => [['mfa.amr_values' => ['otp', 'hwk']], ['amr' => ['pwd', 'otp']]],
     'acr when accepted' => [['mfa.acr_values' => ['gold']], ['acr' => 'gold']],
+    'signaculum acr mfa (default)' => [[], ['acr' => 'urn:qiick:loa:mfa']],
 ]);
 
 it('runs the app second factor when the IdP did not prove MFA', function (array $claims): void {
@@ -81,6 +82,7 @@ it('runs the app second factor when the IdP did not prove MFA', function (array 
     'password only' => [['amr' => ['pwd']]],
     'amr not a list' => [['amr' => 'mfa']],
     'other acr' => [['acr' => 'silver']],
+    'signaculum password acr' => [['acr' => 'urn:qiick:loa:pwd']],
 ]);
 
 it('never trusts amr from the unsigned userinfo response', function (): void {

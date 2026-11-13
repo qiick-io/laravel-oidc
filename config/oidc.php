@@ -183,12 +183,16 @@ return [
 
         'amr_values' => ['mfa'],
 
-        'acr_values' => [],
+        /*
+         * Accepted `acr` values that count as MFA (Signaculum: `urn:qiick:loa:mfa`).
+         * Password-only Signaculum value is `urn:qiick:loa:pwd` and is not listed here.
+         */
+        'acr_values' => ['urn:qiick:loa:mfa'],
 
         /*
          * Sent as `acr_values` on the authorization request to ask the IdP
-         * for a stronger login (for example Keycloak step-up). Null sends
-         * nothing.
+         * for a stronger login (for example Keycloak step-up or Signaculum
+         * `urn:qiick:loa:mfa`). Null sends nothing.
          */
         'request_acr_values' => null,
 
