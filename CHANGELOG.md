@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documented L4 defaults (Decision Luca, 2026-11-13): `oidc.auto_link` off, `oidc.require_verified_email` on with per-provider opt-out, no remember-me for SSO, and 2FA after SSO via the app challenge when `amr`/`acr` are missing.
+
+### Upgrade notes
+
+- **Auto-link is off by default.** Existing apps that relied on always-on email linking must set `OIDC_AUTO_LINK=true` (or the equivalent settings key) after adopting the package, or import identities with `oidc:import-legacy-subjects`.
+- **Verified email is required by default.** For Entra ID (no `email_verified`), set `oidc.require_verified_email` to `false` for that provider.
+- **SSO does not set a remember-me cookie** (`oidc.remember` defaults to `false`). Enable only if you accept cookies that outlive IdP logout.
+- **SSO does not skip app 2FA.** When the app requires a second factor and the `id_token` has no accepted `amr`/`acr`, the package hands over to the app's challenge (Fortify by default).
+
 ### Added
 
 - Package skeleton: auto-discovered `OidcServiceProvider`, publishable `config/oidc.php` (tag `oidc-config`) with the env vars `OIDC_ENABLED`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_BUTTON_LABEL`, `OIDC_JIT`, `OIDC_AUTO_LINK` and `OIDC_ONLY`; Pest + Testbench, Pint, PHPStan at level max, an architecture test.

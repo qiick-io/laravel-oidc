@@ -80,7 +80,7 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, OidcSettingsRep
 
 ## 4. Linking and JIT
 
-- **Auto-link.** Today linking by email is always on. To keep logins working for users who have never signed in through SSO since the import, add a setting `oidc_auto_link`: default `true` on installs where `oidc_enabled` was already true, `false` on new ones. Show it next to the JIT switch with the warning from the README. **Decision for Luca.**
+- **Auto-link.** Package default `oidc.auto_link` / `OIDC_AUTO_LINK` is **`false`** (Decision Luca, 2026-11-13): opt in per provider for a trusted IdP. Today Externa/Excubia always auto-link by email; after migration keep logins working for users who have never signed in through SSO only by turning auto-link on (or by running `oidc:import-legacy-subjects` so identities already exist). Show the switch next to JIT with the warning from the README.
 - **Provisioning.** Bind `UserProvisioningContract` with the user creation each app does today. Take the names from `$identity->personName()`: it returns `given_name` → `first_name` and `family_name` → `last_name`, the rule agreed with Signaculum (its `profile` scope sends both). For IdPs without `given_name` it splits `name`, with the **last** word as the last name.
   - **Externa:** first and last name from `personName()`, `password = null`, `email_verified_at = now()`, `is_active = true`, then `default_user_role()` if it exists and `is_assignable`;
   - **Excubia App:** the same fields, plus the `reader` role (`RoleEnum::Reader`).
@@ -207,7 +207,7 @@ Add tests for:
 - [ ] `composer require qiick/laravel-oidc`, `migrate`, `oidc:import-legacy-subjects`
 - [ ] `ProviderConfigurationRepositoryContract` reads the `oidc_*` settings
 - [ ] `oidc.users.active_column = is_active`, `jit`, `allowed_domains`
-- [ ] Auto-link decision applied (`oidc_auto_link`)
+- [ ] Auto-link default applied (`OIDC_AUTO_LINK=false`; opt in only for a trusted IdP)
 - [ ] `UserProvisioningContract` (names, password `null`, default role)
 - [ ] `SecondFactorChallengeContract` reads `two_factor_required`
 - [ ] `canUseLocalLogin()` in `authenticateUsing` / `authorizeLoginUsing`
