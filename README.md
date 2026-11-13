@@ -53,8 +53,17 @@ Every key in `config/oidc.php` has an env var. They are defaults: an app can ove
 | `OIDC_CLIENT_SECRET` | `oidc.client_secret` | `null` | Client secret; `null` for a public client (PKCE only). |
 | `OIDC_BUTTON_LABEL` | `oidc.button_label` | `null` | Text of the SSO button on the login page. |
 | `OIDC_JIT` | `oidc.jit` | `false` | Create a local user on the first SSO login. |
-| `OIDC_AUTO_LINK` | `oidc.auto_link` | `false` | Link to an existing local user with the same verified email. Turn on only for a trusted IdP. |
+| `OIDC_AUTO_LINK` | `oidc.auto_link` | `false` | Link to an existing local user with the same verified email. **Off by default** (Decision Luca, 2026-11-13); turn on only for a trusted IdP. |
 | `OIDC_ONLY` | `oidc.only` | `false` | SSO-only mode: hide the password form; a break-glass local admin still works. |
+
+### Defaults recorded for v1.0.0-beta.1 (L4)
+
+| Topic | Default | Notes |
+| --- | --- | --- |
+| Auto-link (`oidc.auto_link`) | **off** | Opt in per provider. Existing Externa/Excubia installs that always auto-linked must set `OIDC_AUTO_LINK=true` (or their settings UI) after migration if they still need email linking. |
+| Verified email (`oidc.require_verified_email`) | **on** | Auto-link and JIT need `email_verified: true`. Per-provider opt-out for IdPs that never send the claim (Entra ID). |
+| Remember-me for SSO (`oidc.remember`) | **off** | A remember cookie would outlive the IdP session and a back-channel logout. |
+| 2FA after SSO | App challenge when `id_token` lacks accepted `amr` / `acr` | See “Second factor (MFA)” below; release notes must say SSO does not skip the app's 2FA. |
 
 ## Protocol profile
 
@@ -197,8 +206,8 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | Config key | Default | Meaning |
 | --- | --- | --- |
 | `oidc.allowed_domains` | `[]` | JIT only for these email domains; empty allows all. |
-| `oidc.require_verified_email` | `true` | Auto-link and JIT need `email_verified: true`. Turn off only for an IdP whose emails the organisation controls (Entra ID sends no `email_verified`). |
-| `oidc.remember` | `false` | Use the remember-me cookie for SSO logins. |
+| `oidc.require_verified_email` | `true` | Auto-link and JIT need `email_verified: true` (**on by default**, Decision Luca, 2026-11-13). Turn off only for an IdP whose emails the organisation controls (Entra ID sends no `email_verified`). |
+| `oidc.remember` | `false` | Use the remember-me cookie for SSO logins (**off by default**; a remember cookie would outlive IdP logout). |
 | `oidc.home` / `oidc.login_url` | `/` / `/login` | Where a successful and a failed SSO login land. |
 | `oidc.users.model` | `null` | The user model; `null` uses `auth.providers.users.model`. |
 | `oidc.users.table` / `email_column` / `active_column` | `users` / `email` / `null` | The users table, its email column and an optional boolean "active" column. |
