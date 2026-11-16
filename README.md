@@ -11,8 +11,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![PHP](https://img.shields.io/badge/PHP-%5E8.3-777BB4?logo=php&logoColor=white)](./composer.json)
 [![Laravel](https://img.shields.io/badge/Laravel-12%20%7C%2013-FF2D20?logo=laravel&logoColor=white)](./composer.json)
+[![Version](https://img.shields.io/badge/version-1.0.0--beta.1-orange.svg)](./CHANGELOG.md)
 
-> **Status:** in development, not released. Nothing here is a stable contract yet.
+> **Status:** `1.0.0-beta.1`. Pre-release: APIs and config may still change before `1.0.0`. See [CHANGELOG](./CHANGELOG.md) Upgrade notes.
 
 `qiick/laravel-oidc` is an OpenID Connect client for Laravel apps: PKCE, `id_token` validation, logout, role mapping. It works with any standard identity provider: Keycloak, Zitadel, Authentik, Microsoft Entra ID, Google Workspace or Signaculum. It is the shared SSO login of the [qiick](https://qiick.io) apps and replaces the OIDC client that Externa and Excubia App each carry today.
 
@@ -20,8 +21,10 @@ SSO is optional. An app that installs the package keeps its local login (email a
 
 ## Requirements
 
-- PHP 8.3 or newer
-- Laravel 12 or 13
+- PHP 8.3, 8.4 or 8.5 (`^8.3` in `composer.json`)
+- Laravel 12 or 13 (`illuminate/*` `^12.0 || ^13.0`)
+
+CI runs Pest on every cell of PHP 8.3/8.4/8.5 × Laravel 12/13 × lowest/stable, plus end-to-end jobs against Keycloak 26, Signaculum and Zitadel.
 
 ## Installation
 
@@ -260,13 +263,17 @@ composer lint      # Pint
 composer analyse   # PHPStan, level max
 ```
 
-The default suite never uses the network. The end-to-end tests against real IdPs run in CI (`keycloak`, `zitadel`, …) and locally with Docker:
+The default suite never uses the network. The end-to-end tests against real IdPs run in CI (`keycloak`, `signaculum`, `zitadel`) and locally with Docker:
 
 ```bash
 docker run -d --name laravel-oidc-keycloak -p 8180:8080 \
   -v "$PWD/tests/Fixtures/Keycloak:/opt/keycloak/data/import:ro" \
   quay.io/keycloak/keycloak:26.2 start-dev --import-realm
 KEYCLOAK_URL=http://localhost:8180 vendor/bin/pest --group=keycloak
+
+bash tests/Fixtures/signaculum/prepare.sh   # Signaculum from a sibling checkout
+source "${TMPDIR:-/tmp}/laravel-oidc-signaculum-run/env.sh"
+vendor/bin/pest --group=signaculum
 
 bash tests/Fixtures/zitadel/prepare.sh   # Zitadel v4.16.0 + Postgres 17.10
 source "${TMPDIR:-/tmp}/laravel-oidc-zitadel-run/env.sh"

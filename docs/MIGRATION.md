@@ -10,8 +10,8 @@ Read this first. The first four points are deliberate behaviour changes from the
 
 | Today | With the package | Why |
 | --- | --- | --- |
-| A matching verified email always links an unknown SSO identity to the local user. | Only with auto-link on (`OIDC_AUTO_LINK`, off by default). | An IdP that lets users choose their email could take over accounts. **Decision needed:** keep it on for installs that already use SSO (see step 4). |
-| An SSO login skips the app's 2FA, even with `two_factor_required`. | With `two_factor_required`, an SSO login counts only if the `id_token` shows MFA (`amr` contains `mfa`); otherwise the app's TOTP challenge runs. | Closes the documented gap. |
+| A matching verified email always links an unknown SSO identity to the local user. | Only with auto-link on (`OIDC_AUTO_LINK`, **off by default**, Decision Luca 2026-11-13). | An IdP that lets users choose their email could take over accounts. Existing SSO installs that still need email linking must turn auto-link on (or run `oidc:import-legacy-subjects`; see step 4). |
+| An SSO login skips the app's 2FA, even with `two_factor_required`. | With `two_factor_required`, an SSO login counts only if the `id_token` shows MFA (`amr` in `oidc.mfa.amr_values` or `acr` in `oidc.mfa.acr_values`); otherwise the app's TOTP challenge runs. | Closes the documented gap. Release notes: SSO does not skip the app's 2FA. |
 | SSO logins set the remember-me cookie (Externa: `Auth::login($user, remember: true)`). | No remember-me cookie (`oidc.remember` is off). | A remember cookie would outlive the IdP session and a back-channel logout. |
 | Identity data comes from userinfo only, without `id_token` validation, PKCE or `nonce`. | Authorization code flow with PKCE `S256`, `state` and `nonce`; the `id_token` is validated; userinfo is added on top. | Protocol profile, design section 3. |
 | Logout ends the local session only. | RP-initiated logout also ends the IdP session; back-channel logout from the IdP ends local sessions. | Design section 3, "Logout". |
