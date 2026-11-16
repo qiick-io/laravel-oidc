@@ -115,6 +115,86 @@ jobs:
           KEYCLOAK_URL: http://localhost:8080
         run: vendor/bin/pest --group=keycloak
 
+  signaculum:
+    name: Signaculum end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # Same-org private checkout: set QIICK_CHECKOUT_TOKEN (repo read on
+      # qiick-io/signaculum-core) when GITHUB_TOKEN cannot reach that repo.
+      - name: Checkout Signaculum
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: qiick-io/signaculum-core
+          ref: develop
+          path: .signaculum
+          token: ${{ secrets.QIICK_CHECKOUT_TOKEN || github.token }}
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+          extensions: bcmath, intl, pcntl, pdo_sqlite, zip
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: .signaculum/package-lock.json
+
+      - name: Install package dependencies
+        run: composer update --no-interaction --prefer-dist
+
+      - name: Install Signaculum dependencies
+        working-directory: .signaculum
+        run: |
+          composer install --no-interaction --prefer-dist
+          npm ci
+          npm run build
+
+      - name: Prepare Signaculum
+        env:
+          SIGNACULUM_DIR: ${{ github.workspace }}/.signaculum
+          SIGNACULUM_URL: http://127.0.0.1:8090
+          SIGNACULUM_PORT: '8090'
+          BACKCHANNEL_PORT: '8091'
+          SIGNACULUM_RUN_STATE_DIR: ${{ runner.temp }}/laravel-oidc-signaculum-run
+          SIGNACULUM_CREDENTIALS: ${{ runner.temp }}/laravel-oidc-signaculum-run/credentials.json
+          SIGNACULUM_BACKCHANNEL_CAPTURE: ${{ runner.temp }}/laravel-oidc-signaculum-logout-token.txt
+        run: bash tests/Fixtures/signaculum/prepare.sh
+
+      - name: Start Signaculum and back-channel receiver
+        env:
+          SIGNACULUM_RUN_STATE_DIR: ${{ runner.temp }}/laravel-oidc-signaculum-run
+        run: |
+          # shellcheck disable=SC1090
+          source "${SIGNACULUM_RUN_STATE_DIR}/env.sh"
+          php -S 127.0.0.1:${BACKCHANNEL_PORT} tests/Fixtures/signaculum/backchannel-receiver.php > "${RUNNER_TEMP}/backchannel-receiver.log" 2>&1 &
+          (cd "${SIGNACULUM_DIR}" && php artisan serve --host=127.0.0.1 --port="${SIGNACULUM_PORT}") > "${RUNNER_TEMP}/signaculum-serve.log" 2>&1 &
+          for attempt in $(seq 1 60); do
+            curl -sf "${SIGNACULUM_URL}/.well-known/openid-configuration" > /dev/null && exit 0
+            sleep 2
+          done
+          echo '--- signaculum serve ---'
+          cat "${RUNNER_TEMP}/signaculum-serve.log" || true
+          echo '--- backchannel ---'
+          cat "${RUNNER_TEMP}/backchannel-receiver.log" || true
+          exit 1
+
+      - name: Pest (Signaculum)
+        env:
+          SIGNACULUM_RUN_STATE_DIR: ${{ runner.temp }}/laravel-oidc-signaculum-run
+        run: |
+          # shellcheck disable=SC1090
+          source "${SIGNACULUM_RUN_STATE_DIR}/env.sh"
+          vendor/bin/pest --group=signaculum
+
   zitadel:
     name: Zitadel end to end
     runs-on: ubuntu-latest
