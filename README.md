@@ -126,7 +126,7 @@ Off by default (`oidc.roles.enabled`). At every SSO login, before the user is si
 - Only the app roles that appear as values of `map` are ever granted or revoked. Every other local role is left alone.
 - `super-admin` and the `forbidden` roles are never granted, even when mapped, and never revoked, so the break-glass admin stays local.
 - Without the claim in the login, local roles stay as they are. A user missing from the configured organisation loses the mapped roles.
-- For an IdP with a flat role or group list, set `claim` to its path (Keycloak `realm_access.roles`, Entra ID `roles`) and leave `organization` null.
+- For an IdP with a flat role or group list, set `claim` to its path (Keycloak `realm_access.roles`, Entra ID `roles`) and leave `organization` null. Zitadel's `urn:zitadel:iam:org:project:roles` map (role name → org ids) is also accepted: the map keys are the role names. When Zitadel asserts project roles it also puts the project id in the id_token `aud`; add that project id to `oidc.id_token.trusted_audiences`.
 
 The default `RoleSynchronizationContract` calls spatie/laravel-permission's `hasRole` / `assignRole` / `removeRole`. A mapped role missing in the app is skipped with a warning.
 
@@ -260,13 +260,17 @@ composer lint      # Pint
 composer analyse   # PHPStan, level max
 ```
 
-The default suite never uses the network. The end-to-end tests against a real Keycloak 26 run in CI (`keycloak` job) and locally with Docker:
+The default suite never uses the network. The end-to-end tests against real IdPs run in CI (`keycloak`, `zitadel`, …) and locally with Docker:
 
 ```bash
 docker run -d --name laravel-oidc-keycloak -p 8180:8080 \
   -v "$PWD/tests/Fixtures/Keycloak:/opt/keycloak/data/import:ro" \
   quay.io/keycloak/keycloak:26.2 start-dev --import-realm
 KEYCLOAK_URL=http://localhost:8180 vendor/bin/pest --group=keycloak
+
+bash tests/Fixtures/zitadel/prepare.sh   # Zitadel v4.16.0 + Postgres 17.10
+source "${TMPDIR:-/tmp}/laravel-oidc-zitadel-run/env.sh"
+vendor/bin/pest --group=zitadel
 ```
 
 ## Contributing and security

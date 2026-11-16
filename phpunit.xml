@@ -14,6 +14,8 @@
         <exclude>
             <!-- Needs a running Keycloak: KEYCLOAK_URL=http://localhost:8080 vendor/bin/pest with the group option set to keycloak -->
             <group>keycloak</group>
+            <!-- Needs a running Zitadel: ZITADEL_URL=… vendor/bin/pest with the group option set to zitadel -->
+            <group>zitadel</group>
         </exclude>
     </groups>
     <source>
