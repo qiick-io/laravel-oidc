@@ -117,11 +117,27 @@ final readonly class RoleMappingService
     }
 
     /**
+     * Role names from a flat list (`["admin","member"]`) or from a map whose
+     * keys are the role names (Zitadel's `urn:zitadel:iam:org:project:roles`
+     * claim: `{"member":{"<orgId>":"<domain>"}}`).
+     *
      * @param  array<array-key, mixed>  $values
      * @return list<string>
      */
     private function stringList(array $values): array
     {
-        return array_values(array_filter($values, is_string(...)));
+        $roleNames = array_values(array_filter($values, is_string(...)));
+
+        if ($roleNames !== []) {
+            return $roleNames;
+        }
+
+        foreach ($values as $key => $value) {
+            if (is_string($key) && $key !== '' && is_array($value)) {
+                $roleNames[] = $key;
+            }
+        }
+
+        return $roleNames;
     }
 }

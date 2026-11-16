@@ -195,6 +195,41 @@ jobs:
           source "${SIGNACULUM_RUN_STATE_DIR}/env.sh"
           vendor/bin/pest --group=signaculum
 
+  zitadel:
+    name: Zitadel end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer update --no-interaction --prefer-dist
+
+      # Prepare boots Postgres 17.10 + Zitadel v4.16.0 (start-from-init, Login V1),
+      # writes a first-instance PAT, and seeds project / app / roles / user.
+      - name: Prepare Zitadel
+        env:
+          ZITADEL_PORT: '8085'
+          ZITADEL_RUN_STATE_DIR: ${{ runner.temp }}/laravel-oidc-zitadel-run
+          ZITADEL_CREDENTIALS: ${{ runner.temp }}/laravel-oidc-zitadel-run/credentials.json
+        run: bash tests/Fixtures/zitadel/prepare.sh
+
+      - name: Pest (Zitadel)
+        env:
+          ZITADEL_RUN_STATE_DIR: ${{ runner.temp }}/laravel-oidc-zitadel-run
+        run: |
+          # shellcheck disable=SC1090
+          source "${ZITADEL_RUN_STATE_DIR}/env.sh"
+          vendor/bin/pest --group=zitadel
+
   # The qiick standards pack (agent files, architecture test) must match app-ui.
   standards:
     uses: qiick-io/app-ui/.github/workflows/drift-check.yml@develop

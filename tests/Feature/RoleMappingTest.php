@@ -91,6 +91,20 @@ it('reads a flat role claim at a nested path (Keycloak realm roles)', function (
     expect($this->roleSynchronization->calls[0]['granted'])->toBe(['admin']);
 });
 
+it('reads role names from a Zitadel-style map claim', function (): void {
+    ssoLogin($this, roleMappedProvider([
+        'claim' => 'urn:zitadel:iam:org:project:roles',
+        'organization' => null,
+    ]), [
+        'urn:zitadel:iam:org:project:roles' => [
+            'member' => ['201982826478953724' => 'zitadel.localhost'],
+            'offline_access' => ['201982826478953724' => 'zitadel.localhost'],
+        ],
+    ]);
+
+    expect($this->roleSynchronization->calls[0]['granted'])->toBe(['editor']);
+});
+
 it('synchronizes Spatie-style roles without touching unmanaged ones', function (): void {
     $user = new UserWithRoles;
     $user->roleNames = ['super-admin', 'editor', 'auditor'];
