@@ -29,7 +29,11 @@ if [[ ! -f public/build/manifest.json ]]; then
   if [[ -n "${SIGNACULUM_VITE_BUILD:-}" && -f "${SIGNACULUM_VITE_BUILD}/manifest.json" ]]; then
     ln -sfn "${SIGNACULUM_VITE_BUILD}" public/build
   else
-    export PATH="${HOME}/.nvm/versions/node/v24.22.1/bin:${PATH}"
+    # Prefer the node already on PATH (CI: actions/setup-node; local: nvm use / .nvmrc).
+    if ! command -v node >/dev/null 2>&1; then
+      echo "node is required on PATH to build Signaculum's Vite assets" >&2
+      exit 1
+    fi
     npm ci
     npm run build
   fi
