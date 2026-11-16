@@ -7,22 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.1] - 2026-11-16
+
+First public beta of `qiick/laravel-oidc`: a generic OpenID Connect client for Laravel 12 and 13 (PHP `^8.3`).
+
+### Upgrade notes
+
+- **First install:** `composer require qiick/laravel-oidc:^1.0@beta`, then `php artisan vendor:publish --tag=oidc-config`, `php artisan migrate`, and `php artisan oidc:configure`. Prefer `@beta` until `1.0.0` is tagged.
+- **`oidc.mfa.acr_values` defaults to `['urn:qiick:loa:mfa']`.** Apps that relied on an empty list (accepting no `acr`) and only checked `amr` are unchanged in practice when Signaculum always sends `amr`. To ignore Signaculum `acr`, set `acr_values` back to `[]`.
+- **Auto-link is off by default.** Existing apps that relied on always-on email linking must set `OIDC_AUTO_LINK=true` (or the equivalent settings key) after adopting the package, or import identities with `oidc:import-legacy-subjects`.
+- **Verified email is required by default.** For Entra ID (no `email_verified`), set `oidc.require_verified_email` to `false` for that provider.
+- **SSO does not set a remember-me cookie** (`oidc.remember` defaults to `false`). Enable only if you accept cookies that outlive IdP logout.
+- **SSO does not skip app 2FA.** When the app requires a second factor and the `id_token` has no accepted `amr`/`acr`, the package hands over to the app's challenge (Fortify by default).
+- **Migrating from the copied Socialite client:** follow [`docs/MIGRATION.md`](./docs/MIGRATION.md).
+
 ### Changed
 
 - Default `oidc.mfa.acr_values` is `['urn:qiick:loa:mfa']` so Signaculum MFA `acr` counts without extra config (pairs with signaculum-core #69). `urn:qiick:loa:pwd` is password-only and is not accepted as MFA.
 - Documented L4 defaults (Decision Luca, 2026-11-13): `oidc.auto_link` off, `oidc.require_verified_email` on with per-provider opt-out, no remember-me for SSO, and 2FA after SSO via the app challenge when `amr`/`acr` are missing.
 
-### Upgrade notes
-
-- **`oidc.mfa.acr_values` now defaults to `['urn:qiick:loa:mfa']`.** Apps that relied on an empty list (accepting no `acr`) and only checked `amr` are unchanged in practice when Signaculum always sends `amr`. To ignore Signaculum `acr`, set `acr_values` back to `[]`.
-- **Auto-link is off by default.** Existing apps that relied on always-on email linking must set `OIDC_AUTO_LINK=true` (or the equivalent settings key) after adopting the package, or import identities with `oidc:import-legacy-subjects`.
-- **Verified email is required by default.** For Entra ID (no `email_verified`), set `oidc.require_verified_email` to `false` for that provider.
-- **SSO does not set a remember-me cookie** (`oidc.remember` defaults to `false`). Enable only if you accept cookies that outlive IdP logout.
-- **SSO does not skip app 2FA.** When the app requires a second factor and the `id_token` has no accepted `amr`/`acr`, the package hands over to the app's challenge (Fortify by default).
-
 ### Added
 
-- Zitadel end-to-end Pest group (`zitadel`) and fixtures under `tests/Fixtures/zitadel/` (Docker `start-from-init` with Postgres, Management API seed). Role mapping accepts Zitadel's map-shaped `urn:zitadel:iam:org:project:roles` claim (keys are role names).
+- Signaculum end-to-end Pest group (`signaculum`) and fixtures under `tests/Fixtures/signaculum/` (CI job `signaculum`, L2).
+- Zitadel end-to-end Pest group (`zitadel`) and fixtures under `tests/Fixtures/zitadel/` (Docker `start-from-init` with Postgres, Management API seed; CI job `zitadel`, L3). Role mapping accepts Zitadel's map-shaped `urn:zitadel:iam:org:project:roles` claim (keys are role names).
+- Signaculum wire-contract fixtures for discovery and `logout_token` claims aligned with `signaculum-core/docs/oidc-profile.md` (L1).
 - Package skeleton: auto-discovered `OidcServiceProvider`, publishable `config/oidc.php` (tag `oidc-config`) with the env vars `OIDC_ENABLED`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_BUTTON_LABEL`, `OIDC_JIT`, `OIDC_AUTO_LINK` and `OIDC_ONLY`; Pest + Testbench, Pint, PHPStan at level max, an architecture test.
 - Protocol layer (#2): discovery with exact issuer match, PKCE `S256` and code-flow checks, cached for 6 hours; the authorization code flow with PKCE `S256`, `state` and `nonce` (pending logins in the session, single use, 10 minutes, up to 5 tabs), RFC 9207 `iss` check, `client_secret_basic`, `client_secret_post` and public clients; `id_token` validation (asymmetric `alg` allowlist, JWKS signature with cached keys and a rate-limited refetch on an unknown `kid`, `iss`, `aud` with trusted extra audiences, `azp`, `exp`, `iat`, `nbf`, `sub`, `nonce`).
 - SSRF guard ported from Externa for every server-side IdP call (https only, no private, loopback, CGNAT or metadata addresses, DNS pinning, no redirects), with the Docker settings `OIDC_DISCOVERY_BASE`, `OIDC_SERVER_ORIGIN` and `OIDC_ALLOW_PRIVATE_HOSTS`.
@@ -46,3 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Dependencies
 
 - PHP `^8.3`, Laravel 12 and 13 (`illuminate/support`, `illuminate/http`, `illuminate/cache`), `firebase/php-jwt` `^7.0`, `guzzlehttp/guzzle` `^7.8 || ^8.0` (Guzzle 8 allowed since #10; Laravel 13 accepts it, Laravel 12 stays on Guzzle 7).
+
+[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.1...HEAD
+[1.0.0-beta.1]: https://github.com/qiick-io/laravel-oidc/releases/tag/v1.0.0-beta.1

@@ -197,8 +197,8 @@ src/Services/          *Service (discovery, JWKS, JWT validation, code flow, SSR
 src/Testing/           Fake* test doubles shipped for apps (FakeIdentityProvider)
 tests/Arch             NamingArchitectureTest
 tests/Feature          Pest on Testbench
-tests/Integration      end to end against Keycloak (group keycloak, KEYCLOAK_URL; CI job keycloak)
-tests/Fixtures         Keycloak realm for CI (test-only credentials)
+tests/Integration      end to end against Keycloak, Signaculum and Zitadel (groups `keycloak` / `signaculum` / `zitadel`; CI jobs of the same names)
+tests/Fixtures         Keycloak realm, Signaculum and Zitadel prepare scripts (test-only credentials)
 docs/MIGRATION.md      migration of Externa and Excubia App
 tests/Support          PackageTestCase
 ```
@@ -211,7 +211,7 @@ composer lint      # Pint --test
 composer analyse   # PHPStan
 ```
 
-Run all three before every push. CI (`.github/workflows/ci.yml`) runs Pest on PHP 8.3/8.4/8.5 × Laravel 12/13 × lowest/stable, Pint and PHPStan on the stable cells, and the `keycloak` job (`pest --group=keycloak` against Keycloak 26).
+Run all three before every push. CI (`.github/workflows/ci.yml`) runs Pest on PHP 8.3/8.4/8.5 × Laravel 12/13 × lowest/stable, Pint and PHPStan on the stable cells, and the IdP jobs `keycloak` (Keycloak 26), `signaculum` and `zitadel`.
 
 ## laravel-oidc rules
 

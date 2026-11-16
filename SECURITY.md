@@ -4,8 +4,8 @@
 
 | Version | Security fixes |
 | --- | --- |
-| Latest `0.x` minor | Yes, until `1.0.0` is released. |
-| Older `0.x` minors | No. |
+| `1.0.0-beta.1` | Yes, for this pre-release line. |
+| Older pre-releases / untagged `develop` | No. |
 
 ## Reporting a vulnerability
 
