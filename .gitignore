@@ -1,0 +1,6 @@
+/vendor
+/build
+/.phpunit.cache
+.phpunit.result.cache
+composer.lock
+/tests/Fixtures/signaculum/credentials.json

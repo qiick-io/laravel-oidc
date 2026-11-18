@@ -1,0 +1,69 @@
+{
+  "realm": "laravel-oidc",
+  "enabled": true,
+  "displayName": "laravel-oidc CI",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "verifyEmail": false,
+  "roles": {
+    "realm": [
+      { "name": "admin" },
+      { "name": "member" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "laravel-app",
+      "name": "laravel-oidc CI client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "ci-only-not-a-real-secret",
+      "redirectUris": ["http://localhost/auth/oidc/callback"],
+      "webOrigins": ["http://localhost"],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost",
+        "backchannel.logout.url": "http://localhost/auth/oidc/backchannel-logout",
+        "backchannel.logout.session.required": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm roles in id_token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "realm_access.roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "ada",
+      "email": "ada@example.com",
+      "emailVerified": true,
+      "firstName": "Ada",
+      "lastName": "Lovelace",
+      "enabled": true,
+      "requiredActions": [],
+      "realmRoles": ["member"],
+      "credentials": [
+        { "type": "password", "value": "ci-only-password", "temporary": false }
+      ]
+    }
+  ]
+}

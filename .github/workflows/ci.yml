@@ -1,0 +1,238 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: PHP ${{ matrix.php }} Laravel ${{ matrix.laravel }} ${{ matrix.dependency-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - '8.3'
+          - '8.4'
+          - '8.5'
+        laravel:
+          - '12'
+          - '13'
+        dependency-version:
+          - lowest
+          - stable
+        include:
+          - laravel: '12'
+            testbench: '10'
+          - laravel: '13'
+            testbench: '11'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: |
+          composer require --dev --no-interaction --no-update "orchestra/testbench:^${{ matrix.testbench }}.0"
+          composer require --no-interaction --no-update "illuminate/support:^${{ matrix.laravel }}.0"
+          if [ "${{ matrix.dependency-version }}" = "lowest" ]; then
+            composer update --no-interaction --prefer-dist --prefer-lowest --with-all-dependencies
+          else
+            composer update --no-interaction --prefer-dist --with-all-dependencies
+          fi
+
+      # Static analysis depends on the tool versions, not on the runtime floor:
+      # with --prefer-lowest, old polyfills (paragonie/random_compat 2.x via
+      # symfony/polyfill-uuid) redefine core functions without types.
+      - name: Pint
+        if: matrix.dependency-version == 'stable'
+        run: vendor/bin/pint --test
+
+      - name: PHPStan
+        if: matrix.dependency-version == 'stable'
+        run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+
+      # Level max with no baseline: the ratchet fails if a baseline ever appears.
+      - name: Larastan baseline only shrinks
+        run: node scripts/qiick-ratchet.mjs phpstan
+
+      - name: Pest
+        run: vendor/bin/pest
+
+  keycloak:
+    name: Keycloak 26 end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # Not a `services:` container: Keycloak needs the `start-dev --import-realm` arguments.
+      - name: Start Keycloak
+        run: |
+          docker run -d --name keycloak -p 8080:8080 \
+            -v "$PWD/tests/Fixtures/Keycloak:/opt/keycloak/data/import:ro" \
+            quay.io/keycloak/keycloak:26.2 start-dev --import-realm
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer update --no-interaction --prefer-dist
+
+      - name: Wait for Keycloak
+        run: |
+          for attempt in $(seq 1 60); do
+            curl -sf http://localhost:8080/realms/laravel-oidc/.well-known/openid-configuration > /dev/null && exit 0
+            sleep 3
+          done
+          docker logs keycloak
+          exit 1
+
+      - name: Pest (Keycloak)
+        env:
+          KEYCLOAK_URL: http://localhost:8080
+        run: vendor/bin/pest --group=keycloak
+
+  signaculum:
+    name: Signaculum end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # Same-org private checkout: set QIICK_CHECKOUT_TOKEN (repo read on
+      # qiick-io/signaculum-core) when GITHUB_TOKEN cannot reach that repo.
+      - name: Checkout Signaculum
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: qiick-io/signaculum-core
+          ref: develop
+          path: .signaculum
+          token: ${{ secrets.QIICK_CHECKOUT_TOKEN || github.token }}
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+          extensions: bcmath, intl, pcntl, pdo_sqlite, zip
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: .signaculum/package-lock.json
+
+      - name: Install package dependencies
+        run: composer update --no-interaction --prefer-dist
+
+      - name: Install Signaculum dependencies
+        working-directory: .signaculum
+        run: |
+          composer install --no-interaction --prefer-dist
+          npm ci
+          npm run build
+
+      - name: Prepare Signaculum
+        env:
+          SIGNACULUM_DIR: ${{ github.workspace }}/.signaculum
+          SIGNACULUM_URL: http://127.0.0.1:8090
+          SIGNACULUM_PORT: '8090'
+          BACKCHANNEL_PORT: '8091'
+          SIGNACULUM_RUN_STATE_DIR: ${{ runner.temp }}/laravel-oidc-signaculum-run
+          SIGNACULUM_CREDENTIALS: ${{ runner.temp }}/laravel-oidc-signaculum-run/credentials.json
+          SIGNACULUM_BACKCHANNEL_CAPTURE: ${{ runner.temp }}/laravel-oidc-signaculum-logout-token.txt
+        run: bash tests/Fixtures/signaculum/prepare.sh
+
+      - name: Start Signaculum and back-channel receiver
+        env:
+          SIGNACULUM_RUN_STATE_DIR: ${{ runner.temp }}/laravel-oidc-signaculum-run
+        run: |
+          # shellcheck disable=SC1090
+          source "${SIGNACULUM_RUN_STATE_DIR}/env.sh"
+          php -S 127.0.0.1:${BACKCHANNEL_PORT} tests/Fixtures/signaculum/backchannel-receiver.php > "${RUNNER_TEMP}/backchannel-receiver.log" 2>&1 &
+          (cd "${SIGNACULUM_DIR}" && php artisan serve --host=127.0.0.1 --port="${SIGNACULUM_PORT}") > "${RUNNER_TEMP}/signaculum-serve.log" 2>&1 &
+          for attempt in $(seq 1 60); do
+            curl -sf "${SIGNACULUM_URL}/.well-known/openid-configuration" > /dev/null && exit 0
+            sleep 2
+          done
+          echo '--- signaculum serve ---'
+          cat "${RUNNER_TEMP}/signaculum-serve.log" || true
+          echo '--- backchannel ---'
+          cat "${RUNNER_TEMP}/backchannel-receiver.log" || true
+          exit 1
+
+      - name: Pest (Signaculum)
+        env:
+          SIGNACULUM_RUN_STATE_DIR: ${{ runner.temp }}/laravel-oidc-signaculum-run
+        run: |
+          # shellcheck disable=SC1090
+          source "${SIGNACULUM_RUN_STATE_DIR}/env.sh"
+          vendor/bin/pest --group=signaculum
+
+  zitadel:
+    name: Zitadel end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer update --no-interaction --prefer-dist
+
+      # Prepare boots Postgres 17.10 + Zitadel v4.16.0 (start-from-init, Login V1),
+      # writes a first-instance PAT, and seeds project / app / roles / user.
+      - name: Prepare Zitadel
+        env:
+          ZITADEL_PORT: '8085'
+          ZITADEL_RUN_STATE_DIR: ${{ runner.temp }}/laravel-oidc-zitadel-run
+          ZITADEL_CREDENTIALS: ${{ runner.temp }}/laravel-oidc-zitadel-run/credentials.json
+        run: bash tests/Fixtures/zitadel/prepare.sh
+
+      - name: Pest (Zitadel)
+        env:
+          ZITADEL_RUN_STATE_DIR: ${{ runner.temp }}/laravel-oidc-zitadel-run
+        run: |
+          # shellcheck disable=SC1090
+          source "${ZITADEL_RUN_STATE_DIR}/env.sh"
+          vendor/bin/pest --group=zitadel
+
+  # The qiick standards pack (agent files, architecture test) must match app-ui.
+  standards:
+    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@develop
+    with:
+      standards: true
+      registry: false
