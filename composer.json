@@ -2,7 +2,6 @@
     "$schema": "https://getcomposer.org/schema.json",
     "name": "qiick/laravel-oidc",
     "description": "OpenID Connect client for Laravel: PKCE, id_token validation, logout, role mapping. Works with any IdP.",
-    "version": "1.0.0-beta.1",
     "type": "library",
     "keywords": [
         "qiick",
