@@ -108,6 +108,8 @@ it('refuses invalid logout tokens with 400', function (array $overrides): void {
     'other event' => [['events' => ['https://example.com/other-event' => new stdClass]]],
     'nonce present (an id_token)' => [['nonce' => 'abc']],
     'neither sub nor sid' => [['sub' => null, 'sid' => null]],
+    'sub with a trailing space' => [['sub' => 'fake-subject-1 ']],
+    'sub with a leading space' => [['sub' => ' fake-subject-1']],
     'no jti' => [['jti' => null]],
     'other audience' => [['aud' => 'other-app']],
     'other issuer' => [['iss' => 'https://evil.example.com']],

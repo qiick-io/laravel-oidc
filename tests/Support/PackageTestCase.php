@@ -32,12 +32,16 @@ abstract class PackageTestCase extends TestCase
      * The web group encrypts cookies, so the app needs a key. It is random
      * per run: nothing secret is committed.
      *
+     * The database is in-memory SQLite unless the process environment names
+     * another connection: CI runs the suite on MySQL and MariaDB as well,
+     * because their default collations compare the identity key differently.
+     *
      * @param  Application  $app
      */
     protected function defineEnvironment($app): void
     {
         $app['config']->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
-        $app['config']->set('database.default', 'testing');
+        $app['config']->set('database.default', getenv('DB_CONNECTION') ?: 'testing');
         $app['config']->set('auth.providers.users.model', User::class);
     }
 }

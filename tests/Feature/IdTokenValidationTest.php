@@ -155,6 +155,10 @@ it('refuses a missing, empty or oversized sub', function (mixed $subject): void 
     validateIdToken(signedIdToken($this->identityProvider, ['sub' => $subject]));
 })->throws(InvalidTokenException::class, '[sub]')->with([null, '', 42, str_repeat('a', 256)]);
 
+it('refuses a sub with leading or trailing whitespace', function (string $subject): void {
+    validateIdToken(signedIdToken($this->identityProvider, ['sub' => $subject]));
+})->throws(InvalidTokenException::class, '[sub] has leading or trailing whitespace')->with([' AbcSubject', 'AbcSubject ', "AbcSubject\t", "\nAbcSubject", ' ']);
+
 it('caches the JWKS and refetches it once when the IdP rotates its key', function (): void {
     validateIdToken(signedIdToken($this->identityProvider));
     validateIdToken(signedIdToken($this->identityProvider));
