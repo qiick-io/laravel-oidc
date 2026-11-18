@@ -76,6 +76,68 @@ jobs:
       - name: Pest
         run: vendor/bin/pest
 
+  # The identity key (issuer, subject) is case-sensitive, and the MySQL family's
+  # default collations are not: the suite runs on each server engine the package
+  # supports, not only on in-memory SQLite.
+  databases:
+    name: Pest on ${{ matrix.database.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        database:
+          - name: MySQL 8.4
+            connection: mysql
+            image: mysql:8.4
+            port: 3306
+            options: >-
+              -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -e MYSQL_DATABASE=laravel_oidc
+              --health-cmd="mysqladmin ping -h 127.0.0.1" --health-interval=5s --health-retries=20
+          - name: MariaDB 10.11
+            connection: mariadb
+            image: mariadb:10.11
+            port: 3306
+            options: >-
+              -e MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=yes -e MARIADB_DATABASE=laravel_oidc
+              --health-cmd="healthcheck.sh --connect --innodb_initialized" --health-interval=5s --health-retries=20
+          - name: PostgreSQL 17
+            connection: pgsql
+            image: postgres:17
+            port: 5432
+            options: >-
+              -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=laravel_oidc
+              --health-cmd="pg_isready -U postgres" --health-interval=5s --health-retries=20
+    services:
+      database:
+        image: ${{ matrix.database.image }}
+        ports:
+          - ${{ matrix.database.port }}:${{ matrix.database.port }}
+        options: ${{ matrix.database.options }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer update --no-interaction --prefer-dist
+
+      - name: Pest
+        env:
+          DB_CONNECTION: ${{ matrix.database.connection }}
+          DB_HOST: 127.0.0.1
+          DB_PORT: ${{ matrix.database.port }}
+          DB_DATABASE: laravel_oidc
+          DB_USERNAME: ${{ matrix.database.connection == 'pgsql' && 'postgres' || 'root' }}
+          DB_PASSWORD: ''
+        run: vendor/bin/pest
+
   keycloak:
     name: Keycloak 26 end to end
     runs-on: ubuntu-latest
