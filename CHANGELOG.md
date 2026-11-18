@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.2] - 2026-11-18
+
 ### Upgrade notes
 
 - **Run `php artisan migrate` after updating.** The new migration `2026_11_18_000000_make_user_identity_keys_case_sensitive` changes `user_identities.issuer` and `subject` to `utf8mb4` / `utf8mb4_bin` on MySQL and MariaDB; on PostgreSQL and SQLite it does nothing. The `2026_11_05` create migration is unchanged, because beta.1 is released and migrations are forward-only. An app that published the migrations (`vendor:publish --tag=oidc-migrations`) publishes again to get the new file. The change cannot fail on existing rows: the old case-insensitive unique index could never hold two keys that differ only in case.
@@ -21,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - CI runs the Pest suite on MySQL 8.4, MariaDB 10.11 and PostgreSQL 17 as well as SQLite (job `databases`); the test case uses the connection named by `DB_CONNECTION` in the process environment.
+
+### Fixed
+
+- **Security: the back-channel logout check now runs before `auth`, not after.** The service provider appended `EnsureOidcSessionIsActiveMiddleware` to the `web` group, but Laravel's middleware priority list reorders a group and places anything it does not name after everything it does — and `AuthenticatesRequests` is named. So `auth` ran first, and the first request after a back-channel logout passed `auth` as an authenticated user and reached the controller with a session the identity provider had already ended. The middleware is now inserted with `addToMiddlewarePriorityBefore(AuthenticatesRequests::class, …)`: after `StartSession`, which it needs in order to see the SSO identity, and before `auth`, which its own contract requires. Two regression tests pin it — a route behind `auth`, and the resolved order `StartSession < check < auth`. Found by the first real adoption of the package (qiick-io/instituta-core#355), which had worked around it in its own `bootstrap/app.php`; that workaround can be removed (#35).
+
+### Changed
+
+- `composer.json` no longer carries a hardcoded `"version"`. Packagist derives the version from the git tag, so the field was redundant and would have been able to disagree with a later tag with no test objecting (#31).
+- The qiick standards pack is pinned to **app-ui v0.9.0** instead of tracking its `develop` branch. A drift check that follows a moving branch passes because the target moved, not because the repository is aligned (#34).
+
 
 ## [1.0.0-beta.1] - 2026-11-16
 
@@ -70,5 +82,6 @@ First public beta of `qiick/laravel-oidc`: a generic OpenID Connect client for L
 
 - PHP `^8.3`, Laravel 12 and 13 (`illuminate/support`, `illuminate/http`, `illuminate/cache`), `firebase/php-jwt` `^7.0`, `guzzlehttp/guzzle` `^7.8 || ^8.0` (Guzzle 8 allowed since #10; Laravel 13 accepts it, Laravel 12 stays on Guzzle 7).
 
-[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.1...HEAD
+[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.2...HEAD
+[1.0.0-beta.2]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.1...v1.0.0-beta.2
 [1.0.0-beta.1]: https://github.com/qiick-io/laravel-oidc/releases/tag/v1.0.0-beta.1
