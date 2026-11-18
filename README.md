@@ -77,7 +77,7 @@ What the package implements, from the accepted Signaculum SSO design (2026-11-05
 - **Session:** after the callback the app keeps its own Laravel session, regenerated. Access and refresh tokens are not stored.
 - **Logout:** RP-initiated logout (`end_session_endpoint`, `id_token_hint`, `post_logout_redirect_uri`) and back-channel logout (signed `logout_token`, matched by `sid` / `sub`). No front-channel logout.
 - **Claims:** `sub`, `email`, `email_verified`, `name`, `given_name`, `family_name`, `preferred_username`, `picture`, `locale`, `amr` / `acr`. Provider-specific claims, such as an `orgs` claim for roles, are read through config, never hard-coded.
-- **Identity key:** the pair (`issuer`, `sub`), stored in a `user_identities` table.
+- **Identity key:** the pair (`issuer`, `sub`), stored in a `user_identities` table and compared byte for byte on every database (binary collation on MySQL and MariaDB). A `sub` with leading or trailing whitespace is refused.
 
 ## Usage
 

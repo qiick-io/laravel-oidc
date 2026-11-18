@@ -3,11 +3,15 @@
 declare(strict_types=1);
 
 use Illuminate\Auth\GenericUser;
+use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
+use Illuminate\Contracts\Http\Kernel;
+use Illuminate\Session\Middleware\StartSession;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use Qiick\Oidc\Data\IdentitySessionData;
+use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
 use Qiick\Oidc\Services\IdentitySessionService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
 use Tests\TestCase;
@@ -16,6 +20,12 @@ beforeEach(function (): void {
     $this->identityProvider = FakeIdentityProvider::fake();
 
     Route::middleware('web')->get('/probe', fn () => auth()->check() ? 'signed-in' : 'guest');
+    // A route behind `auth`: this is where the middleware priority list matters, because `auth`
+    // is in that list and the package's session check has to be ordered ahead of it. The `/probe`
+    // route above cannot catch an ordering bug, since `web` alone is never reordered.
+    Route::middleware(['web', 'auth'])->get('/guarded', fn () => 'reached the controller');
+    // `auth` redirects guests to the `login` route, which the package's test app does not define.
+    Route::middleware('web')->get('/login', fn () => 'login')->name('login');
 });
 
 /**
@@ -98,6 +108,8 @@ it('refuses invalid logout tokens with 400', function (array $overrides): void {
     'other event' => [['events' => ['https://example.com/other-event' => new stdClass]]],
     'nonce present (an id_token)' => [['nonce' => 'abc']],
     'neither sub nor sid' => [['sub' => null, 'sid' => null]],
+    'sub with a trailing space' => [['sub' => 'fake-subject-1 ']],
+    'sub with a leading space' => [['sub' => ' fake-subject-1']],
     'no jti' => [['jti' => null]],
     'other audience' => [['aud' => 'other-app']],
     'other issuer' => [['iss' => 'https://evil.example.com']],
@@ -134,4 +146,30 @@ it('answers 404 while SSO is off', function (): void {
     Config::set('oidc.enabled', false);
 
     postLogoutToken($this, $this->identityProvider)->assertNotFound();
+});
+
+/**
+ * Regression: the package appends its session check to the `web` group, but Laravel's priority
+ * list pulls `auth` ahead of anything it does not list, so without an explicit position the first
+ * request after a back-channel logout reached the controller authenticated.
+ */
+it('does not let a revoked session reach a route behind auth', function (): void {
+    postLogoutToken($this, $this->identityProvider, ['sid' => 'fake-session-1'])->assertOk();
+
+    $this->actingAs(new GenericUser(['id' => 1, 'remember_token' => null]))
+        ->withSession(ssoSession('fake-session-1'))
+        ->get('/guarded')
+        ->assertRedirect('/login');
+});
+
+it('orders its session check after the session starts and before auth', function (): void {
+    $priority = app(Kernel::class)->getMiddlewarePriority();
+
+    $session = array_search(EnsureOidcSessionIsActiveMiddleware::class, $priority, true);
+    $startSession = array_search(StartSession::class, $priority, true);
+    $auth = array_search(AuthenticatesRequests::class, $priority, true);
+
+    expect($session)->not->toBeFalse()
+        ->and($startSession)->toBeLessThan($session)
+        ->and($session)->toBeLessThan($auth);
 });

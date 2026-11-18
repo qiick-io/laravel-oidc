@@ -9,6 +9,7 @@ use Illuminate\Auth\Events\Validated;
 use Illuminate\Cache\CacheManager;
 use Illuminate\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Auth\Factory as AuthFactory;
+use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
@@ -195,6 +196,17 @@ final class OidcServiceProvider extends ServiceProvider
         if ($httpKernel instanceof HttpKernel) {
             // Through the kernel, not the router: the kernel re-syncs its groups onto the router.
             $httpKernel->appendMiddlewareToGroup('web', EnsureOidcSessionIsActiveMiddleware::class);
+
+            // Appending to the group is not enough. The priority list reorders the group, and
+            // `auth` is in that list while this middleware is not, so `auth` would run first:
+            // the request after a back-channel logout would pass `auth` and reach the controller
+            // with a session the identity provider has already ended. Insert it immediately
+            // before `auth` — not at the head of the list, which would also put it before
+            // `StartSession`, where there is no session to inspect and it silently does nothing.
+            $httpKernel->addToMiddlewarePriorityBefore(
+                AuthenticatesRequests::class,
+                EnsureOidcSessionIsActiveMiddleware::class,
+            );
         }
 
         if ($this->config($this->app)->boolean('oidc.routes.enabled', true) && ! $this->app->routesAreCached()) {

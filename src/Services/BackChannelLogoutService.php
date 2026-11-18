@@ -70,6 +70,12 @@ final readonly class BackChannelLogoutService
             throw new InvalidTokenException('logout_token has neither [sub] nor [sid].');
         }
 
+        // As for the id_token: an untrimmed `sub` compares equal to another identity's on the
+        // MySQL family and would cycle that user's remember token.
+        if ($subject !== null && trim($subject) !== $subject) {
+            throw new InvalidTokenException('logout_token [sub] has leading or trailing whitespace.');
+        }
+
         $this->assertFirstUse($claims, $discovery->issuer);
 
         $logout = new LogoutTokenData($discovery->issuer, $subject, $sessionId);
