@@ -320,7 +320,17 @@ final readonly class RemoteUrlGuardService
             return null;
         }
 
-        return long2ip($value * 256 ** $remainingBytes + $last);
+        // Built by hand: long2ip() is string|false on PHP 8.3 stubs and string on 8.4+,
+        // and PHPStan at level max rejects either a false-check or an unchecked return.
+        $ipLong = $value * 256 ** $remainingBytes + $last;
+
+        return sprintf(
+            '%d.%d.%d.%d',
+            ($ipLong >> 24) & 0xFF,
+            ($ipLong >> 16) & 0xFF,
+            ($ipLong >> 8) & 0xFF,
+            $ipLong & 0xFF,
+        );
     }
 
     private function readIpv4Number(string $part): ?int
