@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **Outbound IdP URLs that are not a hostname or dotted-decimal / canonical IP are now refused.** Decimal, octal, hex and short IPv4 spellings (`2852039166`, `0251.0376.0251.0376`, `0xa9.0xfe.0xa9.0xfe`, `169.254.43518`), a trailing root dot on an address (`169.254.169.254.`), and a bracketed host that is not a valid IPv6 literal are rejected before any request. Legitimate discovery, token, JWKS, userinfo and end-session URLs are unchanged. With `OIDC_ALLOW_PRIVATE_HOSTS=true`, a hostname that neither DNS nor the system resolver can answer is also refused (previously authorised unpinned). Cloud metadata stays blocked even when private hosts are allowed, including when a name resolves to `169.254.169.254` / `fd00:ec2::254`.
+
+### Security
+
+- **Every server-side IdP call is pinned to one address the SSRF guard checked**, through `CURLOPT_CONNECT_TO` `::ADDRESS:PORT`, never `CURLOPT_RESOLVE`. `filter_var()` rejects alternate IPv4 spellings that curl and `inet_aton(3)` still read as addresses (for example `2852039166` = `169.254.169.254`); with the old pin those hosts went out unpinned or with a RESOLVE entry curl ignores, so a lab setting or a resolver that answers could reach the metadata service. The guard now reads IPv4 the way curl does, canonicalises IPv6 and IPv4-mapped/compatible forms, refuses unresolved names, and pins every authorised destination. Ported from qiick-io/signaculum-core#189.
+
 ## [1.0.0-beta.2] - 2026-11-18
 
 ### Upgrade notes

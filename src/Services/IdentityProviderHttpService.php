@@ -12,8 +12,8 @@ use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 
 /**
  * The only way the package talks to an IdP from the server. Every call goes
- * through the SSRF guard, pins the checked addresses, refuses redirects and
- * expects a JSON object back.
+ * through the SSRF guard, pins the checked address with CURLOPT_CONNECT_TO,
+ * refuses redirects and expects a JSON object back.
  *
  * Errors carry the URL host, the HTTP status and the OAuth `error` code at
  * most; never a request or response body, which may hold codes or tokens.
@@ -95,25 +95,44 @@ final readonly class IdentityProviderHttpService
     }
 
     /**
-     * Pins the host to the addresses the guard checked (CURLOPT_RESOLVE), so a
-     * DNS answer that changes between the check and the request cannot send
-     * the call to an internal address.
+     * Pins the request to the address the guard checked (CURLOPT_CONNECT_TO).
      *
-     * @param  list<string>  $pinnedAddresses
+     * `::ADDRESS:PORT` leaves the source host and port empty, so it matches
+     * whatever host curl takes from the URL, however that host is spelt; the
+     * URL host is still what TLS verifies and what the Host header says. The
+     * address is always an IP literal, so curl connects without a lookup of
+     * its own. CURLOPT_RESOLVE cannot do this: curl ignores a RESOLVE entry
+     * when it parses the URL host as an address itself.
+     *
+     * @param  list{string}  $pinnedAddresses
      * @return array<string, mixed>
      */
     private function pinningOptions(string $url, array $pinnedAddresses): array
     {
-        $host = parse_url($url, PHP_URL_HOST);
-
-        if ($pinnedAddresses === [] || ! is_string($host) || ! defined('CURLOPT_RESOLVE')) {
+        if ($pinnedAddresses === [] || ! defined('CURLOPT_CONNECT_TO')) {
             return [];
         }
 
-        $port = parse_url($url, PHP_URL_PORT) ?? (strtolower((string) parse_url($url, PHP_URL_SCHEME)) === 'https' ? 443 : 80);
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+        $port = parse_url($url, PHP_URL_PORT) ?? ($scheme === 'https' ? 443 : 80);
         $address = $pinnedAddresses[0];
-        $formattedAddress = str_contains($address, ':') ? "[{$address}]" : $address;
 
-        return ['curl' => [CURLOPT_RESOLVE => ["{$host}:{$port}:{$formattedAddress}"]]];
+        return [
+            'curl' => [
+                CURLOPT_CONNECT_TO => [sprintf('::%s:%d', $this->formatCurlAddress($address), $port)],
+            ],
+        ];
+    }
+
+    /**
+     * curl needs brackets around an IPv6 pin (`::[2001:db8::1]:443`).
+     */
+    private function formatCurlAddress(string $address): string
+    {
+        if (filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
+            return '['.$address.']';
+        }
+
+        return $address;
     }
 }
