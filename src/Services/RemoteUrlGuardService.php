@@ -71,13 +71,16 @@ final readonly class RemoteUrlGuardService
     ];
 
     /**
-     * Always blocked, also with `allow_private_hosts`.
+     * Always blocked, also with `allow_private_hosts`: the EC2/GCP, Alibaba
+     * Cloud and Oracle Cloud instance metadata addresses and names.
      */
     private const array METADATA_HOSTS = [
         'metadata',
         'metadata.google.internal',
         '169.254.169.254',
         'fd00:ec2::254',
+        '100.100.100.200',
+        '192.0.0.192',
     ];
 
     /**
