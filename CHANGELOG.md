@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.3] - 2026-11-19
+
 ### Upgrade notes
 
 - **Outbound IdP URLs that are not a hostname or dotted-decimal / canonical IP are now refused.** Decimal, octal, hex and short IPv4 spellings (`2852039166`, `0251.0376.0251.0376`, `0xa9.0xfe.0xa9.0xfe`, `169.254.43518`), a trailing root dot on an address (`169.254.169.254.`), and a bracketed host that is not a valid IPv6 literal are rejected before any request. Legitimate discovery, token, JWKS, userinfo and end-session URLs are unchanged. With `OIDC_ALLOW_PRIVATE_HOSTS=true`, a hostname that neither DNS nor the system resolver can answer is also refused (previously authorised unpinned). Cloud metadata stays blocked even when private hosts are allowed, including when a name resolves to `169.254.169.254` / `fd00:ec2::254`.
@@ -90,6 +92,7 @@ First public beta of `qiick/laravel-oidc`: a generic OpenID Connect client for L
 
 - PHP `^8.3`, Laravel 12 and 13 (`illuminate/support`, `illuminate/http`, `illuminate/cache`), `firebase/php-jwt` `^7.0`, `guzzlehttp/guzzle` `^7.8 || ^8.0` (Guzzle 8 allowed since #10; Laravel 13 accepts it, Laravel 12 stays on Guzzle 7).
 
-[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.2...HEAD
+[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.3...HEAD
+[1.0.0-beta.3]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.2...v1.0.0-beta.3
 [1.0.0-beta.2]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.1...v1.0.0-beta.2
 [1.0.0-beta.1]: https://github.com/qiick-io/laravel-oidc/releases/tag/v1.0.0-beta.1
