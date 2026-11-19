@@ -61,6 +61,39 @@ dataset('metadata ipv4 spellings', [
     'decimal with a trailing dot' => 'https://2852039166./latest/meta-data/',
 ]);
 
+/**
+ * Every spelling the guard canonicalises to the Alibaba (100.100.100.200) and
+ * Oracle (192.0.0.192) metadata addresses. Both sit in ranges that are blocked
+ * while private hosts are off; the regression is that `OIDC_ALLOW_PRIVATE_HOSTS=true`
+ * made them reachable, so each case runs with both settings.
+ */
+dataset('cloud metadata ipv4 spellings', [
+    'alibaba dotted decimal' => 'https://100.100.100.200/latest/meta-data/',
+    'alibaba dotted decimal with a port' => 'https://100.100.100.200:443/latest/meta-data/',
+    'alibaba decimal' => 'https://1684301000/latest/meta-data/',
+    'alibaba dotted octal' => 'https://0144.0144.0144.0310/latest/meta-data/',
+    'alibaba dotted hex' => 'https://0x64.0x64.0x64.0xc8/latest/meta-data/',
+    'alibaba dotted hex, upper case' => 'https://0X64.0X64.0X64.0XC8/latest/meta-data/',
+    'alibaba one hex number' => 'https://0x646464c8/latest/meta-data/',
+    'alibaba one octal number' => 'https://014431062310/latest/meta-data/',
+    'alibaba mixed bases' => 'https://100.0144.0x64.200/latest/meta-data/',
+    'alibaba three parts' => 'https://100.100.25800/latest/meta-data/',
+    'alibaba two parts' => 'https://100.6579400/latest/meta-data/',
+    'alibaba trailing dot' => 'https://100.100.100.200./latest/meta-data/',
+    'oracle dotted decimal' => 'https://192.0.0.192/latest/meta-data/',
+    'oracle dotted decimal with a port' => 'https://192.0.0.192:443/latest/meta-data/',
+    'oracle decimal' => 'https://3221225664/latest/meta-data/',
+    'oracle dotted octal' => 'https://0300.0.0.0300/latest/meta-data/',
+    'oracle one octal number' => 'https://030000000300/latest/meta-data/',
+    'oracle dotted hex' => 'https://0xc0.0x0.0x0.0xc0/latest/meta-data/',
+    'oracle dotted hex, upper case' => 'https://0XC0.0X0.0X0.0XC0/latest/meta-data/',
+    'oracle one hex number' => 'https://0xc00000c0/latest/meta-data/',
+    'oracle mixed bases' => 'https://0300.0x0.0.192/latest/meta-data/',
+    'oracle three parts' => 'https://192.0.192/latest/meta-data/',
+    'oracle two parts' => 'https://192.192/latest/meta-data/',
+    'oracle trailing dot' => 'https://192.0.0.192./latest/meta-data/',
+]);
+
 it('refuses every spelling of the ipv4 metadata address, whatever the setting', function (string $url, bool $isPrivateHostAllowed): void {
     expect(fn () => pinGuard($isPrivateHostAllowed)->assertServerUrlIsSafe($url))
         ->toThrow(IdentityProviderRequestException::class, 'not allowed');
@@ -70,6 +103,16 @@ it('reads an ipv4 spelling as the address it is, and never looks it up as a name
     expect(fn () => pinGuardThatMustNotResolve($isPrivateHostAllowed)->assertServerUrlIsSafe($url))
         ->toThrow(IdentityProviderRequestException::class);
 })->with('metadata ipv4 spellings')->with('private host setting');
+
+it('refuses every spelling of the alibaba and oracle metadata addresses, whatever the setting', function (string $url, bool $isPrivateHostAllowed): void {
+    expect(fn () => pinGuard($isPrivateHostAllowed)->assertServerUrlIsSafe($url))
+        ->toThrow(IdentityProviderRequestException::class, 'not allowed');
+})->with('cloud metadata ipv4 spellings')->with('private host setting');
+
+it('reads an alibaba or oracle metadata spelling as the address it is, and never looks it up as a name', function (string $url, bool $isPrivateHostAllowed): void {
+    expect(fn () => pinGuardThatMustNotResolve($isPrivateHostAllowed)->assertServerUrlIsSafe($url))
+        ->toThrow(IdentityProviderRequestException::class);
+})->with('cloud metadata ipv4 spellings')->with('private host setting');
 
 it('refuses an ipv4 address that is not written in dotted decimal, whatever the setting', function (string $url, bool $isPrivateHostAllowed): void {
     expect(fn () => pinGuardThatMustNotResolve($isPrivateHostAllowed)->assertServerUrlIsSafe($url))
@@ -109,6 +152,24 @@ it('refuses a hostname that resolves to the metadata address, whatever the setti
     'ipv4 mapped' => [['::ffff:169.254.169.254']],
     'ipv4 compatible' => [['::169.254.169.254']],
     'behind a public answer' => [['93.184.216.34', '169.254.169.254']],
+])->with('private host setting');
+
+it('refuses a hostname that resolves to an alibaba or oracle metadata address, whatever the setting', function (array $addresses, bool $isPrivateHostAllowed): void {
+    expect(fn () => pinGuard($isPrivateHostAllowed, $addresses)->assertServerUrlIsSafe('https://metadata.attacker.example/latest/meta-data/'))
+        ->toThrow(IdentityProviderRequestException::class, 'disallowed');
+})->with([
+    'alibaba ipv4' => [['100.100.100.200']],
+    'alibaba ipv4 mapped' => [['::ffff:100.100.100.200']],
+    'alibaba ipv4 mapped in hextets' => [['::ffff:6464:64c8']],
+    'alibaba ipv4 compatible' => [['::100.100.100.200']],
+    'alibaba ipv4 compatible in hextets' => [['::6464:64c8']],
+    'alibaba behind a public answer' => [['93.184.216.34', '100.100.100.200']],
+    'oracle ipv4' => [['192.0.0.192']],
+    'oracle ipv4 mapped' => [['::ffff:192.0.0.192']],
+    'oracle ipv4 mapped in hextets' => [['::ffff:c000:c0']],
+    'oracle ipv4 compatible' => [['::192.0.0.192']],
+    'oracle ipv4 compatible in hextets' => [['::c000:c0']],
+    'oracle behind a public answer' => [['93.184.216.34', '192.0.0.192']],
 ])->with('private host setting');
 
 it('keeps the metadata names blocked with a trailing dot', function (string $url, bool $isPrivateHostAllowed): void {

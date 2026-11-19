@@ -33,6 +33,18 @@ it('keeps every spelling of the ipv6 metadata address blocked when private hosts
     'ipv4 mapped ec2 metadata' => 'http://[::ffff:169.254.169.254]/latest/meta-data/',
     'ipv4 mapped in hextets' => 'http://[::ffff:a9fe:a9fe]/latest/meta-data/',
     'ipv4 compatible ec2 metadata' => 'http://[::169.254.169.254]/latest/meta-data/',
+    'alibaba ipv4 mapped' => 'http://[::ffff:100.100.100.200]/latest/meta-data/',
+    'alibaba ipv4 mapped in hextets' => 'http://[::ffff:6464:64c8]/latest/meta-data/',
+    'alibaba ipv4 mapped, upper case' => 'http://[::FFFF:6464:64C8]/latest/meta-data/',
+    'alibaba ipv4 mapped, expanded' => 'http://[0:0:0:0:0:ffff:6464:64c8]/latest/meta-data/',
+    'alibaba ipv4 compatible' => 'http://[::100.100.100.200]/latest/meta-data/',
+    'alibaba ipv4 compatible in hextets' => 'http://[::6464:64c8]/latest/meta-data/',
+    'oracle ipv4 mapped' => 'http://[::ffff:192.0.0.192]/latest/meta-data/',
+    'oracle ipv4 mapped in hextets' => 'http://[::ffff:c000:c0]/latest/meta-data/',
+    'oracle ipv4 mapped, upper case' => 'http://[::FFFF:C000:C0]/latest/meta-data/',
+    'oracle ipv4 mapped, expanded' => 'http://[0:0:0:0:0:ffff:c000:c0]/latest/meta-data/',
+    'oracle ipv4 compatible' => 'http://[::192.0.0.192]/latest/meta-data/',
+    'oracle ipv4 compatible in hextets' => 'http://[::c000:c0]/latest/meta-data/',
 ]);
 
 it('keeps the ipv6 metadata address blocked with private hosts off as well', function (): void {
@@ -123,4 +135,18 @@ it('refuses a hostname that resolves to a disallowed ipv6 address', function (ar
     'ipv4 mapped metadata' => [['::ffff:169.254.169.254']],
     'ipv4 compatible metadata' => [['::169.254.169.254']],
     'one good answer and one bad' => [['2606:2800:220:1:248:1893:25c8:1946', '::1']],
+]);
+
+it('refuses a hostname that resolves to a cloud metadata address when private hosts are allowed', function (array $addresses): void {
+    expect(fn () => ipv6Guard(isPrivateHostAllowed: true, resolvedAddresses: $addresses)->assertServerUrlIsSafe('https://rebind.example.com/token'))
+        ->toThrow(IdentityProviderRequestException::class, 'disallowed');
+})->with([
+    'alibaba ipv4 mapped' => [['::ffff:100.100.100.200']],
+    'alibaba ipv4 mapped in hextets' => [['::ffff:6464:64c8']],
+    'alibaba ipv4 compatible' => [['::100.100.100.200']],
+    'alibaba ipv4 compatible in hextets' => [['::6464:64c8']],
+    'oracle ipv4 mapped' => [['::ffff:192.0.0.192']],
+    'oracle ipv4 mapped in hextets' => [['::ffff:c000:c0']],
+    'oracle ipv4 compatible' => [['::192.0.0.192']],
+    'oracle ipv4 compatible in hextets' => [['::c000:c0']],
 ]);

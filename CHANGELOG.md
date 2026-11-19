@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The Alibaba Cloud (`100.100.100.200`) and Oracle Cloud (`192.0.0.192`) instance metadata addresses stay blocked with `OIDC_ALLOW_PRIVATE_HOSTS=true`.** Both fall in ranges the guard already blocks by default, but opting into a private-lab IdP made them reachable: a discovery document, issuer URL or resolver answer naming either address could reach the metadata service. Every spelling the guard canonicalises is covered too — decimal, octal, hex, short, trailing-dot, IPv4-mapped and IPv4-compatible forms. Legitimate IdP endpoints are unchanged. Mirrors qiick-io/signaculum-core#190.
+
 ## [1.0.0-beta.3] - 2026-11-19
 
 ### Upgrade notes
