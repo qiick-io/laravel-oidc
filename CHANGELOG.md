@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.4] - 2026-11-20
+
 ### Security
 
 - **The Alibaba Cloud (`100.100.100.200`) and Oracle Cloud (`192.0.0.192`) instance metadata addresses stay blocked with `OIDC_ALLOW_PRIVATE_HOSTS=true`.** Both fall in ranges the guard already blocks by default, but opting into a private-lab IdP made them reachable: a discovery document, issuer URL or resolver answer naming either address could reach the metadata service. Every spelling the guard canonicalises is covered too — decimal, octal, hex, short, trailing-dot, IPv4-mapped and IPv4-compatible forms. Legitimate IdP endpoints are unchanged. Mirrors qiick-io/signaculum-core#190.
@@ -96,7 +98,8 @@ First public beta of `qiick/laravel-oidc`: a generic OpenID Connect client for L
 
 - PHP `^8.3`, Laravel 12 and 13 (`illuminate/support`, `illuminate/http`, `illuminate/cache`), `firebase/php-jwt` `^7.0`, `guzzlehttp/guzzle` `^7.8 || ^8.0` (Guzzle 8 allowed since #10; Laravel 13 accepts it, Laravel 12 stays on Guzzle 7).
 
-[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.3...HEAD
+[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.4...HEAD
+[1.0.0-beta.4]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.3...v1.0.0-beta.4
 [1.0.0-beta.3]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.2...v1.0.0-beta.3
 [1.0.0-beta.2]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.1...v1.0.0-beta.2
 [1.0.0-beta.1]: https://github.com/qiick-io/laravel-oidc/releases/tag/v1.0.0-beta.1
