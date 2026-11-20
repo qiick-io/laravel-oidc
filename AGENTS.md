@@ -191,7 +191,7 @@ Rules for this repo only, on top of the qiick standards above. Where they are mo
 ## Stack
 
 - PHP `^8.3`, Laravel 12 and 13 (`illuminate/*`).
-- Dev: Pest 4 + Orchestra Testbench, Pint (pinned `<1.31`), PHPStan / Larastan at level max.
+- Dev: Pest 4 + Orchestra Testbench, Pint (pinned `<1.33`), PHPStan / Larastan at level max.
 - No npm, no Vitest.
 
 ## Layout
