@@ -7,18 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.6] - 2026-11-22
+
 ### Upgrade notes
 
 - **Requires `qiick/laravel-outbound:^0.1`.** Server-side IdP calls (discovery, JWKS, token, userinfo) now go through outbound's `RemoteUrlGuard` and `PinnedHttpClient`. The local `RemoteUrlGuardService` is removed. Public config keys are unchanged: `oidc.http.allow_private_hosts` / `OIDC_ALLOW_PRIVATE_HOSTS` still allow private hosts and plain http together; cloud metadata stays blocked. Optional `oidc.http.max_response_bytes` / `OIDC_MAX_RESPONSE_BYTES` (default 1 MiB) caps IdP response bodies. `oidc.http.timeout=0` still means no practical limit; optional `oidc.http.connect_timeout` defaults to 10s. See `UPGRADING.md`.
+- **Recreate beta databases (`php artisan migrate:fresh`).** The package is not stable yet, so schema changes edit or add `create_…` migrations instead of forward alters. This release:
+  - enriches `2026_11_05_000000_create_user_identities_table` with public id, link/email snapshots, last-login auth metadata, `format_version` and `metadata` (#57);
+  - adds `2026_11_22_000000_create_oidc_logout_revocations_table` for durable back-/front-channel logout `jti` storage (#60).
+  Existing installs that already ran an older create migration will not pick up those columns or the new table from a plain `migrate`. Fresh installs are fine. Apps that published the migrations (`vendor:publish --tag=oidc-migrations`) publish again after updating.
+
+### Added
+
+- Enriched `user_identities` create migration and model casts for public id, link method, email/username/name snapshots, last-login `auth_time` / `acr` / `amr` / `id_token` alg, `format_version` and `metadata` (#57).
+- SSO login writes those identity columns and calls `UserClaimSynchronizationContract` after role mapping (#58).
+- Versioned SSO session payload (`format_version` 1 with `acr` / `amr` / `auth_time`); unknown versions fail closed and end the local session (#59).
+- Durable `oidc_logout_revocations` store: unique `(issuer, jti)`, fail-closed table reads, cache as accelerator only, `oidc:prune-logout-revocations` (#60).
+- `at_hash` validation against the access token when present on the `id_token` (OIDC Core 3.1.3.8 / 3.2.2.9) (#61).
+- `oidc.routes.except` to skip selected package routes, and optional `GET …/frontchannel-logout` behind `oidc.frontchannel_logout.enabled` (#62).
+- Real-transport Pest group against `php -S` on Guzzle 7 and 8 (CI job `real-transport`).
+- Per-class mutation gate for `IdentityProviderHttpService`, `DiscoveryService` and `OidcOutboundStackFactory` (≥95%, no `--covered-only`).
 
 ### Changed
 
 - **SSRF and pinned HTTP are delegated to `qiick/laravel-outbound`.** Behaviour is not loosened: every previous SSRF refusal remains a refusal, CONNECT_TO pinning remains, redirects stay off on the IdP path, and outbound adds response size limits plus cross-origin redirect credential stripping when redirects are opted in (tests cover the wire). OIDC builds its own guard / client privately so `OutboundServiceProvider` cannot override IdP SSRF or timeouts. NAT64, 6to4 and Teredo are always blocked (see `UPGRADING.md`).
-
-### Added
-
-- Real-transport Pest group against `php -S` on Guzzle 7 and 8 (CI job `real-transport`).
-- Per-class mutation gate for `IdentityProviderHttpService`, `DiscoveryService` and `OidcOutboundStackFactory` (≥95%, no `--covered-only`).
 
 ## [1.0.0-beta.5] - 2026-11-22
 
@@ -120,7 +132,8 @@ First public beta of `qiick/laravel-oidc`: a generic OpenID Connect client for L
 
 - PHP `^8.3`, Laravel 12 and 13 (`illuminate/support`, `illuminate/http`, `illuminate/cache`), `firebase/php-jwt` `^7.0`, `guzzlehttp/guzzle` `^7.8 || ^8.0` (Guzzle 8 allowed since #10; Laravel 13 accepts it, Laravel 12 stays on Guzzle 7).
 
-[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.5...HEAD
+[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.6...HEAD
+[1.0.0-beta.6]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.5...v1.0.0-beta.6
 [1.0.0-beta.5]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.4...v1.0.0-beta.5
 [1.0.0-beta.4]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.3...v1.0.0-beta.4
 [1.0.0-beta.3]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.2...v1.0.0-beta.3
