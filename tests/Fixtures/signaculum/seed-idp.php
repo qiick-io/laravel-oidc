@@ -61,7 +61,7 @@ $ada->fill([
 $ada->forceFill([
     'email_verified_at' => now(),
     'is_active' => true,
-    'is_instance_admin' => false,
+    // Signaculum dropped users.is_instance_admin for Spatie roles (#206).
     'two_factor_secret' => null,
     'two_factor_recovery_codes' => null,
     'two_factor_confirmed_at' => null,
@@ -76,7 +76,6 @@ $mfaUser->fill([
 $mfaUser->forceFill([
     'email_verified_at' => now(),
     'is_active' => true,
-    'is_instance_admin' => false,
     'two_factor_secret' => encrypt($totpSecret),
     'two_factor_recovery_codes' => encrypt(json_encode(['recovery-code-ci-only'])),
     'two_factor_confirmed_at' => now(),
