@@ -171,11 +171,12 @@ final class FakeIdentityProvider
         ?string $keyId = null,
         ?OpenSSLAsymmetricKey $privateKey = null,
         bool $isKeyIdOmitted = false,
+        string $algorithm = 'RS256',
     ): string {
         $keyId ??= $this->currentKeyId;
         $privateKey ??= $this->signingKeys[$keyId];
 
-        return JWT::encode($claims, $privateKey, 'RS256', $isKeyIdOmitted ? null : $keyId, $header);
+        return JWT::encode($claims, $privateKey, $algorithm, $isKeyIdOmitted ? null : $keyId, $header);
     }
 
     /**
@@ -232,15 +233,18 @@ final class FakeIdentityProvider
 
     /**
      * Starts signing with a new key and `kid`. The previous key stays in the
-     * JWKS unless $isPreviousKeyRetired is true.
+     * JWKS unless $isPreviousKeyRetired is true. `$keyType` is `RSA` (default)
+     * or `EC` (P-256 for ES256 tests).
      */
-    public function rotateSigningKey(bool $isPreviousKeyRetired = false): string
+    public function rotateSigningKey(bool $isPreviousKeyRetired = false, string $keyType = 'RSA'): string
     {
         if ($isPreviousKeyRetired) {
             unset($this->signingKeys[$this->currentKeyId]);
         }
 
-        $privateKey = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $privateKey = $keyType === 'EC'
+            ? openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1'])
+            : openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
 
         if ($privateKey === false) {
             throw new RuntimeException('OpenSSL could not generate a test key.');
@@ -309,7 +313,38 @@ final class FakeIdentityProvider
         foreach ($this->signingKeys as $keyId => $privateKey) {
             $details = openssl_pkey_get_details($privateKey);
 
-            $rsaDetails = is_array($details) && is_array($details['rsa'] ?? null) ? $details['rsa'] : [];
+            if (! is_array($details)) {
+                throw new RuntimeException('OpenSSL could not read a test key.');
+            }
+
+            // Omit `alg` so the same RSA key can verify RS256 and RS384; EC
+            // keys are published for ES256 at_hash coverage.
+            if (is_array($details['ec'] ?? null)) {
+                $curveX = $details['ec']['x'] ?? null;
+                $curveY = $details['ec']['y'] ?? null;
+
+                if (! is_string($curveX) || ! is_string($curveY)) {
+                    throw new RuntimeException('OpenSSL could not read an EC test key.');
+                }
+
+                // OpenSSL may omit leading zero octets; JWK P-256 coords are fixed 32 bytes.
+                $curveX = str_pad($curveX, 32, "\0", STR_PAD_LEFT);
+                $curveY = str_pad($curveY, 32, "\0", STR_PAD_LEFT);
+
+                $publishedKeys[] = [
+                    'kty' => 'EC',
+                    'use' => 'sig',
+                    'alg' => 'ES256',
+                    'crv' => 'P-256',
+                    'kid' => $keyId,
+                    'x' => JWT::urlsafeB64Encode($curveX),
+                    'y' => JWT::urlsafeB64Encode($curveY),
+                ];
+
+                continue;
+            }
+
+            $rsaDetails = is_array($details['rsa'] ?? null) ? $details['rsa'] : [];
             $modulus = $rsaDetails['n'] ?? null;
             $exponent = $rsaDetails['e'] ?? null;
 
@@ -320,7 +355,6 @@ final class FakeIdentityProvider
             $publishedKeys[] = [
                 'kty' => 'RSA',
                 'use' => 'sig',
-                'alg' => 'RS256',
                 'kid' => $keyId,
                 'n' => JWT::urlsafeB64Encode($modulus),
                 'e' => JWT::urlsafeB64Encode($exponent),

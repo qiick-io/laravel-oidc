@@ -163,7 +163,7 @@ final readonly class AuthorizationCodeFlowService
             throw new IdentityProviderRequestException('The token response has no id_token or access_token.');
         }
 
-        $claims = $this->idTokenValidator->validate($idToken, $discovery, $configuration, $pendingLogin['nonce']);
+        $claims = $this->idTokenValidator->validate($idToken, $discovery, $configuration, $pendingLogin['nonce'], $accessToken);
         $subject = $claims['sub'];
         $sessionId = $claims['sid'] ?? null;
 
