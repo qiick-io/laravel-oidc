@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **The case-sensitive identity key is now part of the create migration.** `2026_11_18_000000_make_user_identity_keys_case_sensitive` is folded into `2026_11_05_000000_create_user_identities_table`, which now creates `issuer` and `subject` with `utf8mb4` / `utf8mb4_bin` on MySQL and MariaDB directly. The package is not stable yet, so its schema changes edit the create migration instead of adding new ones. The final schema is unchanged.
+  - **Fresh installs** get the same schema in one migration.
+  - **Existing databases that already ran beta.2 to beta.4** already have that schema. The `migrations` table keeps a row for the removed file, which is harmless. Delete that row, or recreate the database (`migrate:fresh`), to keep `migrate:status` clean.
+  - **Apps that published the migrations** (`vendor:publish --tag=oidc-migrations`) delete the published `2026_11_18` file and publish again.
+
 ## [1.0.0-beta.4] - 2026-11-20
 
 ### Security
