@@ -99,6 +99,22 @@ it('calls the claim synchronisation contract after a successful login', function
     expect($synchronizedUserIds->ids)->toBe([(int) $user->id]);
 });
 
+it('leaves local user columns untouched under the default no-op claim synchroniser', function (): void {
+    $user = localUser('ada@example.com', ['name' => 'Admin Edited Name']);
+    linkIdentity($user, 'user-42');
+
+    ssoLogin($this, fakeProvider(), [
+        'sub' => 'user-42',
+        'name' => 'IdP Profile Name',
+        'email' => 'idp-profile@example.com',
+    ])->assertRedirect('/');
+
+    expect($user->fresh()->only(['name', 'email']))->toBe([
+        'name' => 'Admin Edited Name',
+        'email' => 'ada@example.com',
+    ]);
+});
+
 it('marks legacy imports with link_method legacy_import', function (): void {
     Schema::table('users', fn (Blueprint $table) => $table->string('oidc_sub')->nullable()->unique());
     Config::set('oidc.issuer', 'https://idp.example.com/realms/externa');
