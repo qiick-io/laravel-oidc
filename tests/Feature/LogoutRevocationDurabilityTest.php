@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Auth\GenericUser;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
@@ -100,6 +101,9 @@ it('treats a failed table read as revoked and never as a negative cache', functi
         authenticatedAt: Date::now()->getTimestamp(),
     );
 
+    // Rename inside a savepoint so a failed SELECT (PostgreSQL aborts the
+    // transaction) can roll back to a clean schema for the rest of the suite.
+    DB::unprepared('SAVEPOINT oidc_revocation_fail_closed');
     Schema::rename('oidc_logout_revocations', 'oidc_logout_revocations_hidden');
 
     try {
@@ -108,7 +112,8 @@ it('treats a failed table read as revoked and never as a negative cache', functi
             fn (string $message): bool => str_contains($message, 'logout revocation table read failed'),
         );
     } finally {
-        Schema::rename('oidc_logout_revocations_hidden', 'oidc_logout_revocations');
+        DB::unprepared('ROLLBACK TO SAVEPOINT oidc_revocation_fail_closed');
+        DB::unprepared('RELEASE SAVEPOINT oidc_revocation_fail_closed');
     }
 });
 
