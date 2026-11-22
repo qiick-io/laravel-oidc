@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Real-transport Pest group against `php -S` on Guzzle 7 and 8 (CI job `real-transport`).
 - Per-class mutation gate for `IdentityProviderHttpService`, `DiscoveryService` and `OidcOutboundStackFactory` (≥95%, no `--covered-only`).
 
+## [1.0.0-beta.5] - 2026-11-22
+
+### Upgrade notes
+
+- **The case-sensitive identity key is now part of the create migration.** `2026_11_18_000000_make_user_identity_keys_case_sensitive` is folded into `2026_11_05_000000_create_user_identities_table`, which now creates `issuer` and `subject` with `utf8mb4` / `utf8mb4_bin` on MySQL and MariaDB directly. The package is not stable yet, so its schema changes edit the create migration instead of adding new ones. The final schema is unchanged.
+  - **Fresh installs** get the same schema in one migration.
+  - **Existing databases that already ran beta.2 to beta.4** already have that schema. The `migrations` table keeps a row for the removed file, which is harmless. Delete that row, or recreate the database (`migrate:fresh`), to keep `migrate:status` clean.
+  - **Apps that published the migrations** (`vendor:publish --tag=oidc-migrations`) delete the published `2026_11_18` file and publish again.
+
 ## [1.0.0-beta.4] - 2026-11-20
 
 ### Security
@@ -111,7 +120,8 @@ First public beta of `qiick/laravel-oidc`: a generic OpenID Connect client for L
 
 - PHP `^8.3`, Laravel 12 and 13 (`illuminate/support`, `illuminate/http`, `illuminate/cache`), `firebase/php-jwt` `^7.0`, `guzzlehttp/guzzle` `^7.8 || ^8.0` (Guzzle 8 allowed since #10; Laravel 13 accepts it, Laravel 12 stays on Guzzle 7).
 
-[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.4...HEAD
+[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.5...HEAD
+[1.0.0-beta.5]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.4...v1.0.0-beta.5
 [1.0.0-beta.4]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.3...v1.0.0-beta.4
 [1.0.0-beta.3]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.2...v1.0.0-beta.3
 [1.0.0-beta.2]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.1...v1.0.0-beta.2
