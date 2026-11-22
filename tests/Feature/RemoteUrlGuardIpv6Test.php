@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
-use Qiick\Oidc\Services\RemoteUrlGuardService;
+use Qiick\Oidc\Tests\Support\OidcSsrfTestGuard;
 
 /**
  * The IPv6 surface of the SSRF guard.
@@ -16,9 +16,9 @@ use Qiick\Oidc\Services\RemoteUrlGuardService;
  *
  * @param  list<string>  $resolvedAddresses
  */
-function ipv6Guard(bool $isPrivateHostAllowed = false, array $resolvedAddresses = ['93.184.216.34']): RemoteUrlGuardService
+function ipv6Guard(bool $isPrivateHostAllowed = false, array $resolvedAddresses = ['93.184.216.34']): OidcSsrfTestGuard
 {
-    return new RemoteUrlGuardService($isPrivateHostAllowed, static fn (string $_host): array => $resolvedAddresses);
+    return new OidcSsrfTestGuard($isPrivateHostAllowed, $resolvedAddresses);
 }
 
 it('keeps every spelling of the ipv6 metadata address blocked when private hosts are allowed', function (string $url): void {
@@ -94,12 +94,7 @@ it('refuses a bracketed host that is not an ipv6 literal instead of treating it 
 ]);
 
 it('never asks the resolver about a bracketed host at all', function (string $url): void {
-    $guard = new RemoteUrlGuardService(
-        false,
-        function (string $host): array {
-            throw new RuntimeException("Guard resolved a bracketed host: {$host}");
-        },
-    );
+    $guard = new OidcSsrfTestGuard(false, null);
 
     expect(fn () => $guard->assertServerUrlIsSafe($url))
         ->toThrow(IdentityProviderRequestException::class);

@@ -212,7 +212,7 @@ src/Listeners/         *Listener (completes the SSO session after the app's 2FA)
 src/Laravel/           OidcServiceProvider (auto-discovered)
 src/Models/            UserIdentity (bare noun)
 src/Repositories/      *Repository (config-backed provider settings)
-src/Services/          *Service (discovery, JWKS, JWT validation, code flow, SSRF guard, IdP HTTP)
+src/Services/          *Service (discovery, JWKS, JWT validation, code flow, IdP HTTP via qiick/laravel-outbound)
 src/Testing/           Fake* test doubles shipped for apps (FakeIdentityProvider)
 tests/Arch             NamingArchitectureTest
 tests/Feature          Pest on Testbench

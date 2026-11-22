@@ -7,6 +7,7 @@ namespace Qiick\Oidc\Testing;
 use Closure;
 use Firebase\JWT\JWT;
 use GuzzleHttp\Promise\PromiseInterface;
+use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\Request as HttpRequest;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
@@ -14,7 +15,12 @@ use Illuminate\Support\Facades\Http;
 use OpenSSLAsymmetricKey;
 use Qiick\Oidc\Services\BackChannelLogoutService;
 use Qiick\Oidc\Services\DiscoveryService;
-use Qiick\Oidc\Services\RemoteUrlGuardService;
+use Qiick\Outbound\Contracts\HostResolver;
+use Qiick\Outbound\Http\OutboundHttpLimits;
+use Qiick\Outbound\Http\PinnedHttpClient;
+use Qiick\Outbound\Ssrf\RemoteUrlGuard;
+use Qiick\Outbound\Ssrf\UrlGuardOptions;
+use Qiick\Outbound\Testing\FakeHostResolver;
 use RuntimeException;
 
 /**
@@ -104,9 +110,16 @@ final class FakeIdentityProvider
             Config::set("oidc.{$key}", $value);
         }
 
-        app()->instance(RemoteUrlGuardService::class, new RemoteUrlGuardService(
-            isPrivateHostAllowed: false,
-            hostResolver: fn (string $host): array => ['93.184.215.14'],
+        $host = (string) parse_url($issuer, PHP_URL_HOST);
+        $resolver = (new FakeHostResolver)->with($host, ['93.184.215.14']);
+
+        app()->instance(HostResolver::class, $resolver);
+        app()->instance(UrlGuardOptions::class, new UrlGuardOptions(httpsOnly: true, allowPrivateHosts: false));
+        app()->instance(RemoteUrlGuard::class, new RemoteUrlGuard($resolver, allowPrivateHosts: false, httpsOnly: false));
+        app()->instance(PinnedHttpClient::class, new PinnedHttpClient(
+            app(HttpFactory::class),
+            app(RemoteUrlGuard::class),
+            new OutboundHttpLimits,
         ));
 
         Http::fake([$identityProvider->baseUrl().'/*' => fn (HttpRequest $request): PromiseInterface => $identityProvider->handle($request)]);

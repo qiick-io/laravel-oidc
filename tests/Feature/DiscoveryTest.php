@@ -8,8 +8,8 @@ use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Data\DiscoveryDocumentData;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Services\DiscoveryService;
-use Qiick\Oidc\Services\RemoteUrlGuardService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
+use Qiick\Oidc\Tests\Support\OidcSsrfTestGuard;
 
 function discover(): DiscoveryDocumentData
 {
@@ -92,7 +92,7 @@ it('surfaces an HTTP error without the response body', function (): void {
     Config::set('oidc.enabled', true);
     Config::set('oidc.issuer', 'https://idp.example.com/realms/test');
     Config::set('oidc.client_id', 'laravel-app');
-    app()->instance(RemoteUrlGuardService::class, new RemoteUrlGuardService(false, fn (): array => ['93.184.215.14']));
+    OidcSsrfTestGuard::bindInContainer(false, ['93.184.215.14']);
     Http::fake(['*' => Http::response('<html>secret stack trace</html>', 500)]);
 
     expect(fn () => discover())->toThrow(
@@ -105,7 +105,7 @@ it('does not follow redirects', function (): void {
     Config::set('oidc.enabled', true);
     Config::set('oidc.issuer', 'https://idp.example.com/realms/test');
     Config::set('oidc.client_id', 'laravel-app');
-    app()->instance(RemoteUrlGuardService::class, new RemoteUrlGuardService(false, fn (): array => ['93.184.215.14']));
+    OidcSsrfTestGuard::bindInContainer(false, ['93.184.215.14']);
     Http::fake(['*' => Http::response('', 302, ['Location' => 'http://169.254.169.254/'])]);
 
     discover();
@@ -118,7 +118,8 @@ it('fetches from the docker base and rewrites only the server-side endpoints', f
     Config::set('oidc.client_id', $identityProvider->clientId);
     Config::set('oidc.http.discovery_base', 'http://keycloak:8080/realms/externa');
     Config::set('oidc.http.server_origin', 'http://keycloak:8080');
-    app()->instance(RemoteUrlGuardService::class, new RemoteUrlGuardService(true, fn (): array => ['172.18.0.5']));
+    Config::set('oidc.http.allow_private_hosts', true);
+    OidcSsrfTestGuard::bindInContainer(true, ['172.18.0.5']);
     Http::fake(['http://keycloak:8080/realms/externa/.well-known/openid-configuration' => Http::response($identityProvider->discoveryDocument())]);
 
     $discovery = discover();

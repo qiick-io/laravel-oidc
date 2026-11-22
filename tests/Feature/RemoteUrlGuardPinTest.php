@@ -2,12 +2,19 @@
 
 declare(strict_types=1);
 
-use GuzzleHttp\Promise\PromiseInterface;
-use Illuminate\Http\Client\Request;
+use GuzzleHttp\Promise\Create as PromiseCreate;
+use GuzzleHttp\Psr7\Response as Psr7Response;
+use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Http;
+use Psr\Http\Message\RequestInterface;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Services\IdentityProviderHttpService;
-use Qiick\Oidc\Services\RemoteUrlGuardService;
+use Qiick\Oidc\Tests\Support\OidcSsrfTestGuard;
+use Qiick\Outbound\Contracts\HostResolver;
+use Qiick\Outbound\Http\OutboundHttpLimits;
+use Qiick\Outbound\Http\PinnedHttpClient;
+use Qiick\Outbound\Ssrf\RemoteUrlGuard;
+use Qiick\Outbound\Ssrf\UrlGuardOptions;
 
 /**
  * What curl connects to, and how the guard knows it checked that address.
@@ -26,19 +33,14 @@ use Qiick\Oidc\Services\RemoteUrlGuardService;
  *
  * @param  list<string>  $resolvedAddresses
  */
-function pinGuard(bool $isPrivateHostAllowed = false, array $resolvedAddresses = ['93.184.216.34']): RemoteUrlGuardService
+function pinGuard(bool $isPrivateHostAllowed = false, array $resolvedAddresses = ['93.184.216.34']): OidcSsrfTestGuard
 {
-    return new RemoteUrlGuardService($isPrivateHostAllowed, static fn (string $_host): array => $resolvedAddresses);
+    return new OidcSsrfTestGuard($isPrivateHostAllowed, $resolvedAddresses);
 }
 
-function pinGuardThatMustNotResolve(bool $isPrivateHostAllowed = false): RemoteUrlGuardService
+function pinGuardThatMustNotResolve(bool $isPrivateHostAllowed = false): OidcSsrfTestGuard
 {
-    return new RemoteUrlGuardService(
-        $isPrivateHostAllowed,
-        static function (string $host): array {
-            throw new RuntimeException("Guard resolved an address literal as a name: {$host}");
-        },
-    );
+    return new OidcSsrfTestGuard($isPrivateHostAllowed, null);
 }
 
 dataset('private host setting', [
@@ -138,9 +140,15 @@ it('still treats a name that only looks numeric as a name', function (string $ur
     'a last part too big for the bytes left' => 'https://1.16777216/token',
     'twelve significant digits' => 'https://123456789012/token',
     'hex digits without the prefix' => 'https://cafe.1.2.3/token',
-    'an empty part' => 'https://1..2/token',
     'a hostname made of hex letters' => 'https://deadbeef.example.com/token',
 ]);
+
+// outbound IDN normalisation refuses empty DNS labels; oidc previously resolved
+// `1..2` as a name. Stricter is fine (behaviour must not loosen).
+it('refuses a hostname with an empty DNS label', function (): void {
+    expect(fn () => pinGuard()->assertServerUrlIsSafe('https://1..2/token'))
+        ->toThrow(IdentityProviderRequestException::class, 'invalid');
+});
 
 it('refuses a hostname that resolves to the metadata address, whatever the setting', function (array $addresses, bool $isPrivateHostAllowed): void {
     expect(fn () => pinGuard($isPrivateHostAllowed, $addresses)->assertServerUrlIsSafe('https://metadata.attacker.example/latest/meta-data/'))
@@ -231,77 +239,100 @@ it('checks every record of a hostname, and pins one of them, ipv4 first', functi
         ->toThrow(IdentityProviderRequestException::class, 'disallowed');
 });
 
+/**
+ * @param  callable(string): list<string>  $resolve
+ */
+function identityProviderHttpWithResolver(callable $resolve, ?callable $transferHandler = null): IdentityProviderHttpService
+{
+    $resolver = new class($resolve) implements HostResolver
+    {
+        /**
+         * @param  callable(string): list<string>  $resolve
+         */
+        public function __construct(private mixed $resolve) {}
+
+        public function resolve(string $host): array
+        {
+            return ($this->resolve)($host);
+        }
+    };
+
+    $guard = new RemoteUrlGuard($resolver, allowPrivateHosts: false, httpsOnly: false);
+    $options = new UrlGuardOptions(httpsOnly: true, allowPrivateHosts: false);
+    $client = new PinnedHttpClient(
+        app(HttpFactory::class),
+        $guard,
+        new OutboundHttpLimits,
+        transferHandler: $transferHandler,
+    );
+
+    return new IdentityProviderHttpService($client, $options, 5);
+}
+
 it('resolves once per request and sends it to the address the guard checked', function (): void {
     $lookups = 0;
-    $guard = new RemoteUrlGuardService(
-        false,
+    $sentOptions = null;
+
+    $http = identityProviderHttpWithResolver(
         static function (string $_host) use (&$lookups): array {
             $lookups++;
 
             return $lookups === 1 ? ['93.184.216.34'] : ['169.254.169.254'];
         },
+        function (RequestInterface $request, array $options) use (&$sentOptions) {
+            $sentOptions = $options;
+
+            return PromiseCreate::promiseFor(new Psr7Response(200, ['Content-Type' => 'application/json'], '{"iss":"https://rebind.example.com","ok":true}'));
+        },
     );
-
-    $sentOptions = null;
-
-    Http::fake(function (Request $request, array $options) use (&$sentOptions): PromiseInterface {
-        $sentOptions = $options;
-
-        return Http::response(['iss' => 'https://rebind.example.com', 'ok' => true], 200);
-    });
-
-    $http = new IdentityProviderHttpService(Http::getFacadeRoot(), $guard, 5);
 
     expect($http->getJson('https://rebind.example.com/token'))->toBe(['iss' => 'https://rebind.example.com', 'ok' => true])
         ->and($lookups)->toBe(1)
-        ->and($sentOptions['curl'] ?? null)->toBe([CURLOPT_CONNECT_TO => ['::93.184.216.34:443']]);
+        ->and($sentOptions['curl'][CURLOPT_CONNECT_TO] ?? null)->toBe(['::93.184.216.34:443']);
 
     expect(fn () => $http->getJson('https://rebind.example.com/token'))
         ->toThrow(IdentityProviderRequestException::class, 'disallowed');
 
     expect($lookups)->toBe(2);
-    Http::assertSentCount(1);
 });
 
 it('pins a literal address in the url with CURLOPT_CONNECT_TO, never CURLOPT_RESOLVE', function (): void {
     $sentOptions = null;
 
-    Http::fake(function (Request $request, array $options) use (&$sentOptions): PromiseInterface {
-        $sentOptions = $options;
+    $http = identityProviderHttpWithResolver(
+        static function (string $host): array {
+            throw new RuntimeException("Guard resolved an address literal as a name: {$host}");
+        },
+        function (RequestInterface $request, array $options) use (&$sentOptions) {
+            $sentOptions = $options;
 
-        return Http::response(['ok' => true], 200);
-    });
-
-    $http = new IdentityProviderHttpService(
-        Http::getFacadeRoot(),
-        pinGuardThatMustNotResolve(),
-        5,
+            return PromiseCreate::promiseFor(new Psr7Response(200, ['Content-Type' => 'application/json'], '{"ok":true}'));
+        },
     );
 
     $http->getJson('https://93.184.216.34/token');
 
-    expect($sentOptions['curl'] ?? null)->toBe([CURLOPT_CONNECT_TO => ['::93.184.216.34:443']])
+    expect($sentOptions['curl'][CURLOPT_CONNECT_TO] ?? null)->toBe(['::93.184.216.34:443'])
         ->and(array_key_exists(CURLOPT_RESOLVE, $sentOptions['curl'] ?? []))->toBeFalse();
 });
 
 it('pins an ipv6 literal with brackets in CURLOPT_CONNECT_TO', function (): void {
     $sentOptions = null;
 
-    Http::fake(function (Request $request, array $options) use (&$sentOptions): PromiseInterface {
-        $sentOptions = $options;
+    $http = identityProviderHttpWithResolver(
+        static function (string $host): array {
+            throw new RuntimeException("Guard resolved an address literal as a name: {$host}");
+        },
+        function (RequestInterface $request, array $options) use (&$sentOptions) {
+            $sentOptions = $options;
 
-        return Http::response(['ok' => true], 200);
-    });
-
-    $http = new IdentityProviderHttpService(
-        Http::getFacadeRoot(),
-        pinGuardThatMustNotResolve(),
-        5,
+            return PromiseCreate::promiseFor(new Psr7Response(200, ['Content-Type' => 'application/json'], '{"ok":true}'));
+        },
     );
 
     $http->getJson('https://[2606:2800:220:1:248:1893:25c8:1946]/token');
 
-    expect($sentOptions['curl'] ?? null)->toBe([
-        CURLOPT_CONNECT_TO => ['::[2606:2800:220:1:248:1893:25c8:1946]:443'],
+    expect($sentOptions['curl'][CURLOPT_CONNECT_TO] ?? null)->toBe([
+        '::[2606:2800:220:1:248:1893:25c8:1946]:443',
     ]);
 });

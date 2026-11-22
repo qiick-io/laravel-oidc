@@ -4,16 +4,19 @@ declare(strict_types=1);
 
 namespace Qiick\Oidc\Services;
 
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Http\Client\Factory as HttpFactory;
-use Illuminate\Http\Client\PendingRequest;
-use Illuminate\Http\Client\Response;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
+use Qiick\Outbound\Http\HttpRequestOptions;
+use Qiick\Outbound\Http\OutboundHttpException;
+use Qiick\Outbound\Http\OutboundRequest;
+use Qiick\Outbound\Http\PinnedHttpClient;
+use Qiick\Outbound\Ssrf\UnsafeUrl;
+use Qiick\Outbound\Ssrf\UrlGuardOptions;
 
 /**
  * The only way the package talks to an IdP from the server. Every call goes
- * through the SSRF guard, pins the checked address with CURLOPT_CONNECT_TO,
- * refuses redirects and expects a JSON object back.
+ * through qiick/laravel-outbound's SSRF guard and pinned client: authorize,
+ * CURLOPT_CONNECT_TO pin, no transport redirects, timeouts and response size
+ * limits. Discovery, JWKS, token, userinfo and revocation all use this path.
  *
  * Errors carry the URL host, the HTTP status and the OAuth `error` code at
  * most; never a request or response body, which may hold codes or tokens.
@@ -21,9 +24,11 @@ use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 final readonly class IdentityProviderHttpService
 {
     public function __construct(
-        private HttpFactory $http,
-        private RemoteUrlGuardService $remoteUrlGuard,
+        private PinnedHttpClient $pinnedHttp,
+        private UrlGuardOptions $urlGuardOptions,
         private int $timeoutSeconds,
+        private int $connectTimeoutSeconds = 3,
+        private int $maxResponseBytes = 1_048_576,
     ) {}
 
     /**
@@ -34,7 +39,13 @@ final readonly class IdentityProviderHttpService
      */
     public function getJson(string $url, #[\SensitiveParameter] array $headers = []): array
     {
-        return $this->send($url, fn (PendingRequest $request): Response => $request->withHeaders($headers)->get($url));
+        return $this->send(
+            'GET',
+            $url,
+            static function (OutboundRequest $request) use ($headers): void {
+                $request->accept('application/json')->withHeaders($headers);
+            },
+        );
     }
 
     /**
@@ -49,31 +60,48 @@ final readonly class IdentityProviderHttpService
     public function postForm(string $url, #[\SensitiveParameter] array $form, #[\SensitiveParameter] array $headers = []): array
     {
         return $this->send(
+            'POST',
             $url,
-            fn (PendingRequest $request): Response => $request->asForm()->withHeaders($headers)->post($url, $form),
+            static function (OutboundRequest $request) use ($form, $headers): void {
+                $request->accept('application/json')->withHeaders($headers)->asForm($form);
+            },
         );
     }
 
     /**
-     * @param  callable(PendingRequest): Response  $sendRequest
+     * @param  callable(OutboundRequest): void  $configure
      * @return array<string, mixed>
      *
      * @throws IdentityProviderRequestException
      */
-    private function send(string $url, callable $sendRequest): array
+    private function send(string $method, string $url, callable $configure): array
     {
-        $pinnedAddresses = $this->remoteUrlGuard->assertServerUrlIsSafe($url);
         $host = (string) parse_url($url, PHP_URL_HOST);
 
-        $request = $this->http
-            ->acceptJson()
-            ->timeout($this->timeoutSeconds)
-            ->withOptions(['allow_redirects' => false, ...$this->pinningOptions($url, $pinnedAddresses)]);
-
         try {
-            $response = $sendRequest($request);
-        } catch (ConnectionException) {
-            throw new IdentityProviderRequestException("OIDC request to [{$host}] failed: connection error.");
+            $response = $this->pinnedHttp->send(
+                $method,
+                $url,
+                $configure,
+                new HttpRequestOptions(
+                    timeoutSeconds: max(1, $this->timeoutSeconds),
+                    connectTimeoutSeconds: max(1, min($this->connectTimeoutSeconds, $this->timeoutSeconds)),
+                    followRedirects: false,
+                    maxRedirects: 0,
+                    maxResponseBytes: $this->maxResponseBytes,
+                    urlOptions: $this->urlGuardOptions,
+                ),
+            );
+        } catch (UnsafeUrl $exception) {
+            throw new IdentityProviderRequestException(
+                $this->messageForUnsafeUrl($exception, $host),
+                previous: $exception,
+            );
+        } catch (OutboundHttpException $exception) {
+            throw new IdentityProviderRequestException(
+                "OIDC request to [{$host}] failed: connection error.",
+                previous: $exception,
+            );
         }
 
         $payload = $response->json();
@@ -95,44 +123,22 @@ final readonly class IdentityProviderHttpService
     }
 
     /**
-     * Pins the request to the address the guard checked (CURLOPT_CONNECT_TO).
-     *
-     * `::ADDRESS:PORT` leaves the source host and port empty, so it matches
-     * whatever host curl takes from the URL, however that host is spelt; the
-     * URL host is still what TLS verifies and what the Host header says. The
-     * address is always an IP literal, so curl connects without a lookup of
-     * its own. CURLOPT_RESOLVE cannot do this: curl ignores a RESOLVE entry
-     * when it parses the URL host as an address itself.
-     *
-     * @param  list{string}  $pinnedAddresses
-     * @return array<string, mixed>
+     * Keep the public exception wording apps and existing tests expect while
+     * the SSRF decision itself lives in qiick/laravel-outbound.
      */
-    private function pinningOptions(string $url, array $pinnedAddresses): array
+    private function messageForUnsafeUrl(UnsafeUrl $exception, string $host): string
     {
-        if ($pinnedAddresses === [] || ! defined('CURLOPT_CONNECT_TO')) {
-            return [];
-        }
+        $reason = $exception->reason();
 
-        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
-        $port = parse_url($url, PHP_URL_PORT) ?? ($scheme === 'https' ? 443 : 80);
-        $address = $pinnedAddresses[0];
-
-        return [
-            'curl' => [
-                CURLOPT_CONNECT_TO => [sprintf('::%s:%d', $this->formatCurlAddress($address), $port)],
-            ],
-        ];
-    }
-
-    /**
-     * curl needs brackets around an IPv6 pin (`::[2001:db8::1]:443`).
-     */
-    private function formatCurlAddress(string $address): string
-    {
-        if (filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
-            return '['.$address.']';
-        }
-
-        return $address;
+        return match (true) {
+            str_contains($reason, 'https') && str_contains($reason, 'allowed') => 'OIDC endpoints must use https.',
+            str_contains($reason, 'credentials') => 'OIDC endpoints must not contain credentials.',
+            str_contains($reason, 'absolute') => 'OIDC endpoint is not an absolute URL.',
+            str_contains($reason, 'could not be resolved') => "OIDC endpoint host [{$host}] does not resolve.",
+            str_contains($reason, 'disallowed address') => "OIDC endpoint host [{$host}] resolves to a disallowed address. "
+                .'Set OIDC_ALLOW_PRIVATE_HOSTS=true only for an IdP on a private network.',
+            str_contains($reason, 'invalid') => "OIDC endpoint host [{$host}] is invalid.",
+            default => "OIDC endpoint host [{$host}] is not allowed.",
+        };
     }
 }

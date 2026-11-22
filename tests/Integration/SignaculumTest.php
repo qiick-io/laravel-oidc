@@ -22,6 +22,9 @@ use Qiick\Oidc\Services\IdentitySessionService;
 use Qiick\Oidc\Services\RpInitiatedLogoutService;
 use Qiick\Oidc\Tests\Support\RecordingRoleSynchronization;
 use Qiick\Oidc\Tests\Support\User;
+use Qiick\Outbound\Http\PinnedHttpClient;
+use Qiick\Outbound\Ssrf\RemoteUrlGuard;
+use Qiick\Outbound\Ssrf\UrlGuardOptions;
 use Symfony\Component\HttpFoundation\Response;
 
 /*
@@ -350,6 +353,9 @@ beforeEach(function (): void {
     Config::set('oidc.client_id', $credentials['client_id']);
     Config::set('oidc.client_secret', $credentials['client_secret']);
     Config::set('oidc.http.allow_private_hosts', true);
+    app()->forgetInstance(UrlGuardOptions::class);
+    app()->forgetInstance(RemoteUrlGuard::class);
+    app()->forgetInstance(PinnedHttpClient::class);
     Config::set('oidc.jit', true);
     Config::set('oidc.scopes', ['openid', 'profile', 'email', 'qiick.orgs']);
     Config::set('oidc.userinfo', true);

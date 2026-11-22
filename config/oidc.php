@@ -300,6 +300,12 @@ return [
         'timeout' => 10,
 
         /*
+         * Cap on IdP response bodies (discovery, JWKS, token, userinfo).
+         * Enforced by qiick/laravel-outbound's PinnedHttpClient.
+         */
+        'max_response_bytes' => (int) env('OIDC_MAX_RESPONSE_BYTES', 1_048_576),
+
+        /*
          * Docker and lab setups where the app reaches the IdP under another
          * host than the browser does. `discovery_base` replaces the issuer
          * when fetching discovery; `server_origin` replaces the scheme and
@@ -310,9 +316,10 @@ return [
         'server_origin' => env('OIDC_SERVER_ORIGIN'),
 
         /*
-         * The SSRF guard refuses private, loopback and link-local hosts and
-         * plain http. Turn this on only for an IdP on a private network or
-         * in local QA. Cloud metadata hosts stay blocked either way.
+         * Mapped onto qiick/laravel-outbound UrlGuardOptions: when true, private
+         * / loopback / link-local hosts and plain http are allowed together.
+         * Cloud metadata hosts stay blocked either way. Prefer the OIDC key
+         * over OUTBOUND_ALLOW_PRIVATE_HOSTS for this package.
          */
         'allow_private_hosts' => (bool) env('OIDC_ALLOW_PRIVATE_HOSTS', false),
 

@@ -8,6 +8,9 @@ use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Qiick\Oidc\Data\DiscoveryDocumentData;
 use Qiick\Oidc\Data\ProviderConfigurationData;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
+use Qiick\Outbound\Ssrf\RemoteUrlGuard;
+use Qiick\Outbound\Ssrf\UnsafeUrl;
+use Qiick\Outbound\Ssrf\UrlGuardOptions;
 
 /**
  * Fetches, validates and caches the OpenID Provider metadata of the issuer
@@ -32,7 +35,8 @@ final readonly class DiscoveryService
 
     public function __construct(
         private IdentityProviderHttpService $identityProviderHttp,
-        private RemoteUrlGuardService $remoteUrlGuard,
+        private RemoteUrlGuard $remoteUrlGuard,
+        private UrlGuardOptions $urlGuardOptions,
         private CacheRepository $cache,
         private int $cacheSeconds,
         private ?string $discoveryBase,
@@ -102,10 +106,10 @@ final readonly class DiscoveryService
         $authorizationEndpoint = $this->requiredUrl($metadata, 'authorization_endpoint');
         $endSessionEndpoint = $this->optionalUrl($metadata, 'end_session_endpoint');
 
-        $this->remoteUrlGuard->assertBrowserUrlIsSafe($authorizationEndpoint);
+        $this->assertBrowserUrlIsSafe($authorizationEndpoint);
 
         if ($endSessionEndpoint !== null) {
-            $this->remoteUrlGuard->assertBrowserUrlIsSafe($endSessionEndpoint);
+            $this->assertBrowserUrlIsSafe($endSessionEndpoint);
         }
 
         $userinfoEndpoint = $this->optionalUrl($metadata, 'userinfo_endpoint');
@@ -120,6 +124,24 @@ final readonly class DiscoveryService
             idTokenSigningAlgorithms: $this->stringList($metadata, 'id_token_signing_alg_values_supported') ?? ['RS256'],
             isAuthorizationResponseIssuerSupported: ($metadata['authorization_response_iss_parameter_supported'] ?? false) === true,
         );
+    }
+
+    /**
+     * @throws IdentityProviderRequestException
+     */
+    private function assertBrowserUrlIsSafe(string $url): void
+    {
+        try {
+            $this->remoteUrlGuard->assertBrowserUrlIsSafe($url, $this->urlGuardOptions);
+        } catch (UnsafeUrl $exception) {
+            $reason = $exception->reason();
+
+            if (str_contains($reason, 'credentials')) {
+                throw new IdentityProviderRequestException('OIDC endpoints must not contain credentials.', previous: $exception);
+            }
+
+            throw new IdentityProviderRequestException('OIDC endpoints must use https.', previous: $exception);
+        }
     }
 
     private function toServerUrl(string $url): string

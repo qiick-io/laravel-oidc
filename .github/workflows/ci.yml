@@ -76,6 +76,73 @@ jobs:
       - name: Pest
         run: vendor/bin/pest
 
+  real-transport:
+    name: Real transport Guzzle ${{ matrix.guzzle }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - guzzle: '7.8'
+            prefer: lowest
+          - guzzle: '8.5'
+            prefer: stable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: '8.4'
+          coverage: none
+          extensions: curl, intl
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: |
+          # Packagist advisories block older Guzzle 7 installs; this job exists
+          # to exercise that line under real curl, so advisory blocking is off here only.
+          composer config audit.block-insecure false
+          composer require --dev --no-interaction --no-update "orchestra/testbench:^11.0"
+          composer require --no-interaction --no-update "illuminate/support:^13.0" "illuminate/http:^13.0" "illuminate/cache:^13.0"
+          composer require --no-interaction --no-update "guzzlehttp/guzzle:^${{ matrix.guzzle }}"
+          if [ "${{ matrix.prefer }}" = "lowest" ]; then
+            composer update --no-interaction --prefer-dist --prefer-lowest --with-all-dependencies
+          else
+            composer update --no-interaction --prefer-dist --with-all-dependencies
+          fi
+          composer show guzzlehttp/guzzle | head -5
+
+      - name: Real-transport Pest
+        run: vendor/bin/pest --group=real-transport
+
+  mutate:
+    name: Mutation (per-class ≥95%)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: '8.4'
+          coverage: pcov
+          extensions: curl, intl
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: |
+          composer require --dev --no-interaction --no-update "orchestra/testbench:^11.0"
+          composer require --no-interaction --no-update "illuminate/support:^13.0" "illuminate/http:^13.0" "illuminate/cache:^13.0"
+          composer update --no-interaction --prefer-dist --with-all-dependencies
+
+      - name: Pest mutate per class
+        run: bash scripts/mutate-per-class.sh
+
   # The identity key (issuer, subject) is case-sensitive, and the MySQL family's
   # default collations are not: the suite runs on each server engine the package
   # supports, not only on in-memory SQLite.

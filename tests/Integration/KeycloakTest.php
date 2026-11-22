@@ -16,6 +16,9 @@ use Qiick\Oidc\Services\IdentitySessionService;
 use Qiick\Oidc\Services\RpInitiatedLogoutService;
 use Qiick\Oidc\Tests\Support\RecordingRoleSynchronization;
 use Qiick\Oidc\Tests\Support\User;
+use Qiick\Outbound\Http\PinnedHttpClient;
+use Qiick\Outbound\Ssrf\RemoteUrlGuard;
+use Qiick\Outbound\Ssrf\UrlGuardOptions;
 
 /*
  * End to end against a real Keycloak (tests/Fixtures/Keycloak). Excluded from
@@ -92,6 +95,9 @@ beforeEach(function (): void {
     Config::set('oidc.client_id', 'laravel-app');
     Config::set('oidc.client_secret', KEYCLOAK_CLIENT_SECRET);
     Config::set('oidc.http.allow_private_hosts', true);
+    app()->forgetInstance(UrlGuardOptions::class);
+    app()->forgetInstance(RemoteUrlGuard::class);
+    app()->forgetInstance(PinnedHttpClient::class);
     Config::set('oidc.jit', true);
     Config::set('oidc.roles', [
         'enabled' => true,
