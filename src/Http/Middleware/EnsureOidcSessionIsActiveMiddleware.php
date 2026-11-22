@@ -39,9 +39,13 @@ final readonly class EnsureOidcSessionIsActiveMiddleware
         }
 
         $session = $request->session();
+        $hasStoredIdentity = $session->has(IdentitySessionService::SESSION_KEY);
         $identity = $this->identitySession->current($session);
 
-        if ($identity !== null && $this->sessionRevocation->isRevoked($identity)) {
+        // Fail closed (M4): a stored payload that cannot be read (unknown
+        // format_version, corrupt shape) ends the session the same way a
+        // revocation does, so the login never silently loses BCL coverage.
+        if ($hasStoredIdentity && ($identity === null || $this->sessionRevocation->isRevoked($identity))) {
             $guard = $this->auth->guard();
 
             if ($guard instanceof StatefulGuard) {
