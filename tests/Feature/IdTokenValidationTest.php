@@ -339,3 +339,22 @@ it('selects the at_hash digest algorithm from the JWS alg', function (string $al
     'RS384 uses sha384' => ['RS384', 'sha384', 'RSA'],
     'ES256 uses sha256' => ['ES256', 'sha256', 'EC'],
 ]);
+
+it('refuses at_hash when the JWS alg is missing or has no hash mapping', function (array $header): void {
+    $accessToken = 'access-token-for-missing-alg';
+    $accessTokenHash = accessTokenHash($accessToken);
+    $idToken = unsignedToken($header, ['at_hash' => $accessTokenHash], 'sig');
+
+    // JwtValidatorService is final; reach the at_hash alg map after shared JWT checks.
+    $assertAccessTokenHash = new ReflectionMethod(IdTokenValidatorService::class, 'assertAccessTokenHash');
+
+    expect(fn () => $assertAccessTokenHash->invoke(
+        app(IdTokenValidatorService::class),
+        $idToken,
+        $accessToken,
+        $accessTokenHash,
+    ))->toThrow(InvalidTokenException::class, 'cannot be checked for this signing algorithm');
+})->with([
+    'alg absent' => [['typ' => 'JWT']],
+    'alg unsupported' => [['alg' => 'HS256', 'typ' => 'JWT']],
+]);
