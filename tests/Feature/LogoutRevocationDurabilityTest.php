@@ -3,12 +3,13 @@
 declare(strict_types=1);
 
 use Illuminate\Auth\GenericUser;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Scope;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Date;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\Schema;
 use Qiick\Oidc\Data\IdentitySessionData;
 use Qiick\Oidc\Data\LogoutTokenData;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
@@ -101,10 +102,15 @@ it('treats a failed table read as revoked and never as a negative cache', functi
         authenticatedAt: Date::now()->getTimestamp(),
     );
 
-    // Rename inside a savepoint so a failed SELECT (PostgreSQL aborts the
-    // transaction) can roll back to a clean schema for the rest of the suite.
-    DB::unprepared('SAVEPOINT oidc_revocation_fail_closed');
-    Schema::rename('oidc_logout_revocations', 'oidc_logout_revocations_hidden');
+    // Force the Eloquent query to throw without DDL (MySQL commits on RENAME
+    // and would destroy RefreshDatabase savepoints; PostgreSQL aborts).
+    OidcLogoutRevocation::addGlobalScope('oidc-fail-closed-test', new class implements Scope
+    {
+        public function apply(Builder $builder, Model $model): void
+        {
+            throw new RuntimeException('forced table read failure');
+        }
+    });
 
     try {
         expect(app(SessionRevocationService::class)->isRevoked($identity))->toBeTrue();
@@ -112,8 +118,7 @@ it('treats a failed table read as revoked and never as a negative cache', functi
             fn (string $message): bool => str_contains($message, 'logout revocation table read failed'),
         );
     } finally {
-        DB::unprepared('ROLLBACK TO SAVEPOINT oidc_revocation_fail_closed');
-        DB::unprepared('RELEASE SAVEPOINT oidc_revocation_fail_closed');
+        Model::clearBootedModels();
     }
 });
 
