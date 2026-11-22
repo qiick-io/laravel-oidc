@@ -30,24 +30,27 @@ final readonly class IdTokenValidatorService
     // Spec ceiling; Increment/Decrement would still refuse the oversized fixture.
     private const int MAXIMUM_SUBJECT_LENGTH = 255; // @pest-mutate-ignore: IncrementInteger,DecrementInteger
 
-    /**
-     * Hash algorithm for each supported JWS `alg` (OIDC Core 3.1.3.6).
-     *
-     * @var array<string, string>
-     */
-    // Const entries are not line-covered; RS256/RS384/ES256 are exercised via at_hash tests.
-    private const array HASH_ALGORITHMS_BY_JWS = [
-        'RS256' => 'sha256', // @pest-mutate-ignore: RemoveArrayItem
-        'RS384' => 'sha384', // @pest-mutate-ignore: RemoveArrayItem
-        'RS512' => 'sha512', // @pest-mutate-ignore: RemoveArrayItem
-        'PS256' => 'sha256', // @pest-mutate-ignore: RemoveArrayItem
-        'ES256' => 'sha256', // @pest-mutate-ignore: RemoveArrayItem
-        'ES384' => 'sha384', // @pest-mutate-ignore: RemoveArrayItem
-    ];
-
     public function __construct(
         private JwtValidatorService $jwtValidator,
     ) {}
+
+    /**
+     * Hash algorithm for the JWS `alg` (OIDC Core 3.1.3.6). Null when the
+     * header omits `alg` or names one this package cannot hash for `at_hash`.
+     */
+    private function hashAlgorithmForJws(mixed $algorithm): ?string
+    {
+        if (! is_string($algorithm)) {
+            return null;
+        }
+
+        return match ($algorithm) {
+            'RS256', 'PS256', 'ES256' => 'sha256',
+            'RS384', 'ES384' => 'sha384',
+            'RS512' => 'sha512',
+            default => null,
+        };
+    }
 
     /**
      * @return array{sub: string, ...} the verified claims
@@ -123,7 +126,7 @@ final readonly class IdTokenValidatorService
         }
 
         $algorithm = is_array($header) ? ($header['alg'] ?? null) : null;
-        $hashAlgorithm = is_string($algorithm) ? (self::HASH_ALGORITHMS_BY_JWS[$algorithm] ?? null) : null;
+        $hashAlgorithm = $this->hashAlgorithmForJws($algorithm);
 
         if ($hashAlgorithm === null) {
             throw new InvalidTokenException('id_token [at_hash] cannot be checked for this signing algorithm.');
