@@ -51,12 +51,21 @@ class OidcLogoutRevocation extends Model
     }
 
     /**
-     * Rows past expires_at can no longer revoke a live session or be replayed.
+     * Rows past their write-time expires_at (and older than the max of the
+     * configured lifetimes) can no longer revoke a live session or be replayed.
      *
      * @return Builder<static>
      */
     public function prunable(): Builder
     {
-        return static::query()->where('expires_at', '<', now());
+        $sessionLifetimeSeconds = max(1, (int) config('session.lifetime', 120)) * 60;
+        $configuredSeconds = config('oidc.backchannel_logout.revocation_ttl');
+        $maximumConfiguredLifetimeSeconds = is_int($configuredSeconds) && $configuredSeconds > 0
+            ? max($configuredSeconds, $sessionLifetimeSeconds)
+            : $sessionLifetimeSeconds;
+
+        return static::query()
+            ->where('expires_at', '<', now())
+            ->where('received_at', '<', now()->subSeconds($maximumConfiguredLifetimeSeconds));
     }
 }

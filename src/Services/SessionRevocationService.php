@@ -49,8 +49,8 @@ final readonly class SessionRevocationService
                     'sid' => $logoutToken->sessionId,
                     'sub' => $logoutToken->subject,
                     'jti' => $logoutToken->tokenId,
-                    // DB default is backchannel; front-channel writes land in PR 7.
-                    'channel' => $logoutToken->channel, // @pest-mutate-ignore: RemoveArrayItem
+                    // Callers set backchannel or frontchannel; the DB default is backchannel.
+                    'channel' => $logoutToken->channel,
                     'received_at' => $receivedAt,
                     'expires_at' => Date::createFromTimestamp($expiresAt),
                 ]);
@@ -161,8 +161,10 @@ final readonly class SessionRevocationService
     }
 
     /**
-     * max(received + revocation lifetime, token exp + 120s) so the jti row
-     * outlives both the local session and the token's validation window.
+     * Fixed at write time: max(received + configured revocation lifetime,
+     * token exp + 120s). The configured lifetime is already the max of
+     * `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`; prune
+     * deletes by this stored expires_at and never recomputes the TTL.
      */
     private function expiresAt(int $receivedAt, ?int $tokenExpiresAt): int
     {

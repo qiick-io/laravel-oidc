@@ -59,6 +59,19 @@ it('persists a back-channel logout in oidc_logout_revocations', function (): voi
         ->and($row->channel)->toBe('backchannel');
 });
 
+it('persists the logout channel the caller sets, not only the DB default', function (): void {
+    app(SessionRevocationService::class)->revoke(new LogoutTokenData(
+        issuer: 'https://idp.example.com/realms/test',
+        subject: null,
+        sessionId: 'channel-sid',
+        tokenId: 'jti-channel',
+        expiresAt: Date::now()->addHour()->getTimestamp(),
+        channel: 'frontchannel',
+    ));
+
+    expect(OidcLogoutRevocation::query()->sole()->channel)->toBe('frontchannel');
+});
+
 it('refuses a replayed logout_token via the unique (issuer, jti) key', function (): void {
     $logoutToken = $this->identityProvider->sign(
         $this->identityProvider->logoutTokenClaims(['sid' => 'fake-session-1', 'jti' => 'jti-replay']),
@@ -74,6 +87,54 @@ it('refuses a replayed logout_token via the unique (issuer, jti) key', function 
         ->assertStatus(400);
 
     expect(OidcLogoutRevocation::query()->count())->toBe(1);
+});
+
+it('accepts an IdP retry when the durable insert failed on the first attempt', function (): void {
+    $logoutToken = $this->identityProvider->sign(
+        $this->identityProvider->logoutTokenClaims(['sid' => 'fake-session-1', 'jti' => 'jti-insert-fail']),
+        ['typ' => 'logout+jwt'],
+    );
+
+    $shouldFailInsert = true;
+    OidcLogoutRevocation::creating(function () use (&$shouldFailInsert): void {
+        if (! $shouldFailInsert) {
+            return;
+        }
+
+        $shouldFailInsert = false;
+
+        throw new RuntimeException('forced insert failure');
+    });
+
+    $this->post('/auth/oidc/backchannel-logout', ['logout_token' => $logoutToken])
+        ->assertStatus(500);
+
+    expect(OidcLogoutRevocation::query()->count())->toBe(0);
+
+    $this->post('/auth/oidc/backchannel-logout', ['logout_token' => $logoutToken])
+        ->assertOk();
+
+    expect(OidcLogoutRevocation::query()->sole()->jti)->toBe('jti-insert-fail');
+
+    $this->actingAs(new GenericUser(['id' => 1, 'remember_token' => null]))
+        ->withSession(durableSsoSession('fake-session-1'))
+        ->get('/probe')
+        ->assertSeeText('guest');
+});
+
+it('does not treat a cache-only jti hit as a terminal replay', function (): void {
+    $issuer = 'https://idp.example.com/realms/test';
+    $tokenId = 'jti-cache-ghost';
+    Cache::put('oidc:logout-jti:'.hash('sha256', $issuer.'|'.$tokenId), true, 600);
+
+    $this->post('/auth/oidc/backchannel-logout', [
+        'logout_token' => $this->identityProvider->sign(
+            $this->identityProvider->logoutTokenClaims(['sid' => 'fake-session-1', 'jti' => $tokenId]),
+            ['typ' => 'logout+jwt'],
+        ),
+    ])->assertOk();
+
+    expect(OidcLogoutRevocation::query()->sole()->jti)->toBe($tokenId);
 });
 
 it('still revokes after a cache flush because only the table answers not-revoked', function (): void {

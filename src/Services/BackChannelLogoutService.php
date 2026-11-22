@@ -12,6 +12,7 @@ use Qiick\Oidc\Data\LogoutTokenData;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Exceptions\InvalidTokenException;
 use Qiick\Oidc\Exceptions\OidcNotConfiguredException;
+use Qiick\Oidc\Models\OidcLogoutRevocation;
 use Qiick\Oidc\Models\UserIdentity;
 
 /**
@@ -82,8 +83,9 @@ final readonly class BackChannelLogoutService
             throw new InvalidTokenException('logout_token has no [jti].');
         }
 
-        // Fast pre-check only; durable replay refusal is unique (issuer, jti) on insert (M10).
-        $this->assertFirstUseCache($claims, $discovery->issuer, $tokenId);
+        // Accelerator only: never refuse on a cache-only hit. Durable replay
+        // refusal is unique (issuer, jti) on insert (M10).
+        $this->assertNotAlreadyUsed($discovery->issuer, $tokenId);
 
         $expiresAtClaim = $claims['exp'] ?? null;
 
@@ -96,6 +98,7 @@ final readonly class BackChannelLogoutService
             channel: 'backchannel',
         );
         $this->sessionRevocation->revoke($logout);
+        $this->rememberUsedTokenId($claims, $discovery->issuer, $tokenId);
 
         if ($subject !== null) {
             $this->cycleRememberToken($discovery->issuer, $subject);
@@ -129,22 +132,50 @@ final readonly class BackChannelLogoutService
     }
 
     /**
-     * Cache-only jti pre-check. The table unique key is the source of truth;
-     * this only avoids a round-trip when the same jti hits the same cache.
-     *
-     * @param  array<string, mixed>  $claims
+     * Cache hit is never a terminal replay by itself: confirm a live table
+     * row. A cache-only ghost (insert failed after a previous bug, or a
+     * flushed/partial store) must not block the IdP's retry.
      *
      * @throws InvalidTokenException
      */
-    private function assertFirstUseCache(array $claims, string $issuer, string $tokenId): void
+    private function assertNotAlreadyUsed(string $issuer, string $tokenId): void
+    {
+        if (! $this->cache->has($this->tokenIdCacheKey($issuer, $tokenId))) {
+            return;
+        }
+
+        $hasLiveRow = OidcLogoutRevocation::query()
+            ->where('issuer', $issuer)
+            ->where('jti', $tokenId)
+            ->where('expires_at', '>', Date::now())
+            ->exists();
+
+        if ($hasLiveRow) {
+            throw new InvalidTokenException('logout_token [jti] was already used.');
+        }
+    }
+
+    /**
+     * Warm the jti accelerator only after the durable insert succeeded, so a
+     * failed insert cannot poison the IdP's retry.
+     *
+     * @param  array<string, mixed>  $claims
+     */
+    private function rememberUsedTokenId(array $claims, string $issuer, string $tokenId): void
     {
         $expiresAt = $claims['exp'] ?? 0;
         $secondsUntilExpiry = (int) (is_int($expiresAt) || is_float($expiresAt) ? $expiresAt : 0) - Date::now()->getTimestamp();
-        $isFirstUse = $this->cache->add('oidc:logout-jti:'.hash('sha256', $issuer.'|'.$tokenId), true, max(60, $secondsUntilExpiry + 120));
 
-        if (! $isFirstUse) {
-            throw new InvalidTokenException('logout_token [jti] was already used.');
-        }
+        $this->cache->put(
+            $this->tokenIdCacheKey($issuer, $tokenId),
+            true,
+            max(60, $secondsUntilExpiry + 120),
+        );
+    }
+
+    private function tokenIdCacheKey(string $issuer, string $tokenId): string
+    {
+        return 'oidc:logout-jti:'.hash('sha256', $issuer.'|'.$tokenId);
     }
 
     /**

@@ -8,8 +8,10 @@ use Illuminate\Console\Command;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
 
 /**
- * `php artisan oidc:prune-logout-revocations`: deletes expired revocation rows
- * in chunks. Safe and idempotent; products should schedule it daily (M10).
+ * `php artisan oidc:prune-logout-revocations`: deletes rows whose write-time
+ * `expires_at` has passed. That timestamp was fixed at insert as the max of
+ * the configured lifetimes (`revocation_ttl` and `session.lifetime`) and the
+ * token validation window; prune never recomputes those TTLs (M10).
  */
 final class PruneLogoutRevocationsCommand extends Command
 {
@@ -23,10 +25,14 @@ final class PruneLogoutRevocationsCommand extends Command
         $chunkOption = $this->option('chunk');
         $chunkSize = is_numeric($chunkOption) ? max(1, (int) $chunkOption) : 1000;
         $deletedCount = 0;
+        // Safety floor: never prune a row younger than the max of the
+        // lifetimes configured now, even if a stale expires_at is already past.
+        $maximumConfiguredLifetimeSeconds = $this->maximumConfiguredLifetimeSeconds();
 
         do {
             $expiredIds = OidcLogoutRevocation::query()
                 ->where('expires_at', '<', now())
+                ->where('received_at', '<', now()->subSeconds($maximumConfiguredLifetimeSeconds))
                 ->orderBy('id')
                 ->limit($chunkSize)
                 ->pluck('id');
@@ -42,5 +48,21 @@ final class PruneLogoutRevocationsCommand extends Command
         $this->info("Deleted {$deletedCount} expired logout revocation(s).");
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Max of `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`
+     * (minutes → seconds), matching the write-time lifetime floor.
+     */
+    private function maximumConfiguredLifetimeSeconds(): int
+    {
+        $sessionLifetimeSeconds = max(1, (int) config('session.lifetime', 120)) * 60;
+        $configuredSeconds = config('oidc.backchannel_logout.revocation_ttl');
+
+        if (is_int($configuredSeconds) && $configuredSeconds > 0) {
+            return max($configuredSeconds, $sessionLifetimeSeconds);
+        }
+
+        return $sessionLifetimeSeconds;
     }
 }
