@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Qiick\Oidc\Data;
 
+use Firebase\JWT\JWT;
+use Throwable;
+
 /**
  * The result of a successful authorization code flow: who the IdP says the
  * user is, after the id_token passed every check.
@@ -11,6 +14,9 @@ namespace Qiick\Oidc\Data;
  * The identity key is the pair (issuer, subject), never the email. The raw
  * id_token is kept for RP-initiated logout (`id_token_hint`); the access token
  * only lives for the current request (userinfo) and is not stored.
+ *
+ * Trust-sensitive claims (`auth_time`, `amr`, `acr`) are read from this
+ * validated id_token payload only (OIDC Core 2; standards review M2).
  */
 final readonly class AuthenticatedIdentityData
 {
@@ -31,6 +37,78 @@ final readonly class AuthenticatedIdentityData
     public function claim(string $name): mixed
     {
         return $this->claims[$name] ?? null;
+    }
+
+    /**
+     * Unix `auth_time` from the validated id_token, or null when absent.
+     */
+    public function authTime(): ?int
+    {
+        $authenticationTime = $this->claim('auth_time');
+
+        return is_int($authenticationTime) ? $authenticationTime : null;
+    }
+
+    /**
+     * Authentication Context Class Reference (`acr`), when the IdP sent one.
+     */
+    public function acr(): ?string
+    {
+        $authenticationContext = $this->claim('acr');
+
+        return is_string($authenticationContext) && $authenticationContext !== '' ? $authenticationContext : null;
+    }
+
+    /**
+     * Authentication Method References (`amr`) as a list of strings (RFC 8176).
+     *
+     * @return list<string>|null
+     */
+    public function amr(): ?array
+    {
+        $authenticationMethods = $this->claim('amr');
+
+        if (! is_array($authenticationMethods)) {
+            return null;
+        }
+
+        $stringMethods = [];
+
+        foreach ($authenticationMethods as $authenticationMethod) {
+            if (! is_string($authenticationMethod) || $authenticationMethod === '') {
+                return null;
+            }
+
+            $stringMethods[] = $authenticationMethod;
+        }
+
+        return $stringMethods;
+    }
+
+    /**
+     * Signing `alg` from the validated id_token JOSE header (already checked).
+     */
+    public function idTokenAlgorithm(): ?string
+    {
+        $segments = explode('.', $this->idToken);
+
+        if (count($segments) !== 3) {
+            return null;
+        }
+
+        try {
+            $header = json_decode(JWT::urlsafeB64Decode($segments[0]), true, 16, JSON_THROW_ON_ERROR);
+        } catch (Throwable) {
+            return null;
+        }
+
+        if (! is_array($header)) {
+            return null;
+        }
+
+        $algorithm = $header['alg'] ?? null;
+
+        return is_string($algorithm) && $algorithm !== '' ? $algorithm : null;
     }
 
     /**
