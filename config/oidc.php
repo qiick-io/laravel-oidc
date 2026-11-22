@@ -214,8 +214,9 @@ return [
 
     /*
      * The package registers its routes under this prefix: `GET {prefix}/redirect`,
-     * `GET {prefix}/callback` and `POST {prefix}/backchannel-logout`. The path
-     * matches the routes Externa and Excubia App already use.
+     * `GET {prefix}/callback`, `POST {prefix}/backchannel-logout` and (when
+     * enabled) `GET {prefix}/frontchannel-logout`. The path matches the routes
+     * Externa and Excubia App already use.
      */
     'routes' => [
 
@@ -224,10 +225,16 @@ return [
         'prefix' => 'auth/oidc',
 
         /*
-         * Middleware of the redirect and callback routes. The back-channel
-         * logout route never gets a session or CSRF middleware.
+         * Middleware of the redirect and callback routes. Logout endpoints
+         * never get a session or CSRF middleware.
          */
         'middleware' => ['web', 'guest'],
+
+        /*
+         * Named package routes the app registers itself (for example
+         * ['oidc.callback']). Every other package route still registers (S4).
+         */
+        'except' => [],
 
     ],
 
@@ -238,6 +245,17 @@ return [
          * cover the longest local session. Null uses `session.lifetime`.
          */
         'revocation_ttl' => null,
+
+    ],
+
+    /*
+     * Front-channel logout (OIDC Front-Channel Logout 1.0). Off by default:
+     * back-channel covers server sessions; turn on only when the IdP is
+     * registered with frontchannel_logout_session_required (S3).
+     */
+    'frontchannel_logout' => [
+
+        'enabled' => (bool) env('OIDC_FRONTCHANNEL_LOGOUT', false),
 
     ],
 
