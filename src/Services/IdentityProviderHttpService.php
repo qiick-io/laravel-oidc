@@ -16,18 +16,24 @@ use Qiick\Outbound\Ssrf\UrlGuardOptions;
  * The only way the package talks to an IdP from the server. Every call goes
  * through qiick/laravel-outbound's SSRF guard and pinned client: authorize,
  * CURLOPT_CONNECT_TO pin, no transport redirects, timeouts and response size
- * limits. Discovery, JWKS, token, userinfo and revocation all use this path.
+ * limits. Discovery, JWKS, token and userinfo all use this path.
  *
  * Errors carry the URL host, the HTTP status and the OAuth `error` code at
  * most; never a request or response body, which may hold codes or tokens.
  */
 final readonly class IdentityProviderHttpService
 {
+    /**
+     * When `oidc.http.timeout` / `connect_timeout` is `0` ("no limit"), hop
+     * timeouts use this ceiling so outbound's ≥1s / ≤limits contract still holds.
+     */
+    public const int UnlimitedTimeoutSeconds = 86_400; // @pest-mutate-ignore: IncrementInteger,DecrementInteger — exact value asserted in Feature tests
+
     public function __construct(
         private PinnedHttpClient $pinnedHttp,
         private UrlGuardOptions $urlGuardOptions,
         private int $timeoutSeconds,
-        private int $connectTimeoutSeconds = 3,
+        private int $connectTimeoutSeconds = 10,
         private int $maxResponseBytes = 1_048_576,
     ) {}
 
@@ -69,6 +75,41 @@ final readonly class IdentityProviderHttpService
     }
 
     /**
+     * Maps outbound {@see UnsafeUrl} reasons onto the package's public wording.
+     * Used by {@see DiscoveryService} for browser endpoints as well.
+     */
+    public static function messageForUnsafeUrl(UnsafeUrl $exception, string $host): string
+    {
+        $reason = $exception->reason();
+
+        return match (true) {
+            str_contains($reason, 'https') && str_contains($reason, 'allowed'),
+            str_contains($reason, 'http and https') => 'OIDC endpoints must use https.',
+            str_contains($reason, 'credentials') => 'OIDC endpoints must not contain credentials.',
+            str_contains($reason, 'absolute') => 'OIDC endpoint is not an absolute URL.',
+            str_contains($reason, 'could not be resolved') => "OIDC endpoint host [{$host}] does not resolve.",
+            str_contains($reason, 'disallowed address') => "OIDC endpoint host [{$host}] resolves to a disallowed address. "
+                .'Set OIDC_ALLOW_PRIVATE_HOSTS=true only for an IdP on a private network.',
+            str_contains($reason, 'invalid') => "OIDC endpoint host [{$host}] is invalid.",
+            default => "OIDC endpoint host [{$host}] is not allowed (private, loopback or metadata address). "
+                .'Set OIDC_ALLOW_PRIVATE_HOSTS=true only for an IdP on a private network.',
+        };
+    }
+
+    /**
+     * `0` keeps the historical "no limit" meaning by mapping onto
+     * {@see UnlimitedTimeoutSeconds}.
+     */
+    public static function resolveTimeoutSeconds(int $configuredSeconds): int
+    {
+        if ($configuredSeconds === 0) {
+            return self::UnlimitedTimeoutSeconds;
+        }
+
+        return max(1, $configuredSeconds);
+    }
+
+    /**
      * @param  callable(OutboundRequest): void  $configure
      * @return array<string, mixed>
      *
@@ -77,6 +118,11 @@ final readonly class IdentityProviderHttpService
     private function send(string $method, string $url, callable $configure): array
     {
         $host = (string) parse_url($url, PHP_URL_HOST);
+        $timeoutSeconds = self::resolveTimeoutSeconds($this->timeoutSeconds);
+        $connectTimeoutSeconds = min(
+            self::resolveTimeoutSeconds($this->connectTimeoutSeconds),
+            $timeoutSeconds,
+        );
 
         try {
             $response = $this->pinnedHttp->send(
@@ -84,8 +130,8 @@ final readonly class IdentityProviderHttpService
                 $url,
                 $configure,
                 new HttpRequestOptions(
-                    timeoutSeconds: max(1, $this->timeoutSeconds),
-                    connectTimeoutSeconds: max(1, min($this->connectTimeoutSeconds, $this->timeoutSeconds)),
+                    timeoutSeconds: $timeoutSeconds,
+                    connectTimeoutSeconds: $connectTimeoutSeconds,
                     followRedirects: false,
                     maxRedirects: 0,
                     maxResponseBytes: $this->maxResponseBytes,
@@ -94,7 +140,7 @@ final readonly class IdentityProviderHttpService
             );
         } catch (UnsafeUrl $exception) {
             throw new IdentityProviderRequestException(
-                $this->messageForUnsafeUrl($exception, $host),
+                self::messageForUnsafeUrl($exception, $host),
                 previous: $exception,
             );
         } catch (OutboundHttpException $exception) {
@@ -120,25 +166,5 @@ final readonly class IdentityProviderHttpService
 
         /** @var array<string, mixed> $payload */
         return $payload;
-    }
-
-    /**
-     * Keep the public exception wording apps and existing tests expect while
-     * the SSRF decision itself lives in qiick/laravel-outbound.
-     */
-    private function messageForUnsafeUrl(UnsafeUrl $exception, string $host): string
-    {
-        $reason = $exception->reason();
-
-        return match (true) {
-            str_contains($reason, 'https') && str_contains($reason, 'allowed') => 'OIDC endpoints must use https.',
-            str_contains($reason, 'credentials') => 'OIDC endpoints must not contain credentials.',
-            str_contains($reason, 'absolute') => 'OIDC endpoint is not an absolute URL.',
-            str_contains($reason, 'could not be resolved') => "OIDC endpoint host [{$host}] does not resolve.",
-            str_contains($reason, 'disallowed address') => "OIDC endpoint host [{$host}] resolves to a disallowed address. "
-                .'Set OIDC_ALLOW_PRIVATE_HOSTS=true only for an IdP on a private network.',
-            str_contains($reason, 'invalid') => "OIDC endpoint host [{$host}] is invalid.",
-            default => "OIDC endpoint host [{$host}] is not allowed.",
-        };
     }
 }

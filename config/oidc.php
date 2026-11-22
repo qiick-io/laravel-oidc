@@ -297,7 +297,17 @@ return [
 
     'http' => [
 
-        'timeout' => 10,
+        /*
+         * Per-hop timeout for IdP calls (seconds). `0` means no practical limit
+         * (mapped to a 24h ceiling so outbound's ≥1s contract still holds).
+         */
+        'timeout' => (int) env('OIDC_HTTP_TIMEOUT', 10),
+
+        /*
+         * TCP connect timeout for IdP calls (seconds). `0` means no practical
+         * limit (same ceiling as timeout). Defaults to 10s as before.
+         */
+        'connect_timeout' => (int) env('OIDC_HTTP_CONNECT_TIMEOUT', 10),
 
         /*
          * Cap on IdP response bodies (discovery, JWKS, token, userinfo).

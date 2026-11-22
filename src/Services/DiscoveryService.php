@@ -134,13 +134,13 @@ final readonly class DiscoveryService
         try {
             $this->remoteUrlGuard->assertBrowserUrlIsSafe($url, $this->urlGuardOptions);
         } catch (UnsafeUrl $exception) {
-            $reason = $exception->reason();
-
-            if (str_contains($reason, 'credentials')) {
-                throw new IdentityProviderRequestException('OIDC endpoints must not contain credentials.', previous: $exception);
-            }
-
-            throw new IdentityProviderRequestException('OIDC endpoints must use https.', previous: $exception);
+            throw new IdentityProviderRequestException(
+                IdentityProviderHttpService::messageForUnsafeUrl(
+                    $exception,
+                    (string) parse_url($url, PHP_URL_HOST),
+                ),
+                previous: $exception,
+            );
         }
     }
 
@@ -150,12 +150,23 @@ final readonly class DiscoveryService
             return $url;
         }
 
-        return (string) preg_replace('#^https?://[^/]+#i', rtrim($this->serverOrigin, '/'), $url);
+        // preg_replace returns string for this subject; cast keeps the return type honest.
+        return (string) preg_replace('#^https?://[^/]+#i', rtrim($this->serverOrigin, '/'), $url); // @pest-mutate-ignore: RemoveStringCast
     }
 
+    /**
+     * Hash payload is issuer, discovery base and server origin separated by NUL
+     * so a common prefix cannot collide (e.g. `/realms/a` vs `/realms/ab`).
+     */
     private function cacheKey(ProviderConfigurationData $configuration): string
     {
-        return 'oidc:discovery:'.hash('sha256', $configuration->issuer.'|'.$this->discoveryBase.'|'.$this->serverOrigin);
+        $payload = implode("\0", [
+            $configuration->issuer,
+            (string) $this->discoveryBase, // @pest-mutate-ignore: RemoveStringCast — null and '' hash the same in implode
+            (string) $this->serverOrigin, // @pest-mutate-ignore: RemoveStringCast — null and '' hash the same in implode
+        ]);
+
+        return 'oidc:discovery:'.hash('sha256', $payload);
     }
 
     /**

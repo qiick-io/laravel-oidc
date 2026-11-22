@@ -234,6 +234,8 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.http.discovery_base` (`OIDC_DISCOVERY_BASE`) | `null` | Docker: fetch discovery from this base instead of the issuer. |
 | `oidc.http.server_origin` (`OIDC_SERVER_ORIGIN`) | `null` | Docker: scheme and host for the token, userinfo and JWKS calls. |
 | `oidc.http.allow_private_hosts` (`OIDC_ALLOW_PRIVATE_HOSTS`) | `false` | Allow an IdP on a private network and plain http. Cloud metadata stays blocked. Mapped onto `qiick/laravel-outbound` `UrlGuardOptions`. |
+| `oidc.http.timeout` (`OIDC_HTTP_TIMEOUT`) | `10` | Per-hop IdP timeout in seconds; `0` means no practical limit. |
+| `oidc.http.connect_timeout` (`OIDC_HTTP_CONNECT_TIMEOUT`) | `10` | TCP connect timeout in seconds; `0` means no practical limit. |
 | `oidc.http.max_response_bytes` (`OIDC_MAX_RESPONSE_BYTES`) | `1048576` | Cap on IdP response bodies (discovery, JWKS, token, userinfo). |
 
 ### Testing your app

@@ -12,6 +12,8 @@ paths="${MUTATE_PATHS:-tests/Feature}"
 
 classes=(
   'Qiick\Oidc\Services\IdentityProviderHttpService'
+  'Qiick\Oidc\Services\DiscoveryService'
+  'Qiick\Oidc\Factories\OidcOutboundStackFactory'
 )
 
 status=0

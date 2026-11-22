@@ -9,16 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
-- **Requires `qiick/laravel-outbound:^0.1`.** Server-side IdP calls (discovery, JWKS, token, userinfo, revocation) now go through outbound's `RemoteUrlGuard` and `PinnedHttpClient`. The local `RemoteUrlGuardService` is removed. Public config keys are unchanged: `oidc.http.allow_private_hosts` / `OIDC_ALLOW_PRIVATE_HOSTS` still allow private hosts and plain http together; cloud metadata stays blocked. Optional `oidc.http.max_response_bytes` / `OIDC_MAX_RESPONSE_BYTES` (default 1 MiB) caps IdP response bodies. See `UPGRADING.md`.
+- **Requires `qiick/laravel-outbound:^0.1`.** Server-side IdP calls (discovery, JWKS, token, userinfo) now go through outbound's `RemoteUrlGuard` and `PinnedHttpClient`. The local `RemoteUrlGuardService` is removed. Public config keys are unchanged: `oidc.http.allow_private_hosts` / `OIDC_ALLOW_PRIVATE_HOSTS` still allow private hosts and plain http together; cloud metadata stays blocked. Optional `oidc.http.max_response_bytes` / `OIDC_MAX_RESPONSE_BYTES` (default 1 MiB) caps IdP response bodies. `oidc.http.timeout=0` still means no practical limit; optional `oidc.http.connect_timeout` defaults to 10s. See `UPGRADING.md`.
 
 ### Changed
 
-- **SSRF and pinned HTTP are delegated to `qiick/laravel-outbound`.** Behaviour is not loosened: every previous SSRF refusal remains a refusal, CONNECT_TO pinning remains, redirects stay off on the IdP path, and outbound adds response size limits plus cross-origin redirect credential stripping when redirects are opted in (tests cover the wire).
+- **SSRF and pinned HTTP are delegated to `qiick/laravel-outbound`.** Behaviour is not loosened: every previous SSRF refusal remains a refusal, CONNECT_TO pinning remains, redirects stay off on the IdP path, and outbound adds response size limits plus cross-origin redirect credential stripping when redirects are opted in (tests cover the wire). OIDC builds its own guard / client privately so `OutboundServiceProvider` cannot override IdP SSRF or timeouts. NAT64, 6to4 and Teredo are always blocked (see `UPGRADING.md`).
 
 ### Added
 
 - Real-transport Pest group against `php -S` on Guzzle 7 and 8 (CI job `real-transport`).
-- Per-class mutation gate for `IdentityProviderHttpService` (≥95%, no `--covered-only`).
+- Per-class mutation gate for `IdentityProviderHttpService`, `DiscoveryService` and `OidcOutboundStackFactory` (≥95%, no `--covered-only`).
 
 ## [1.0.0-beta.4] - 2026-11-20
 

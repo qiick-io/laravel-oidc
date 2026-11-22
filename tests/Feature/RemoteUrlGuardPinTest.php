@@ -2,11 +2,10 @@
 
 declare(strict_types=1);
 
-use GuzzleHttp\Promise\Create as PromiseCreate;
-use GuzzleHttp\Psr7\Response as Psr7Response;
+use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Http\Client\Factory as HttpFactory;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
-use Psr\Http\Message\RequestInterface;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Services\IdentityProviderHttpService;
 use Qiick\Oidc\Tests\Support\OidcSsrfTestGuard;
@@ -242,7 +241,7 @@ it('checks every record of a hostname, and pins one of them, ipv4 first', functi
 /**
  * @param  callable(string): list<string>  $resolve
  */
-function identityProviderHttpWithResolver(callable $resolve, ?callable $transferHandler = null): IdentityProviderHttpService
+function identityProviderHttpWithResolver(callable $resolve): IdentityProviderHttpService
 {
     $resolver = new class($resolve) implements HostResolver
     {
@@ -263,7 +262,6 @@ function identityProviderHttpWithResolver(callable $resolve, ?callable $transfer
         app(HttpFactory::class),
         $guard,
         new OutboundHttpLimits,
-        transferHandler: $transferHandler,
     );
 
     return new IdentityProviderHttpService($client, $options, 5);
@@ -273,66 +271,70 @@ it('resolves once per request and sends it to the address the guard checked', fu
     $lookups = 0;
     $sentOptions = null;
 
+    Http::fake(function (Request $request, array $options) use (&$sentOptions): PromiseInterface {
+        $sentOptions = $options;
+
+        return Http::response(['iss' => 'https://rebind.example.com', 'ok' => true], 200);
+    });
+
     $http = identityProviderHttpWithResolver(
         static function (string $_host) use (&$lookups): array {
             $lookups++;
 
             return $lookups === 1 ? ['93.184.216.34'] : ['169.254.169.254'];
         },
-        function (RequestInterface $request, array $options) use (&$sentOptions) {
-            $sentOptions = $options;
-
-            return PromiseCreate::promiseFor(new Psr7Response(200, ['Content-Type' => 'application/json'], '{"iss":"https://rebind.example.com","ok":true}'));
-        },
     );
 
     expect($http->getJson('https://rebind.example.com/token'))->toBe(['iss' => 'https://rebind.example.com', 'ok' => true])
         ->and($lookups)->toBe(1)
-        ->and($sentOptions['curl'][CURLOPT_CONNECT_TO] ?? null)->toBe(['::93.184.216.34:443']);
+        ->and($sentOptions['curl'] ?? null)->toBe([CURLOPT_CONNECT_TO => ['::93.184.216.34:443']]);
 
     expect(fn () => $http->getJson('https://rebind.example.com/token'))
         ->toThrow(IdentityProviderRequestException::class, 'disallowed');
 
     expect($lookups)->toBe(2);
+    Http::assertSentCount(1);
 });
 
 it('pins a literal address in the url with CURLOPT_CONNECT_TO, never CURLOPT_RESOLVE', function (): void {
     $sentOptions = null;
 
+    Http::fake(function (Request $request, array $options) use (&$sentOptions): PromiseInterface {
+        $sentOptions = $options;
+
+        return Http::response(['ok' => true], 200);
+    });
+
     $http = identityProviderHttpWithResolver(
         static function (string $host): array {
             throw new RuntimeException("Guard resolved an address literal as a name: {$host}");
-        },
-        function (RequestInterface $request, array $options) use (&$sentOptions) {
-            $sentOptions = $options;
-
-            return PromiseCreate::promiseFor(new Psr7Response(200, ['Content-Type' => 'application/json'], '{"ok":true}'));
         },
     );
 
     $http->getJson('https://93.184.216.34/token');
 
-    expect($sentOptions['curl'][CURLOPT_CONNECT_TO] ?? null)->toBe(['::93.184.216.34:443'])
+    expect($sentOptions['curl'] ?? null)->toBe([CURLOPT_CONNECT_TO => ['::93.184.216.34:443']])
         ->and(array_key_exists(CURLOPT_RESOLVE, $sentOptions['curl'] ?? []))->toBeFalse();
 });
 
 it('pins an ipv6 literal with brackets in CURLOPT_CONNECT_TO', function (): void {
     $sentOptions = null;
 
+    Http::fake(function (Request $request, array $options) use (&$sentOptions): PromiseInterface {
+        $sentOptions = $options;
+
+        return Http::response(['ok' => true], 200);
+    });
+
     $http = identityProviderHttpWithResolver(
         static function (string $host): array {
             throw new RuntimeException("Guard resolved an address literal as a name: {$host}");
-        },
-        function (RequestInterface $request, array $options) use (&$sentOptions) {
-            $sentOptions = $options;
-
-            return PromiseCreate::promiseFor(new Psr7Response(200, ['Content-Type' => 'application/json'], '{"ok":true}'));
         },
     );
 
     $http->getJson('https://[2606:2800:220:1:248:1893:25c8:1946]/token');
 
-    expect($sentOptions['curl'][CURLOPT_CONNECT_TO] ?? null)->toBe([
-        '::[2606:2800:220:1:248:1893:25c8:1946]:443',
+    expect($sentOptions['curl'] ?? null)->toBe([
+        CURLOPT_CONNECT_TO => ['::[2606:2800:220:1:248:1893:25c8:1946]:443'],
     ]);
 });

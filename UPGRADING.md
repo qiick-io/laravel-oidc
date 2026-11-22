@@ -11,20 +11,23 @@ composer require qiick/laravel-oidc:^1.0@beta
 
 No separate outbound publish is required for OIDC. Keep using the OIDC config keys below.
 
-### Config (public keys unchanged)
+### Config (public keys unchanged unless noted)
 
 | Key / env | Effect |
 | --- | --- |
 | `oidc.http.allow_private_hosts` / `OIDC_ALLOW_PRIVATE_HOSTS` | When `true`, private / loopback / link-local hosts and plain `http` are allowed together (lab / Docker IdPs). Cloud metadata stays blocked. Mapped onto outbound `UrlGuardOptions`. |
-| `oidc.http.timeout` / (default `10`) | Per-hop timeout for IdP calls (seconds). |
+| `oidc.http.timeout` / `OIDC_HTTP_TIMEOUT` | Per-hop timeout for IdP calls (seconds, default `10`). **`0` still means no practical limit** (mapped to a 24h ceiling for outbound's ≥1s contract). |
+| `oidc.http.connect_timeout` / `OIDC_HTTP_CONNECT_TIMEOUT` | **New (optional).** TCP connect timeout (seconds, default `10`, same as before). `0` means no practical limit. |
 | `oidc.http.max_response_bytes` / `OIDC_MAX_RESPONSE_BYTES` | **New.** Cap on IdP response bodies (default `1048576`). |
 
-Do not rely on `OUTBOUND_ALLOW_PRIVATE_HOSTS` for this package: OIDC maps its own key onto the guard options it passes to outbound.
+Do not rely on `OUTBOUND_ALLOW_PRIVATE_HOSTS` for this package: OIDC builds its own guard / pinned client privately and maps `oidc.http.allow_private_hosts` onto the options it passes. Installing both packages does not let outbound's SSRF or timeout ceilings override IdP calls.
 
 ### Removed
 
-- `Qiick\Oidc\Services\RemoteUrlGuardService` — use outbound's `Qiick\Outbound\Ssrf\RemoteUrlGuard` (or the container binding) if an app was constructing the old class in tests. `FakeIdentityProvider::fake()` still swaps the resolver for you.
+- `Qiick\Oidc\Services\RemoteUrlGuardService` — construct outbound's `Qiick\Outbound\Ssrf\RemoteUrlGuard` in tests if needed. `FakeIdentityProvider::fake()` only rebinds OIDC's private host resolver (`OidcOutboundStackFactory::HostResolverBinding` / `oidc.ssrf.host_resolver`), never the shared outbound singletons.
 
 ### Behaviour
 
 IdP HTTP still refuses redirects, still pins with `CURLOPT_CONNECT_TO`, and still fails closed on SSRF. Outbound additionally enforces response size limits on every IdP call.
+
+**NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 (`2002::/16`) and Teredo (`2001::/32`) are now always blocked**, including when `OIDC_ALLOW_PRIVATE_HOSTS=true`. Previously those transition prefixes could be reached under the private-host opt-in; outbound's guard refuses them unconditionally so an IdP URL or DNS answer cannot tunnel to metadata or loopback through them.

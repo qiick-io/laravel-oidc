@@ -23,6 +23,9 @@ function outboundIdpHttp(
     FakeHostResolver $resolver = new FakeHostResolver,
     int $maxResponseBytes = 1_048_576,
     mixed $transferHandler = null,
+    int $timeoutSeconds = 5,
+    int $connectTimeoutSeconds = 10,
+    ?OutboundHttpLimits $limits = null,
 ): IdentityProviderHttpService {
     $guard = new RemoteUrlGuard($resolver, allowPrivateHosts: false, httpsOnly: false);
 
@@ -30,11 +33,12 @@ function outboundIdpHttp(
         new PinnedHttpClient(
             app(HttpFactory::class),
             $guard,
-            new OutboundHttpLimits,
+            $limits ?? new OutboundHttpLimits,
             transferHandler: $transferHandler,
         ),
         new UrlGuardOptions(httpsOnly: true, allowPrivateHosts: false),
-        timeoutSeconds: 5,
+        timeoutSeconds: $timeoutSeconds,
+        connectTimeoutSeconds: $connectTimeoutSeconds,
         maxResponseBytes: $maxResponseBytes,
     );
 }
@@ -66,6 +70,11 @@ it('maps every UnsafeUrl reason to the public OIDC exception wording', function 
         'OIDC endpoint host [idp.example.com] resolves to a disallowed address. Set OIDC_ALLOW_PRIVATE_HOSTS=true only for an IdP on a private network.',
     ],
     'invalid spelling' => ['https://[not:an:ip]/token', [], 'OIDC endpoint host [[not:an:ip]] is invalid.'],
+    'private loopback literal' => [
+        'https://127.0.0.1/token',
+        [],
+        'OIDC endpoint host [127.0.0.1] is not allowed (private, loopback or metadata address). Set OIDC_ALLOW_PRIVATE_HOSTS=true only for an IdP on a private network.',
+    ],
 ]);
 
 it('includes a sanitised OAuth error code on HTTP failures', function (): void {
@@ -173,4 +182,30 @@ it('refuses a non-object JSON payload', function (): void {
 
     expect(fn () => $http->getJson('https://idp.example.com/token'))
         ->toThrow(IdentityProviderRequestException::class, 'not a JSON object');
+});
+
+it('maps timeout 0 onto the unlimited ceiling for the hop', function (): void {
+    expect(IdentityProviderHttpService::UnlimitedTimeoutSeconds)->toBe(86_400);
+
+    $seenTimeout = null;
+
+    $http = outboundIdpHttp(
+        new FakeHostResolver(answers: ['idp.example.com' => ['93.184.216.34']]),
+        transferHandler: function (RequestInterface $request, array $options) use (&$seenTimeout) {
+            $seenTimeout = $options['timeout'] ?? null;
+
+            return PromiseCreate::promiseFor(new Psr7Response(200, ['Content-Type' => 'application/json'], '{"ok":true}'));
+        },
+        timeoutSeconds: 0,
+        connectTimeoutSeconds: 0,
+        limits: new OutboundHttpLimits(
+            maxTimeoutSeconds: IdentityProviderHttpService::UnlimitedTimeoutSeconds,
+            maxConnectTimeoutSeconds: IdentityProviderHttpService::UnlimitedTimeoutSeconds,
+            totalDeadlineSeconds: IdentityProviderHttpService::UnlimitedTimeoutSeconds,
+        ),
+    );
+
+    expect($http->getJson('https://idp.example.com/token'))->toBe(['ok' => true])
+        ->and($seenTimeout)->toBeGreaterThanOrEqual(IdentityProviderHttpService::UnlimitedTimeoutSeconds - 1)
+        ->and($seenTimeout)->toBeLessThanOrEqual(IdentityProviderHttpService::UnlimitedTimeoutSeconds);
 });

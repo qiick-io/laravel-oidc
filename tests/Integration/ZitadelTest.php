@@ -16,9 +16,6 @@ use Qiick\Oidc\Services\IdentitySessionService;
 use Qiick\Oidc\Services\RpInitiatedLogoutService;
 use Qiick\Oidc\Tests\Support\RecordingRoleSynchronization;
 use Qiick\Oidc\Tests\Support\User;
-use Qiick\Outbound\Http\PinnedHttpClient;
-use Qiick\Outbound\Ssrf\RemoteUrlGuard;
-use Qiick\Outbound\Ssrf\UrlGuardOptions;
 
 /*
  * End to end against a real Zitadel (tests/Fixtures/zitadel). Excluded from
@@ -221,11 +218,6 @@ beforeEach(function (): void {
         'map' => ['admin' => 'admin', 'member' => 'editor'],
         'forbidden' => [],
     ]);
-
-    // Singletons capture allow_private_hosts at first resolve; rebuild after Config::set.
-    app()->forgetInstance(UrlGuardOptions::class);
-    app()->forgetInstance(RemoteUrlGuard::class);
-    app()->forgetInstance(PinnedHttpClient::class);
 
     $this->roleSynchronization = new RecordingRoleSynchronization;
     app()->instance(RoleSynchronizationContract::class, $this->roleSynchronization);

@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Qiick\Oidc\Tests\Support;
 
+use Illuminate\Support\Facades\Config;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
+use Qiick\Oidc\Factories\OidcOutboundStackFactory;
+use Qiick\Oidc\Services\IdentityProviderHttpService;
 use Qiick\Outbound\Contracts\HostResolver;
-use Qiick\Outbound\Http\PinnedHttpClient;
 use Qiick\Outbound\Ssrf\RemoteUrlGuard;
 use Qiick\Outbound\Ssrf\UnsafeUrl;
 use Qiick\Outbound\Ssrf\UrlGuardOptions;
@@ -19,7 +21,8 @@ use RuntimeException;
 final class OidcSsrfTestGuard
 {
     /**
-     * Rebind the container guard / pinned client after flipping oidc.http.* config.
+     * Rebind OIDC's private HostResolver and flip oidc.http.allow_private_hosts.
+     * Does not touch the shared outbound container names.
      *
      * @param  list<string>  $resolvedAddresses
      */
@@ -38,14 +41,8 @@ final class OidcSsrfTestGuard
             }
         };
 
-        app()->instance(HostResolver::class, $resolver);
-        app()->instance(UrlGuardOptions::class, new UrlGuardOptions(
-            httpsOnly: ! $isPrivateHostAllowed,
-            allowPrivateHosts: $isPrivateHostAllowed,
-        ));
-        app()->forgetInstance(RemoteUrlGuard::class);
-        app()->instance(RemoteUrlGuard::class, new RemoteUrlGuard($resolver, allowPrivateHosts: false, httpsOnly: false));
-        app()->forgetInstance(PinnedHttpClient::class);
+        Config::set('oidc.http.allow_private_hosts', $isPrivateHostAllowed);
+        app()->instance(OidcOutboundStackFactory::HostResolverBinding, $resolver);
     }
 
     private RemoteUrlGuard $guard;
@@ -99,7 +96,7 @@ final class OidcSsrfTestGuard
             $destination = $this->guard->authorize($url, $this->options);
         } catch (UnsafeUrl $exception) {
             throw new IdentityProviderRequestException(
-                $this->messageForUnsafeUrl($exception, (string) parse_url($url, PHP_URL_HOST)),
+                IdentityProviderHttpService::messageForUnsafeUrl($exception, (string) parse_url($url, PHP_URL_HOST)),
                 previous: $exception,
             );
         }
@@ -115,29 +112,10 @@ final class OidcSsrfTestGuard
         try {
             $this->guard->assertBrowserUrlIsSafe($url, $this->options);
         } catch (UnsafeUrl $exception) {
-            $reason = $exception->reason();
-
-            if (str_contains($reason, 'credentials')) {
-                throw new IdentityProviderRequestException('OIDC endpoints must not contain credentials.', previous: $exception);
-            }
-
-            throw new IdentityProviderRequestException('OIDC endpoints must use https.', previous: $exception);
+            throw new IdentityProviderRequestException(
+                IdentityProviderHttpService::messageForUnsafeUrl($exception, (string) parse_url($url, PHP_URL_HOST)),
+                previous: $exception,
+            );
         }
-    }
-
-    private function messageForUnsafeUrl(UnsafeUrl $exception, string $host): string
-    {
-        $reason = $exception->reason();
-
-        return match (true) {
-            str_contains($reason, 'https') && str_contains($reason, 'allowed') => 'OIDC endpoints must use https.',
-            str_contains($reason, 'credentials') => 'OIDC endpoints must not contain credentials.',
-            str_contains($reason, 'absolute') => 'OIDC endpoint is not an absolute URL.',
-            str_contains($reason, 'could not be resolved') => "OIDC endpoint host [{$host}] does not resolve.",
-            str_contains($reason, 'disallowed address') => "OIDC endpoint host [{$host}] resolves to a disallowed address. "
-                .'Set OIDC_ALLOW_PRIVATE_HOSTS=true only for an IdP on a private network.',
-            str_contains($reason, 'invalid') => "OIDC endpoint host [{$host}] is invalid.",
-            default => "OIDC endpoint host [{$host}] is not allowed.",
-        };
     }
 }

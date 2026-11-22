@@ -25,6 +25,7 @@ use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Contracts\RoleSynchronizationContract;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
+use Qiick\Oidc\Factories\OidcOutboundStackFactory;
 use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
 use Qiick\Oidc\Listeners\EnforceSsoOnlyListener;
 use Qiick\Oidc\Listeners\PromotePendingIdentityListener;
@@ -48,25 +49,18 @@ use Qiick\Oidc\Services\SpatieRoleSynchronizationService;
 use Qiick\Oidc\Services\SsoOnlyModeService;
 use Qiick\Oidc\Services\UserinfoService;
 use Qiick\Oidc\Services\UserLinkingService;
-use Qiick\Outbound\Contracts\HostResolver;
-use Qiick\Outbound\Http\OutboundHttpLimits;
-use Qiick\Outbound\Http\PinnedHttpClient;
 use Qiick\Outbound\Ssrf\DnsHostResolver;
-use Qiick\Outbound\Ssrf\RemoteUrlGuard;
-use Qiick\Outbound\Ssrf\UrlGuardOptions;
 
 /**
  * Registers the package in a Laravel app. Auto-discovered through
  * `extra.laravel.providers` in composer.json.
  *
  * Services are bound, not shared, so each resolution reads the current config
- * (an app can change the OIDC settings at runtime from its settings UI). The
- * outbound SSRF guard and pinned client are shared so tests and the fake IdP
- * can swap the DNS resolver and factory.
+ * (an app can change the OIDC settings at runtime from its settings UI).
  *
- * Public `oidc.http.*` keys stay the product surface: this provider maps
- * `allow_private_hosts` onto outbound's `UrlGuardOptions` (private hosts and
- * plain http together) and keeps timeouts / size limits on the OIDC path.
+ * IdP HTTP SSRF / pinning / timeouts are built by {@see OidcOutboundStackFactory}
+ * privately, so alphabetical package discovery cannot let outbound rebind them.
+ * Tests swap DNS through {@see OidcOutboundStackFactory::HostResolverBinding}.
  *
  * An app that keeps OIDC settings in its database binds its own
  * ProviderConfigurationRepositoryContract after this provider.
@@ -79,60 +73,39 @@ final class OidcServiceProvider extends ServiceProvider
 
         $this->app->bind(ProviderConfigurationRepositoryContract::class, ConfigProviderConfigurationRepository::class);
 
-        // Prefer outbound's HostResolver when the app already bound one; otherwise DNS.
-        if (! $this->app->bound(HostResolver::class)) {
-            $this->app->singleton(HostResolver::class, DnsHostResolver::class);
-        }
+        $this->app->bind(OidcOutboundStackFactory::HostResolverBinding, DnsHostResolver::class);
 
-        $this->app->singleton(UrlGuardOptions::class, function (Application $app): UrlGuardOptions {
-            $isPrivateHostAllowed = $this->config($app)->boolean('oidc.http.allow_private_hosts');
+        $this->app->bind(OidcOutboundStackFactory::class, fn (Application $app): OidcOutboundStackFactory => new OidcOutboundStackFactory(
+            http: $app->make(HttpFactory::class),
+            config: $this->config($app),
+            hostResolver: $app->make(OidcOutboundStackFactory::HostResolverBinding),
+        ));
 
-            // Same product semantics as before: private hosts and plain http travel together.
-            return new UrlGuardOptions(
-                httpsOnly: ! $isPrivateHostAllowed,
-                allowPrivateHosts: $isPrivateHostAllowed,
+        $this->app->bind(IdentityProviderHttpService::class, function (Application $app): IdentityProviderHttpService {
+            $stack = $app->make(OidcOutboundStackFactory::class)->make();
+
+            return new IdentityProviderHttpService(
+                pinnedHttp: $stack->pinnedHttp,
+                urlGuardOptions: $stack->urlGuardOptions,
+                timeoutSeconds: $this->config($app)->integer('oidc.http.timeout', 10),
+                connectTimeoutSeconds: $this->config($app)->integer('oidc.http.connect_timeout', 10),
+                maxResponseBytes: max(1, $this->config($app)->integer('oidc.http.max_response_bytes', 1_048_576)),
             );
         });
 
-        $this->app->singleton(RemoteUrlGuard::class, fn (Application $app): RemoteUrlGuard => new RemoteUrlGuard(
-            hostResolver: $app->make(HostResolver::class),
-            allowPrivateHosts: false,
-            httpsOnly: false,
-        ));
+        $this->app->bind(DiscoveryService::class, function (Application $app): DiscoveryService {
+            $stack = $app->make(OidcOutboundStackFactory::class)->make();
 
-        // Shared HttpFactory so FakeIdentityProvider / Http::fake() still intercept IdP calls.
-        // PinnedHttpClient still strips a poisoned request-level handler and re-asserts CONNECT_TO.
-        $this->app->singleton(PinnedHttpClient::class, function (Application $app): PinnedHttpClient {
-            $timeoutSeconds = max(1, $this->config($app)->integer('oidc.http.timeout', 10));
-
-            return new PinnedHttpClient(
-                $app->make(HttpFactory::class),
-                $app->make(RemoteUrlGuard::class),
-                new OutboundHttpLimits(
-                    maxTimeoutSeconds: max(60, $timeoutSeconds),
-                    maxConnectTimeoutSeconds: 30,
-                    totalDeadlineSeconds: max(30, $timeoutSeconds * 3),
-                ),
+            return new DiscoveryService(
+                identityProviderHttp: $app->make(IdentityProviderHttpService::class),
+                remoteUrlGuard: $stack->remoteUrlGuard,
+                urlGuardOptions: $stack->urlGuardOptions,
+                cache: $this->cacheStore($app),
+                cacheSeconds: $this->config($app)->integer('oidc.cache.discovery_ttl', 21600),
+                discoveryBase: $this->optionalString($app, 'oidc.http.discovery_base'),
+                serverOrigin: $this->optionalString($app, 'oidc.http.server_origin'),
             );
         });
-
-        $this->app->bind(IdentityProviderHttpService::class, fn (Application $app): IdentityProviderHttpService => new IdentityProviderHttpService(
-            pinnedHttp: $app->make(PinnedHttpClient::class),
-            urlGuardOptions: $app->make(UrlGuardOptions::class),
-            timeoutSeconds: max(1, $this->config($app)->integer('oidc.http.timeout', 10)),
-            connectTimeoutSeconds: 3,
-            maxResponseBytes: max(1, $this->config($app)->integer('oidc.http.max_response_bytes', 1_048_576)),
-        ));
-
-        $this->app->bind(DiscoveryService::class, fn (Application $app): DiscoveryService => new DiscoveryService(
-            identityProviderHttp: $app->make(IdentityProviderHttpService::class),
-            remoteUrlGuard: $app->make(RemoteUrlGuard::class),
-            urlGuardOptions: $app->make(UrlGuardOptions::class),
-            cache: $this->cacheStore($app),
-            cacheSeconds: $this->config($app)->integer('oidc.cache.discovery_ttl', 21600),
-            discoveryBase: $this->optionalString($app, 'oidc.http.discovery_base'),
-            serverOrigin: $this->optionalString($app, 'oidc.http.server_origin'),
-        ));
 
         $this->app->bind(JwksService::class, fn (Application $app): JwksService => new JwksService(
             identityProviderHttp: $app->make(IdentityProviderHttpService::class),
