@@ -8,6 +8,9 @@ use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Qiick\Oidc\Data\DiscoveryDocumentData;
 use Qiick\Oidc\Data\ProviderConfigurationData;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
+use Qiick\Outbound\Ssrf\RemoteUrlGuard;
+use Qiick\Outbound\Ssrf\UnsafeUrl;
+use Qiick\Outbound\Ssrf\UrlGuardOptions;
 
 /**
  * Fetches, validates and caches the OpenID Provider metadata of the issuer
@@ -32,7 +35,8 @@ final readonly class DiscoveryService
 
     public function __construct(
         private IdentityProviderHttpService $identityProviderHttp,
-        private RemoteUrlGuardService $remoteUrlGuard,
+        private RemoteUrlGuard $remoteUrlGuard,
+        private UrlGuardOptions $urlGuardOptions,
         private CacheRepository $cache,
         private int $cacheSeconds,
         private ?string $discoveryBase,
@@ -102,10 +106,10 @@ final readonly class DiscoveryService
         $authorizationEndpoint = $this->requiredUrl($metadata, 'authorization_endpoint');
         $endSessionEndpoint = $this->optionalUrl($metadata, 'end_session_endpoint');
 
-        $this->remoteUrlGuard->assertBrowserUrlIsSafe($authorizationEndpoint);
+        $this->assertBrowserUrlIsSafe($authorizationEndpoint);
 
         if ($endSessionEndpoint !== null) {
-            $this->remoteUrlGuard->assertBrowserUrlIsSafe($endSessionEndpoint);
+            $this->assertBrowserUrlIsSafe($endSessionEndpoint);
         }
 
         $userinfoEndpoint = $this->optionalUrl($metadata, 'userinfo_endpoint');
@@ -122,18 +126,47 @@ final readonly class DiscoveryService
         );
     }
 
+    /**
+     * @throws IdentityProviderRequestException
+     */
+    private function assertBrowserUrlIsSafe(string $url): void
+    {
+        try {
+            $this->remoteUrlGuard->assertBrowserUrlIsSafe($url, $this->urlGuardOptions);
+        } catch (UnsafeUrl $exception) {
+            throw new IdentityProviderRequestException(
+                IdentityProviderHttpService::messageForUnsafeUrl(
+                    $exception,
+                    (string) parse_url($url, PHP_URL_HOST),
+                ),
+                previous: $exception,
+            );
+        }
+    }
+
     private function toServerUrl(string $url): string
     {
         if ($this->serverOrigin === null) {
             return $url;
         }
 
-        return (string) preg_replace('#^https?://[^/]+#i', rtrim($this->serverOrigin, '/'), $url);
+        // preg_replace returns string for this subject; cast keeps the return type honest.
+        return (string) preg_replace('#^https?://[^/]+#i', rtrim($this->serverOrigin, '/'), $url); // @pest-mutate-ignore: RemoveStringCast
     }
 
+    /**
+     * Hash payload is issuer, discovery base and server origin separated by NUL
+     * so a common prefix cannot collide (e.g. `/realms/a` vs `/realms/ab`).
+     */
     private function cacheKey(ProviderConfigurationData $configuration): string
     {
-        return 'oidc:discovery:'.hash('sha256', $configuration->issuer.'|'.$this->discoveryBase.'|'.$this->serverOrigin);
+        $payload = implode("\0", [
+            $configuration->issuer,
+            (string) $this->discoveryBase, // @pest-mutate-ignore: RemoveStringCast — null and '' hash the same in implode
+            (string) $this->serverOrigin, // @pest-mutate-ignore: RemoveStringCast — null and '' hash the same in implode
+        ]);
+
+        return 'oidc:discovery:'.hash('sha256', $payload);
     }
 
     /**

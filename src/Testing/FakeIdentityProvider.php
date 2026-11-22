@@ -12,9 +12,10 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Http;
 use OpenSSLAsymmetricKey;
+use Qiick\Oidc\Factories\OidcOutboundStackFactory;
 use Qiick\Oidc\Services\BackChannelLogoutService;
 use Qiick\Oidc\Services\DiscoveryService;
-use Qiick\Oidc\Services\RemoteUrlGuardService;
+use Qiick\Outbound\Testing\FakeHostResolver;
 use RuntimeException;
 
 /**
@@ -104,10 +105,12 @@ final class FakeIdentityProvider
             Config::set("oidc.{$key}", $value);
         }
 
-        app()->instance(RemoteUrlGuardService::class, new RemoteUrlGuardService(
-            isPrivateHostAllowed: false,
-            hostResolver: fn (string $host): array => ['93.184.215.14'],
-        ));
+        $host = (string) parse_url($issuer, PHP_URL_HOST);
+        $resolver = (new FakeHostResolver)->with($host, ['93.184.215.14']);
+
+        // Scope the fake resolver to OIDC's private binding — never the shared
+        // outbound HostResolver / RemoteUrlGuard / PinnedHttpClient singletons.
+        app()->instance(OidcOutboundStackFactory::HostResolverBinding, $resolver);
 
         Http::fake([$identityProvider->baseUrl().'/*' => fn (HttpRequest $request): PromiseInterface => $identityProvider->handle($request)]);
 
