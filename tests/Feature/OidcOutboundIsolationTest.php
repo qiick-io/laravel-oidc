@@ -34,6 +34,19 @@ it('refuses a loopback IdP when OutboundServiceProvider registers after OIDC wit
     Http::assertNothingSent();
 });
 
+it('refuses a hostname that resolves to loopback when Outbound opens private hosts after OIDC', function (): void {
+    Config::set('outbound.ssrf.allow_private_hosts', true);
+    Config::set('oidc.http.allow_private_hosts', false);
+    Config::set('oidc.http.timeout', 10);
+    OidcSsrfTestGuard::bindInContainer(false, ['127.0.0.1']);
+    Http::fake(['*' => Http::response(['ok' => true])]);
+
+    expect(fn () => app(IdentityProviderHttpService::class)->getJson('https://loopback.idp.test/token'))
+        ->toThrow(IdentityProviderRequestException::class, 'disallowed address');
+
+    Http::assertNothingSent();
+});
+
 it('honours oidc.http.timeout above outbound\'s default max without InvalidArgumentException', function (): void {
     Config::set('outbound.http.max_timeout_seconds', 60);
     Config::set('oidc.http.timeout', 90);

@@ -167,6 +167,33 @@ it('builds discovery cache keys with a stable prefix and distinct hashes', funct
         ->and($alphabetKey)->not->toBe($alphaKey);
 });
 
+it('separates issuer and discovery_base with NUL so the same characters split differently do not collide', function (): void {
+    Config::set('oidc.enabled', true);
+    Config::set('oidc.client_id', 'laravel-app');
+    Config::set('oidc.http.server_origin', null);
+
+    $cacheKeyMethod = new ReflectionMethod(DiscoveryService::class, 'cacheKey');
+
+    // Without a separator, issuer "…/ab" + base "c" and issuer "…/a" + base "bc" are the same string.
+    Config::set('oidc.issuer', 'https://idp.example.com/ab');
+    Config::set('oidc.http.discovery_base', 'c');
+    $splitAfterAb = $cacheKeyMethod->invoke(
+        app(DiscoveryService::class),
+        app(ProviderConfigurationRepositoryContract::class)->configuration(),
+    );
+
+    Config::set('oidc.issuer', 'https://idp.example.com/a');
+    Config::set('oidc.http.discovery_base', 'bc');
+    $splitAfterA = $cacheKeyMethod->invoke(
+        app(DiscoveryService::class),
+        app(ProviderConfigurationRepositoryContract::class)->configuration(),
+    );
+
+    expect($splitAfterAb)->not->toBe($splitAfterA)
+        ->and($splitAfterAb)->toStartWith('oidc:discovery:')
+        ->and($splitAfterA)->toStartWith('oidc:discovery:');
+});
+
 it('strips a trailing slash from the discovery base and server origin', function (): void {
     $identityProvider = new FakeIdentityProvider(issuer: 'http://localhost:8080/realms/externa');
     Config::set('oidc.enabled', true);
