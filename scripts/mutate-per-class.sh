@@ -14,6 +14,7 @@ classes=(
   'Qiick\Oidc\Services\IdentityProviderHttpService'
   'Qiick\Oidc\Services\DiscoveryService'
   'Qiick\Oidc\Factories\OidcOutboundStackFactory'
+  'Qiick\Oidc\Services\SessionRevocationService'
 )
 
 status=0

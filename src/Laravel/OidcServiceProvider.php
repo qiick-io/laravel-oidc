@@ -20,6 +20,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Qiick\Oidc\Console\ConfigureOidcCommand;
 use Qiick\Oidc\Console\ImportLegacySubjectsCommand;
+use Qiick\Oidc\Console\PruneLogoutRevocationsCommand;
 use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Contracts\RoleSynchronizationContract;
@@ -241,7 +242,11 @@ final class OidcServiceProvider extends ServiceProvider
                 __DIR__.'/../../config/oidc.php' => config_path('oidc.php'),
             ], 'oidc-config');
 
-            $this->commands([ConfigureOidcCommand::class, ImportLegacySubjectsCommand::class]);
+            $this->commands([
+                ConfigureOidcCommand::class,
+                ImportLegacySubjectsCommand::class,
+                PruneLogoutRevocationsCommand::class,
+            ]);
 
             $this->publishesMigrations([
                 __DIR__.'/../../database/migrations' => database_path('migrations'),

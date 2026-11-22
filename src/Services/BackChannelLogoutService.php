@@ -76,9 +76,25 @@ final readonly class BackChannelLogoutService
             throw new InvalidTokenException('logout_token [sub] has leading or trailing whitespace.');
         }
 
-        $this->assertFirstUse($claims, $discovery->issuer);
+        $tokenId = $this->optionalString($claims, 'jti');
 
-        $logout = new LogoutTokenData($discovery->issuer, $subject, $sessionId);
+        if ($tokenId === null) {
+            throw new InvalidTokenException('logout_token has no [jti].');
+        }
+
+        // Fast pre-check only; durable replay refusal is unique (issuer, jti) on insert (M10).
+        $this->assertFirstUseCache($claims, $discovery->issuer, $tokenId);
+
+        $expiresAtClaim = $claims['exp'] ?? null;
+
+        $logout = new LogoutTokenData(
+            issuer: $discovery->issuer,
+            subject: $subject,
+            sessionId: $sessionId,
+            tokenId: $tokenId,
+            expiresAt: is_int($expiresAtClaim) ? $expiresAtClaim : null,
+            channel: 'backchannel',
+        );
         $this->sessionRevocation->revoke($logout);
 
         if ($subject !== null) {
@@ -113,18 +129,15 @@ final readonly class BackChannelLogoutService
     }
 
     /**
+     * Cache-only jti pre-check. The table unique key is the source of truth;
+     * this only avoids a round-trip when the same jti hits the same cache.
+     *
      * @param  array<string, mixed>  $claims
      *
      * @throws InvalidTokenException
      */
-    private function assertFirstUse(array $claims, string $issuer): void
+    private function assertFirstUseCache(array $claims, string $issuer, string $tokenId): void
     {
-        $tokenId = $this->optionalString($claims, 'jti');
-
-        if ($tokenId === null) {
-            throw new InvalidTokenException('logout_token has no [jti].');
-        }
-
         $expiresAt = $claims['exp'] ?? 0;
         $secondsUntilExpiry = (int) (is_int($expiresAt) || is_float($expiresAt) ? $expiresAt : 0) - Date::now()->getTimestamp();
         $isFirstUse = $this->cache->add('oidc:logout-jti:'.hash('sha256', $issuer.'|'.$tokenId), true, max(60, $secondsUntilExpiry + 120));
