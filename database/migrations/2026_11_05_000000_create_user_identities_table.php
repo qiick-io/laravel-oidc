@@ -30,10 +30,11 @@ use Illuminate\Support\Facades\Schema;
  * package instead: IdTokenValidatorService and BackChannelLogoutService
  * refuse a `sub` that is not trimmed, on every database.
  *
- * This was a separate forward migration in beta.2 to beta.4. It is folded
- * here because the package is not stable yet: until 1.0.0, schema changes
- * edit the create migration (knowledge decision
- * 2026-11-22-package-migrations-before-stable).
+ * The utf8mb4_bin identity-key fold (beta.2–beta.4) and the M1 enrichment
+ * (public_id, link snapshots, last login auth metadata, format_version,
+ * metadata) live here because the package is not stable yet: until 1.0.0,
+ * schema changes edit the create migration (knowledge decision
+ * 2026-11-22-package-migrations-before-stable; standards review M1).
  */
 return new class extends Migration
 {
@@ -44,6 +45,7 @@ return new class extends Migration
 
         Schema::create('user_identities', function (Blueprint $table) use ($usersTable, $isMysqlFamily): void {
             $table->id();
+            $table->uuid('public_id')->unique();
             $table->foreignId('user_id')->constrained(is_string($usersTable) ? $usersTable : 'users')->cascadeOnDelete();
             $issuer = $table->string('issuer');
             $subject = $table->string('subject');
@@ -53,8 +55,20 @@ return new class extends Migration
                 $subject->charset('utf8mb4')->collation('utf8mb4_bin');
             }
 
+            $table->string('subject_type', 16)->nullable();
+            $table->string('provider_key', 64)->nullable();
+            $table->string('link_method', 32)->nullable();
             $table->string('email_at_link')->nullable();
+            $table->boolean('email_verified_at_link')->nullable();
+            $table->string('preferred_username_at_link')->nullable();
+            $table->string('name_at_link')->nullable();
             $table->timestamp('last_login_at')->nullable();
+            $table->timestamp('last_auth_time_at')->nullable();
+            $table->string('last_acr')->nullable();
+            $table->json('last_amr')->nullable();
+            $table->string('last_id_token_alg', 16)->nullable();
+            $table->unsignedSmallInteger('format_version')->default(1);
+            $table->json('metadata')->nullable();
             $table->timestamps();
 
             $table->unique(['issuer', 'subject']);

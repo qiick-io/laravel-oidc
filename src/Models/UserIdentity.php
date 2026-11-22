@@ -4,27 +4,65 @@ declare(strict_types=1);
 
 namespace Qiick\Oidc\Models;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Carbon;
 
 /**
  * An SSO identity (issuer, subject) linked to a local user.
  *
+ * The bigint `id` stays the primary key so legacy-subject imports keep working.
+ * `public_id` is the external UUID v7 (fleet schema; standards review M3).
+ *
  * @property int $id
+ * @property string $public_id
  * @property int $user_id
  * @property string $issuer
  * @property string $subject
+ * @property string|null $subject_type
+ * @property string|null $provider_key
+ * @property string|null $link_method
  * @property string|null $email_at_link
- * @property Carbon|null $last_login_at
+ * @property bool|null $email_verified_at_link
+ * @property string|null $preferred_username_at_link
+ * @property string|null $name_at_link
+ * @property CarbonImmutable|null $last_login_at
+ * @property CarbonImmutable|null $last_auth_time_at
+ * @property string|null $last_acr
+ * @property list<string>|null $last_amr
+ * @property string|null $last_id_token_alg
+ * @property int $format_version
+ * @property array<string, mixed>|null $metadata
+ * @property CarbonImmutable|null $created_at
+ * @property CarbonImmutable|null $updated_at
  * @property-read (Model&Authenticatable)|null $user
  */
 class UserIdentity extends Model
 {
+    use HasUuids;
+
     protected $table = 'user_identities';
 
     protected $guarded = ['id'];
+
+    /**
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'format_version' => 1,
+    ];
+
+    /**
+     * External id only; the auto-increment `id` stays the primary key (M3).
+     *
+     * @return list<string>
+     */
+    public function uniqueIds(): array
+    {
+        return ['public_id'];
+    }
 
     /**
      * @return array<string, string>
@@ -32,7 +70,14 @@ class UserIdentity extends Model
     protected function casts(): array
     {
         return [
-            'last_login_at' => 'datetime',
+            'email_verified_at_link' => 'boolean',
+            'last_login_at' => 'immutable_datetime',
+            'last_auth_time_at' => 'immutable_datetime',
+            'last_amr' => 'array',
+            'format_version' => 'integer',
+            'metadata' => 'array',
+            'created_at' => 'immutable_datetime',
+            'updated_at' => 'immutable_datetime',
         ];
     }
 
