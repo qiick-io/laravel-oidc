@@ -162,8 +162,8 @@ final readonly class DiscoveryService
     {
         $payload = implode("\0", [
             $configuration->issuer,
-            (string) $this->discoveryBase, // @pest-mutate-ignore: RemoveStringCast — null and '' hash the same in implode
-            (string) $this->serverOrigin, // @pest-mutate-ignore: RemoveStringCast — null and '' hash the same in implode
+            (string) $this->discoveryBase, // @pest-mutate-ignore: RemoveStringCast
+            (string) $this->serverOrigin, // @pest-mutate-ignore: RemoveStringCast
         ]);
 
         return 'oidc:discovery:'.hash('sha256', $payload);

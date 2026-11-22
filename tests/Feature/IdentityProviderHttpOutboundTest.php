@@ -184,8 +184,8 @@ it('refuses a non-object JSON payload', function (): void {
         ->toThrow(IdentityProviderRequestException::class, 'not a JSON object');
 });
 
-it('maps timeout 0 onto the unlimited ceiling for the hop', function (): void {
-    expect(IdentityProviderHttpService::UnlimitedTimeoutSeconds)->toBe(86_400);
+it('maps timeout 0 onto the literal 86400 ceiling, not only the named constant', function (): void {
+    expect(IdentityProviderHttpService::resolveTimeoutSeconds(0))->toBe(86400);
 
     $seenTimeout = null;
 
@@ -199,13 +199,13 @@ it('maps timeout 0 onto the unlimited ceiling for the hop', function (): void {
         timeoutSeconds: 0,
         connectTimeoutSeconds: 0,
         limits: new OutboundHttpLimits(
-            maxTimeoutSeconds: IdentityProviderHttpService::UnlimitedTimeoutSeconds,
-            maxConnectTimeoutSeconds: IdentityProviderHttpService::UnlimitedTimeoutSeconds,
-            totalDeadlineSeconds: IdentityProviderHttpService::UnlimitedTimeoutSeconds,
+            maxTimeoutSeconds: 86400,
+            maxConnectTimeoutSeconds: 86400,
+            totalDeadlineSeconds: 86400,
         ),
     );
 
     expect($http->getJson('https://idp.example.com/token'))->toBe(['ok' => true])
-        ->and($seenTimeout)->toBeGreaterThanOrEqual(IdentityProviderHttpService::UnlimitedTimeoutSeconds - 1)
-        ->and($seenTimeout)->toBeLessThanOrEqual(IdentityProviderHttpService::UnlimitedTimeoutSeconds);
+        ->and($seenTimeout)->toBeGreaterThanOrEqual(86399)
+        ->and($seenTimeout)->toBeLessThanOrEqual(86400);
 });

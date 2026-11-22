@@ -27,7 +27,7 @@ final readonly class IdentityProviderHttpService
      * When `oidc.http.timeout` / `connect_timeout` is `0` ("no limit"), hop
      * timeouts use this ceiling so outbound's ≥1s / ≤limits contract still holds.
      */
-    public const int UnlimitedTimeoutSeconds = 86_400; // @pest-mutate-ignore: IncrementInteger,DecrementInteger — exact value asserted in Feature tests
+    public const int UnlimitedTimeoutSeconds = 86_400; // @pest-mutate-ignore: IncrementInteger,DecrementInteger
 
     public function __construct(
         private PinnedHttpClient $pinnedHttp,
