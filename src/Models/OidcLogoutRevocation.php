@@ -8,6 +8,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\MassPrunable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Config;
 
 /**
  * One validated OIDC logout revocation (back-channel or front-channel).
@@ -58,14 +59,24 @@ class OidcLogoutRevocation extends Model
      */
     public function prunable(): Builder
     {
-        $sessionLifetimeSeconds = max(1, (int) config('session.lifetime', 120)) * 60;
-        $configuredSeconds = config('oidc.backchannel_logout.revocation_ttl');
-        $maximumConfiguredLifetimeSeconds = is_int($configuredSeconds) && $configuredSeconds > 0
-            ? max($configuredSeconds, $sessionLifetimeSeconds)
-            : $sessionLifetimeSeconds;
-
         return static::query()
             ->where('expires_at', '<', now())
-            ->where('received_at', '<', now()->subSeconds($maximumConfiguredLifetimeSeconds));
+            ->where('received_at', '<', now()->subSeconds(self::maximumConfiguredLifetimeSeconds()));
+    }
+
+    /**
+     * Max of `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`
+     * (minutes → seconds), matching the write-time lifetime floor.
+     */
+    public static function maximumConfiguredLifetimeSeconds(): int
+    {
+        $sessionLifetimeSeconds = max(1, Config::integer('session.lifetime', 120)) * 60;
+        $configuredSeconds = Config::get('oidc.backchannel_logout.revocation_ttl');
+
+        if (is_int($configuredSeconds) && $configuredSeconds > 0) {
+            return max($configuredSeconds, $sessionLifetimeSeconds);
+        }
+
+        return $sessionLifetimeSeconds;
     }
 }

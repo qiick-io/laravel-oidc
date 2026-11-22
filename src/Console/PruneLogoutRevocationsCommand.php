@@ -27,7 +27,7 @@ final class PruneLogoutRevocationsCommand extends Command
         $deletedCount = 0;
         // Safety floor: never prune a row younger than the max of the
         // lifetimes configured now, even if a stale expires_at is already past.
-        $maximumConfiguredLifetimeSeconds = $this->maximumConfiguredLifetimeSeconds();
+        $maximumConfiguredLifetimeSeconds = OidcLogoutRevocation::maximumConfiguredLifetimeSeconds();
 
         do {
             $expiredIds = OidcLogoutRevocation::query()
@@ -48,21 +48,5 @@ final class PruneLogoutRevocationsCommand extends Command
         $this->info("Deleted {$deletedCount} expired logout revocation(s).");
 
         return self::SUCCESS;
-    }
-
-    /**
-     * Max of `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`
-     * (minutes → seconds), matching the write-time lifetime floor.
-     */
-    private function maximumConfiguredLifetimeSeconds(): int
-    {
-        $sessionLifetimeSeconds = max(1, (int) config('session.lifetime', 120)) * 60;
-        $configuredSeconds = config('oidc.backchannel_logout.revocation_ttl');
-
-        if (is_int($configuredSeconds) && $configuredSeconds > 0) {
-            return max($configuredSeconds, $sessionLifetimeSeconds);
-        }
-
-        return $sessionLifetimeSeconds;
     }
 }
