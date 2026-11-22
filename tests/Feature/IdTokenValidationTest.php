@@ -155,6 +155,12 @@ it('refuses a missing, empty or oversized sub', function (mixed $subject): void 
     validateIdToken(signedIdToken($this->identityProvider, ['sub' => $subject]));
 })->throws(InvalidTokenException::class, '[sub]')->with([null, '', 42, str_repeat('a', 256)]);
 
+it('accepts a sub of exactly 255 ASCII characters', function (): void {
+    $subject = str_repeat('a', 255);
+
+    expect(validateIdToken(signedIdToken($this->identityProvider, ['sub' => $subject]))['sub'])->toBe($subject);
+});
+
 it('refuses a sub with leading or trailing whitespace', function (string $subject): void {
     validateIdToken(signedIdToken($this->identityProvider, ['sub' => $subject]));
 })->throws(InvalidTokenException::class, '[sub] has leading or trailing whitespace')->with([' AbcSubject', 'AbcSubject ', "AbcSubject\t", "\nAbcSubject", ' ']);
@@ -247,14 +253,89 @@ it('refuses a mismatched or malformed at_hash', function (mixed $accessTokenHash
     );
 })->throws(InvalidTokenException::class, 'at_hash')->with([
     'wrong hash' => [accessTokenHash('other-token'), 'access-token-for-at-hash'],
-    'empty string' => ['', 'access-token-for-at-hash'],
     'not a string' => [42, 'access-token-for-at-hash'],
 ]);
+
+it('refuses an empty at_hash as malformed', function (): void {
+    $idToken = signedIdToken($this->identityProvider, ['at_hash' => '']);
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    $discovery = app(DiscoveryService::class)->discover($configuration);
+
+    app(IdTokenValidatorService::class)->validate(
+        $idToken,
+        $discovery,
+        $configuration,
+        EXPECTED_NONCE,
+        'access-token-for-at-hash',
+    );
+})->throws(InvalidTokenException::class, 'at_hash] is malformed');
 
 it('refuses at_hash when no access_token was issued', function (): void {
     $idToken = signedIdToken($this->identityProvider, ['at_hash' => accessTokenHash('token')]);
     $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
     $discovery = app(DiscoveryService::class)->discover($configuration);
 
-    app(IdTokenValidatorService::class)->validate($idToken, $discovery, $configuration, EXPECTED_NONCE, '');
-})->throws(InvalidTokenException::class, 'at_hash');
+    // Omit the access token so the default empty string is what the check sees.
+    app(IdTokenValidatorService::class)->validate($idToken, $discovery, $configuration, EXPECTED_NONCE);
+})->throws(InvalidTokenException::class, 'at_hash] is present but no access_token');
+
+it('accepts an id_token that omits at_hash in the code flow', function (): void {
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    $discovery = app(DiscoveryService::class)->discover($configuration);
+
+    $claims = app(IdTokenValidatorService::class)->validate(
+        signedIdToken($this->identityProvider),
+        $discovery,
+        $configuration,
+        EXPECTED_NONCE,
+        'access-token-present-but-unused',
+    );
+
+    expect($claims)->not->toHaveKey('at_hash');
+});
+
+it('selects the at_hash digest algorithm from the JWS alg', function (string $algorithm, string $hashAlgorithm, string $keyType): void {
+    Config::set('oidc.id_token.algorithms', ['RS256', 'RS384', 'ES256']);
+    cache()->flush();
+
+    if ($keyType === 'EC') {
+        $this->identityProvider->rotateSigningKey(isPreviousKeyRetired: true, keyType: 'EC');
+    }
+
+    $this->identityProvider->withDiscovery([
+        'id_token_signing_alg_values_supported' => ['RS256', 'RS384', 'ES256'],
+    ]);
+
+    $accessToken = 'access-token-for-alg-'.$algorithm;
+    $matchingHash = accessTokenHash($accessToken, $hashAlgorithm);
+    $wrongHash = accessTokenHash($accessToken, $hashAlgorithm === 'sha384' ? 'sha256' : 'sha384');
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    $discovery = app(DiscoveryService::class)->discover($configuration);
+
+    $acceptedClaims = app(IdTokenValidatorService::class)->validate(
+        $this->identityProvider->sign(
+            $this->identityProvider->idTokenClaims(['nonce' => EXPECTED_NONCE, 'at_hash' => $matchingHash]),
+            algorithm: $algorithm,
+        ),
+        $discovery,
+        $configuration,
+        EXPECTED_NONCE,
+        $accessToken,
+    );
+
+    expect($acceptedClaims['at_hash'])->toBe($matchingHash);
+
+    expect(fn () => app(IdTokenValidatorService::class)->validate(
+        $this->identityProvider->sign(
+            $this->identityProvider->idTokenClaims(['nonce' => EXPECTED_NONCE, 'at_hash' => $wrongHash]),
+            algorithm: $algorithm,
+        ),
+        $discovery,
+        $configuration,
+        EXPECTED_NONCE,
+        $accessToken,
+    ))->toThrow(InvalidTokenException::class, 'at_hash');
+})->with([
+    'RS384 uses sha384' => ['RS384', 'sha384', 'RSA'],
+    'ES256 uses sha256' => ['ES256', 'sha256', 'EC'],
+]);
