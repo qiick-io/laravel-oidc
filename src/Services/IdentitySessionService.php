@@ -80,6 +80,10 @@ final readonly class IdentitySessionService
             sessionId: $identity->sessionId,
             idToken: $identity->idToken,
             authenticatedAt: Date::now()->getTimestamp(),
+            formatVersion: IdentitySessionData::FORMAT_VERSION,
+            acr: $identity->acr(),
+            amr: $identity->amr(),
+            authTime: $identity->authTime(),
         );
     }
 
