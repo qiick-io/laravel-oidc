@@ -327,9 +327,14 @@ final class FakeIdentityProvider
                     throw new RuntimeException('OpenSSL could not read an EC test key.');
                 }
 
+                // OpenSSL may omit leading zero octets; JWK P-256 coords are fixed 32 bytes.
+                $curveX = str_pad($curveX, 32, "\0", STR_PAD_LEFT);
+                $curveY = str_pad($curveY, 32, "\0", STR_PAD_LEFT);
+
                 $publishedKeys[] = [
                     'kty' => 'EC',
                     'use' => 'sig',
+                    'alg' => 'ES256',
                     'crv' => 'P-256',
                     'kid' => $keyId,
                     'x' => JWT::urlsafeB64Encode($curveX),
