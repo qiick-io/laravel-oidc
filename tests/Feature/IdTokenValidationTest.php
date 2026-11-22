@@ -203,3 +203,58 @@ it('does not leak its clock or leeway into php-jwt', function (): void {
 
     JWT::$leeway = 0;
 });
+
+/*
+ * S1: at_hash is OPTIONAL in the code flow; when present it must match
+ * (OIDC Core 3.1.3.8 / 3.2.2.9).
+ */
+
+function accessTokenHash(string $accessToken, string $hashAlgorithm = 'sha256'): string
+{
+    $digest = hash($hashAlgorithm, $accessToken, true);
+
+    return JWT::urlsafeB64Encode(substr($digest, 0, (int) (strlen($digest) / 2)));
+}
+
+it('accepts an id_token whose at_hash matches the access_token', function (): void {
+    $accessToken = 'access-token-for-at-hash';
+    $idToken = signedIdToken($this->identityProvider, ['at_hash' => accessTokenHash($accessToken)]);
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    $discovery = app(DiscoveryService::class)->discover($configuration);
+
+    $claims = app(IdTokenValidatorService::class)->validate(
+        $idToken,
+        $discovery,
+        $configuration,
+        EXPECTED_NONCE,
+        $accessToken,
+    );
+
+    expect($claims['at_hash'])->toBe(accessTokenHash($accessToken));
+});
+
+it('refuses a mismatched or malformed at_hash', function (mixed $accessTokenHash, string $accessToken): void {
+    $idToken = signedIdToken($this->identityProvider, ['at_hash' => $accessTokenHash]);
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    $discovery = app(DiscoveryService::class)->discover($configuration);
+
+    app(IdTokenValidatorService::class)->validate(
+        $idToken,
+        $discovery,
+        $configuration,
+        EXPECTED_NONCE,
+        $accessToken,
+    );
+})->throws(InvalidTokenException::class, 'at_hash')->with([
+    'wrong hash' => [accessTokenHash('other-token'), 'access-token-for-at-hash'],
+    'empty string' => ['', 'access-token-for-at-hash'],
+    'not a string' => [42, 'access-token-for-at-hash'],
+]);
+
+it('refuses at_hash when no access_token was issued', function (): void {
+    $idToken = signedIdToken($this->identityProvider, ['at_hash' => accessTokenHash('token')]);
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    $discovery = app(DiscoveryService::class)->discover($configuration);
+
+    app(IdTokenValidatorService::class)->validate($idToken, $discovery, $configuration, EXPECTED_NONCE, '');
+})->throws(InvalidTokenException::class, 'at_hash');
