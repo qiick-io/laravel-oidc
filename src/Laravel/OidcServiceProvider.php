@@ -20,6 +20,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Qiick\Oidc\Console\ConfigureOidcCommand;
 use Qiick\Oidc\Console\ImportLegacySubjectsCommand;
+use Qiick\Oidc\Console\PruneLogoutRevocationsCommand;
 use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Contracts\RoleSynchronizationContract;
@@ -241,7 +242,11 @@ final class OidcServiceProvider extends ServiceProvider
                 __DIR__.'/../../config/oidc.php' => config_path('oidc.php'),
             ], 'oidc-config');
 
-            $this->commands([ConfigureOidcCommand::class, ImportLegacySubjectsCommand::class]);
+            $this->commands([
+                ConfigureOidcCommand::class,
+                ImportLegacySubjectsCommand::class,
+                PruneLogoutRevocationsCommand::class,
+            ]);
 
             $this->publishesMigrations([
                 __DIR__.'/../../database/migrations' => database_path('migrations'),
@@ -250,18 +255,19 @@ final class OidcServiceProvider extends ServiceProvider
     }
 
     /**
-     * Back-channel logouts must outlive the longest local session. Null in
-     * the config means the app's `session.lifetime` (minutes).
+     * Max of the configured lifetimes so a short `revocation_ttl` cannot
+     * under-cover `session.lifetime`. Null `revocation_ttl` uses session only.
      */
     private function revocationSeconds(Application $app): int
     {
+        $sessionLifetimeSeconds = max(1, $this->config($app)->integer('session.lifetime', 120)) * 60;
         $configuredSeconds = $this->config($app)->get('oidc.backchannel_logout.revocation_ttl');
 
         if (is_int($configuredSeconds) && $configuredSeconds > 0) {
-            return $configuredSeconds;
+            return max($configuredSeconds, $sessionLifetimeSeconds);
         }
 
-        return max(1, $this->config($app)->integer('session.lifetime', 120)) * 60;
+        return $sessionLifetimeSeconds;
     }
 
     /**
