@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Date;
 use LogicException;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
+use Qiick\Oidc\Contracts\UserClaimSynchronizationContract;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
 use Qiick\Oidc\Events\OidcLoginSucceededEvent;
 use Qiick\Oidc\Exceptions\LoginRefusedException;
@@ -20,10 +21,12 @@ use Symfony\Component\HttpFoundation\Response;
 /**
  * Turns a validated SSO identity into a local login:
  * 1. resolve the local user (linking, auto-link, JIT);
- * 2. apply the role mapping, so the first request already has the IdP roles;
- * 3. when the app requires 2FA and the IdP did not prove MFA (`amr` / `acr`),
+ * 2. record last-login auth metadata from the validated id_token (M2);
+ * 3. apply the role mapping, so the first request already has the IdP roles;
+ * 4. optionally synchronise profile claims (S9; no-op by default);
+ * 5. when the app requires 2FA and the IdP did not prove MFA (`amr` / `acr`),
  *    hand over to the app's own second factor instead of signing in;
- * 4. otherwise log in on the default guard, regenerate the session id
+ * 6. otherwise log in on the default guard, regenerate the session id
  *    (session fixation), keep the identity for logout and announce it.
  *
  * Remember-me is off unless `oidc.remember` is on: a remember cookie would
@@ -34,6 +37,7 @@ final readonly class OidcLoginService
     public function __construct(
         private UserLinkingService $userLinking,
         private RoleMappingService $roleMapping,
+        private UserClaimSynchronizationContract $userClaimSynchronization,
         private MultiFactorClaimService $multiFactorClaims,
         private SecondFactorChallengeContract $secondFactorChallenge,
         private IdentitySessionService $identitySession,
@@ -53,8 +57,18 @@ final readonly class OidcLoginService
         $linkedIdentity = $this->userLinking->resolve($identity);
         $user = $linkedIdentity->user ?? throw new LogicException('A resolved identity always has its user.');
 
-        $linkedIdentity->forceFill(['last_login_at' => Date::now()])->save();
+        $authenticationTime = $identity->authTime();
+
+        $linkedIdentity->forceFill([
+            'last_login_at' => Date::now(),
+            'last_auth_time_at' => $authenticationTime !== null ? Date::createFromTimestamp($authenticationTime) : null,
+            'last_acr' => $identity->acr(),
+            'last_amr' => $identity->amr(),
+            'last_id_token_alg' => $identity->idTokenAlgorithm(),
+        ])->save();
+
         $this->roleMapping->apply($user, $identity);
+        $this->userClaimSynchronization->synchronize($user, $identity);
 
         if ($this->secondFactorChallenge->isRequired($user) && ! $this->multiFactorClaims->isSatisfied($identity)) {
             $challenge = $this->secondFactorChallenge->challenge($request, $user, $this->shouldRemember);

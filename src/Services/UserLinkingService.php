@@ -102,7 +102,7 @@ final readonly class UserLinkingService
             throw new LoginRefusedException(LoginRefusalReasonEnum::LinkedToAnotherIdentity);
         }
 
-        $linkedIdentity = $this->createIdentity($user, $identity, $email);
+        $linkedIdentity = $this->createIdentity($user, $identity, $email, 'auto_link_email');
         $this->events->dispatch(new OidcIdentityLinkedEvent($user, $identity));
 
         return $linkedIdentity;
@@ -122,7 +122,7 @@ final readonly class UserLinkingService
         [$user, $linkedIdentity] = DB::transaction(function () use ($identity, $email): array {
             $user = $this->userProvisioning->provision($identity, $email);
 
-            return [$user, $this->createIdentity($user, $identity, $email)];
+            return [$user, $this->createIdentity($user, $identity, $email, 'jit')];
         });
 
         $this->assertActive($user);
@@ -131,13 +131,33 @@ final readonly class UserLinkingService
         return $linkedIdentity;
     }
 
-    private function createIdentity(Model&Authenticatable $user, AuthenticatedIdentityData $identity, string $email): UserIdentity
-    {
+    /**
+     * Snapshot link-time profile claims onto the new row (standards review M1/M2).
+     * Trust-sensitive login metadata is written later on every login.
+     */
+    private function createIdentity(
+        Model&Authenticatable $user,
+        AuthenticatedIdentityData $identity,
+        string $email,
+        string $linkMethod,
+    ): UserIdentity {
+        $preferredUsername = $identity->claim('preferred_username');
+        $displayName = $identity->claim('name');
+        $emailVerified = $identity->claim('email_verified');
+
         $linkedIdentity = UserIdentity::query()->create([
             'user_id' => $user->getAuthIdentifier(),
             'issuer' => $identity->issuer,
             'subject' => $identity->subject,
+            'link_method' => $linkMethod,
             'email_at_link' => $email,
+            'email_verified_at_link' => $emailVerified === true || $emailVerified === 'true'
+                ? true
+                : ($emailVerified === false || $emailVerified === 'false' ? false : null),
+            'preferred_username_at_link' => is_string($preferredUsername) && $preferredUsername !== ''
+                ? $preferredUsername
+                : null,
+            'name_at_link' => is_string($displayName) && $displayName !== '' ? $displayName : null,
         ]);
 
         return $linkedIdentity->setRelation('user', $user);

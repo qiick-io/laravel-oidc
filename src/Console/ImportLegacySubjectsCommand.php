@@ -78,6 +78,7 @@ final class ImportLegacySubjectsCommand extends Command
                         'user_id' => $user->getKey(),
                         'issuer' => $issuer,
                         'subject' => $subject,
+                        'link_method' => 'legacy_import',
                     ]));
                 }
 

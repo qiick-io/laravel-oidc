@@ -24,6 +24,7 @@ use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Contracts\RoleSynchronizationContract;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
+use Qiick\Oidc\Contracts\UserClaimSynchronizationContract;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
 use Qiick\Oidc\Factories\OidcOutboundStackFactory;
 use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
@@ -41,6 +42,7 @@ use Qiick\Oidc\Services\IdTokenValidatorService;
 use Qiick\Oidc\Services\JwksService;
 use Qiick\Oidc\Services\JwtValidatorService;
 use Qiick\Oidc\Services\MultiFactorClaimService;
+use Qiick\Oidc\Services\NullUserClaimSynchronizationService;
 use Qiick\Oidc\Services\OidcLoginService;
 use Qiick\Oidc\Services\RoleBreakGlassPolicyService;
 use Qiick\Oidc\Services\RoleMappingService;
@@ -145,6 +147,8 @@ final class OidcServiceProvider extends ServiceProvider
 
         $this->app->bind(RoleSynchronizationContract::class, SpatieRoleSynchronizationService::class);
 
+        $this->app->bind(UserClaimSynchronizationContract::class, NullUserClaimSynchronizationService::class);
+
         $this->app->bind(RoleMappingService::class, fn (Application $app): RoleMappingService => new RoleMappingService(
             roleSynchronization: $app->make(RoleSynchronizationContract::class),
             isEnabled: $this->config($app)->boolean('oidc.roles.enabled'),
@@ -166,6 +170,7 @@ final class OidcServiceProvider extends ServiceProvider
         $this->app->bind(OidcLoginService::class, fn (Application $app): OidcLoginService => new OidcLoginService(
             userLinking: $app->make(UserLinkingService::class),
             roleMapping: $app->make(RoleMappingService::class),
+            userClaimSynchronization: $app->make(UserClaimSynchronizationContract::class),
             multiFactorClaims: $app->make(MultiFactorClaimService::class),
             secondFactorChallenge: $app->make(SecondFactorChallengeContract::class),
             identitySession: $app->make(IdentitySessionService::class),
