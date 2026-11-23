@@ -212,6 +212,8 @@ Schedule::command('oidc:prune-logout-revocations')->daily();
 
 The model is also `MassPrunable`, so `model:prune` has the same effect. A missed run only leaves extra rows.
 
+Every stored logout, back-channel or front-channel, dispatches `OidcLogoutReceivedEvent` after its row is committed: `channel` (`backchannel` or `frontchannel`), `issuer`, `subject` (null for front-channel) and `sessionIdHash` (the SHA-256 of `sid`, or null). Listen to it to write the logout into the app's activity log; a refused or replayed logout dispatches nothing.
+
 ### Front-channel logout
 
 Off by default. Back-channel logout already ends server sessions; front-channel logout (OIDC Front-Channel Logout 1.0) is for an IdP that can only notify the browser. To turn it on:

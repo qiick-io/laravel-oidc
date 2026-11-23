@@ -196,6 +196,7 @@ final class OidcServiceProvider extends ServiceProvider
         $this->app->bind(SessionRevocationService::class, fn (Application $app): SessionRevocationService => new SessionRevocationService(
             cache: $this->cacheStore($app),
             revocationSeconds: $this->revocationSeconds($app),
+            events: $app->make(Dispatcher::class),
         ));
 
         $this->app->bind(BackChannelLogoutService::class, fn (Application $app): BackChannelLogoutService => new BackChannelLogoutService(
