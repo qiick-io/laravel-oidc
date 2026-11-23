@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- A `sub`-only back-channel logout received while the app's second factor was pending no longer stops matching once the challenge completes: promotion keeps the callback time as the session's `authenticated_at`.
+
 ### Added
 
 - `oidc:configure` warns when `app.timezone` is not `UTC`, and the README documents that the package's timestamps are UTC (standards review M7).
