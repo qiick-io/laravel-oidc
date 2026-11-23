@@ -50,6 +50,11 @@ final readonly class IdentitySessionService
     /**
      * Turns the pending identity into the session identity when the signed-in
      * user is the one who passed the SSO login. Any other login just drops it.
+     *
+     * The callback time stays the session's `authenticated_at`: a `sub`-only
+     * back-channel logout received while the app's challenge was pending
+     * revokes every session authenticated at or before it (BCL §2.6), so a
+     * fresher timestamp here would let the user out-run that logout.
      */
     public function promotePending(Session $session, int|string $userId): void
     {
@@ -68,7 +73,7 @@ final readonly class IdentitySessionService
         $identity = IdentitySessionData::fromArray($pending['identity'] ?? null);
 
         if ($identity !== null) {
-            $session->put(self::SESSION_KEY, [...$identity->toArray(), 'authenticated_at' => Date::now()->getTimestamp()]);
+            $session->put(self::SESSION_KEY, $identity->toArray());
         }
     }
 

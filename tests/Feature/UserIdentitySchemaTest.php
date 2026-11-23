@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Qiick\Oidc\Models\UserIdentity;
@@ -87,4 +88,11 @@ it('refuses a second row with the same public_id', function (): void {
         'issuer' => 'https://idp.example.com/realms/other',
         'subject' => 'other-subject',
     ]))->toThrow(QueryException::class);
+});
+
+it('refuses a second identity of the same issuer for one user', function (): void {
+    $user = localUser();
+    linkIdentity($user, 'subject-1');
+
+    expect(fn () => linkIdentity($user, 'subject-2'))->toThrow(UniqueConstraintViolationException::class);
 });

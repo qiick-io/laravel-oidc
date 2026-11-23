@@ -75,6 +75,16 @@ it('refuses alg none, HMAC and algorithms not configured', function (string $alg
     validateIdToken(unsignedToken(['alg' => $algorithm, 'typ' => 'JWT'], $claims, $algorithm === 'none' ? '' : 'c2lnbmF0dXJl'));
 })->throws(InvalidTokenException::class, 'algorithm is not allowed')->with(['none', 'None', 'HS256', 'RS384', 'ES256']);
 
+it('accepts every supported RSA algorithm once configured', function (string $algorithm): void {
+    Config::set('oidc.id_token.algorithms', [$algorithm]);
+    $this->identityProvider->withDiscovery(['id_token_signing_alg_values_supported' => [$algorithm]]);
+    cache()->flush();
+
+    $idToken = $this->identityProvider->sign($this->identityProvider->idTokenClaims(['nonce' => EXPECTED_NONCE]), algorithm: $algorithm);
+
+    expect(validateIdToken($idToken)['sub'])->toBe('fake-subject-1');
+})->with(['RS256', 'RS384', 'RS512']);
+
 it('refuses an HS256 token signed with the client secret even when HS256 is configured', function (): void {
     Config::set('oidc.id_token.algorithms', ['RS256', 'HS256']);
     $token = JWT::encode($this->identityProvider->idTokenClaims(['nonce' => EXPECTED_NONCE]), str_repeat('client-secret-', 4), 'HS256');
@@ -102,6 +112,8 @@ it('refuses a token for another client', function (mixed $audience): void {
     'missing' => null,
     'list without us' => [['other-app', 'account']],
     'not strings' => [[42]],
+    // OIDC Core §2: a string or a JSON array; a JSON object is neither.
+    'object holding the client id' => [['client' => 'laravel-app']],
 ]);
 
 it('refuses an untrusted extra audience', function (): void {

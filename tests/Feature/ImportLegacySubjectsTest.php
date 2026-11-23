@@ -51,6 +51,34 @@ it('reports a subject already linked to another user and never moves it', functi
     expect(UserIdentity::query()->sole()->user_id)->toBe($owner->id);
 });
 
+it('reports a user already linked to another subject of the issuer', function (bool $isDryRun): void {
+    $user = localUser('ada@example.com', ['oidc_sub' => 'sub-legacy']);
+    linkIdentity($user, 'sub-auto-linked', 'https://idp.example.com/realms/externa');
+
+    $this->artisan('oidc:import-legacy-subjects', ['--dry-run' => $isDryRun])
+        ->expectsOutputToContain('User '.$user->id.': already linked to another subject of this issuer; skipped.')
+        ->expectsOutputToContain('0 already linked, 1 conflicts')
+        ->assertFailed();
+
+    expect(UserIdentity::query()->sole()->subject)->toBe('sub-auto-linked');
+})->with(['import' => false, 'dry run' => true]);
+
+it('falls back to the default column and the configured issuer for empty options', function (): void {
+    $user = localUser('ada@example.com', ['oidc_sub' => 'sub-ada']);
+
+    $this->artisan('oidc:import-legacy-subjects', ['--column' => '', '--issuer' => ''])
+        ->expectsOutputToContain('Imported 1 identity for issuer https://idp.example.com/realms/externa')
+        ->assertSuccessful();
+
+    expect(UserIdentity::query()->sole()->user_id)->toBe($user->id);
+});
+
+it('fails with an empty configured issuer', function (): void {
+    Config::set('oidc.issuer', '');
+
+    $this->artisan('oidc:import-legacy-subjects')->expectsOutputToContain('No issuer')->assertFailed();
+});
+
 it('writes nothing on a dry run', function (): void {
     localUser('ada@example.com', ['oidc_sub' => 'sub-ada']);
 

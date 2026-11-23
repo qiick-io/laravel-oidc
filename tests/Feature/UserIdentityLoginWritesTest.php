@@ -124,3 +124,45 @@ it('marks legacy imports with link_method legacy_import', function (): void {
 
     expect(UserIdentity::query()->where('user_id', $user->id)->sole()->link_method)->toBe('legacy_import');
 });
+
+it('snapshots email_verified as sent, including the string forms', function (mixed $emailVerified, ?bool $snapshot): void {
+    localUser('ada@example.com');
+
+    ssoLogin($this, fakeProvider(['auto_link' => true, 'require_verified_email' => false]), [
+        'sub' => 'user-42',
+        'email' => 'ada@example.com',
+        'email_verified' => $emailVerified,
+    ])->assertRedirect('/');
+
+    expect(UserIdentity::query()->sole()->email_verified_at_link)->toBe($snapshot);
+})->with([
+    'true' => [true, true],
+    'string true' => ['true', true],
+    'false' => [false, false],
+    'string false' => ['false', false],
+    'absent' => [null, null],
+    'anything else' => ['yes', null],
+]);
+
+it('snapshots no empty or non-string profile handle', function (mixed $profileValue): void {
+    localUser('ada@example.com');
+
+    ssoLogin($this, fakeProvider(['auto_link' => true]), [
+        'sub' => 'user-42',
+        'email' => 'ada@example.com',
+        'preferred_username' => $profileValue,
+        'name' => $profileValue,
+    ])->assertRedirect('/');
+
+    expect(UserIdentity::query()->sole()->only(['preferred_username_at_link', 'name_at_link']))
+        ->toBe(['preferred_username_at_link' => null, 'name_at_link' => null]);
+})->with(['empty' => '', 'not a string' => 42]);
+
+it('trims the email claim before validating, matching and storing it', function (): void {
+    $user = localUser('ada@example.com');
+
+    ssoLogin($this, fakeProvider(['auto_link' => true]), ['sub' => 'user-42', 'email' => '  Ada@Example.com '])->assertRedirect('/');
+
+    expect(auth()->id())->toBe($user->id)
+        ->and(UserIdentity::query()->sole()->email_at_link)->toBe('ada@example.com');
+});

@@ -2,9 +2,12 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
 use Qiick\Oidc\Enums\LoginRefusalReasonEnum;
@@ -108,6 +111,32 @@ it('does not auto-link a user already linked to another identity of the same iss
     linkIdentity($user, 'the-original-subject');
 
     assertRefused(ssoLogin($this, fakeProvider(['auto_link' => true]), ['sub' => 'an-attacker-subject']), LoginRefusalReasonEnum::LinkedToAnotherIdentity);
+});
+
+it('refuses an auto-link that loses the race to a concurrent link of the same user', function (): void {
+    $user = localUser('sso.user@example.com');
+
+    // A concurrent callback with another subject links the user right after
+    // this login checked for an existing link, before it inserts its own row.
+    $hasConcurrentLink = false;
+    DB::listen(function (QueryExecuted $query) use ($user, &$hasConcurrentLink): void {
+        if ($hasConcurrentLink || ! str_starts_with($query->sql, 'select exists') || ! str_contains($query->sql, 'user_identities')) {
+            return;
+        }
+
+        $hasConcurrentLink = true;
+        DB::table('user_identities')->insert([
+            'public_id' => (string) Str::uuid7(),
+            'user_id' => $user->id,
+            'issuer' => 'https://idp.example.com/realms/test',
+            'subject' => 'the-concurrent-subject',
+        ]);
+    });
+
+    assertRefused(ssoLogin($this, fakeProvider(['auto_link' => true]), ['sub' => 'an-attacker-subject']), LoginRefusalReasonEnum::LinkedToAnotherIdentity);
+
+    expect(UserIdentity::query()->sole()->subject)->toBe('the-concurrent-subject');
+    Event::assertNotDispatched(OidcIdentityLinkedEvent::class);
 });
 
 it('auto-links a user linked only at another issuer', function (): void {
