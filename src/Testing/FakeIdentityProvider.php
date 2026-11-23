@@ -34,13 +34,13 @@ use RuntimeException;
  */
 final class FakeIdentityProvider
 {
-    public int $discoveryRequestCount = 0;
+    public int $discoveryRequestCount;
 
-    public int $jwksRequestCount = 0;
+    public int $jwksRequestCount;
 
-    public int $tokenRequestCount = 0;
+    public int $tokenRequestCount;
 
-    public int $userinfoRequestCount = 0;
+    public int $userinfoRequestCount;
 
     /**
      * Signing keys by `kid`. The newest one signs; older ones stay published
@@ -50,7 +50,7 @@ final class FakeIdentityProvider
      */
     private array $signingKeys = [];
 
-    private string $currentKeyId = '';
+    private string $currentKeyId;
 
     /**
      * @var array<string, array{redirect_uri: string, code_challenge: string, nonce: ?string, claims: array<string, mixed>, userinfo_claims: array<string, mixed>}>
@@ -79,6 +79,10 @@ final class FakeIdentityProvider
         public readonly string $clientId = 'laravel-app',
         public readonly ?string $clientSecret = 'fake-client-secret',
     ) {
+        $this->discoveryRequestCount = 0;
+        $this->jwksRequestCount = 0;
+        $this->tokenRequestCount = 0;
+        $this->userinfoRequestCount = 0;
         $this->rotateSigningKey();
     }
 
@@ -234,16 +238,19 @@ final class FakeIdentityProvider
     /**
      * Starts signing with a new key and `kid`. The previous key stays in the
      * JWKS unless $isPreviousKeyRetired is true. `$keyType` is `RSA` (default)
-     * or `EC` (P-256 for ES256 tests).
+     * or `EC`; an EC key is on `$curve`, `P-256` (ES256, default) or `P-384`
+     * (ES384).
      */
-    public function rotateSigningKey(bool $isPreviousKeyRetired = false, string $keyType = 'RSA'): string
+    public function rotateSigningKey(bool $isPreviousKeyRetired = false, string $keyType = 'RSA', string $curve = 'P-256'): string
     {
+        $openSslCurveName = $this->ecCurve($curve)['openssl'];
+
         if ($isPreviousKeyRetired) {
             unset($this->signingKeys[$this->currentKeyId]);
         }
 
         $privateKey = $keyType === 'EC'
-            ? openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1'])
+            ? openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => $openSslCurveName])
             : openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
 
         if ($privateKey === false) {
@@ -254,6 +261,22 @@ final class FakeIdentityProvider
         $this->signingKeys[$this->currentKeyId] = $privateKey;
 
         return $this->currentKeyId;
+    }
+
+    /**
+     * An EC curve the fake can sign with, by JWK `crv`: the OpenSSL curve
+     * name, the JWS algorithm and the coordinate length in bytes (RFC 7518
+     * §3.4 and §6.2.1.2).
+     *
+     * @return array{openssl: string, alg: string, bytes: int}
+     */
+    private function ecCurve(string $curve): array
+    {
+        return match ($curve) {
+            'P-256' => ['openssl' => 'prime256v1', 'alg' => 'ES256', 'bytes' => 32],
+            'P-384' => ['openssl' => 'secp384r1', 'alg' => 'ES384', 'bytes' => 48],
+            default => throw new RuntimeException("Unsupported test curve [{$curve}]."),
+        };
     }
 
     /**
@@ -317,25 +340,31 @@ final class FakeIdentityProvider
                 throw new RuntimeException('OpenSSL could not read a test key.');
             }
 
-            // Omit `alg` so the same RSA key can verify RS256 and RS384; EC
-            // keys are published for ES256 at_hash coverage.
+            // Omit `alg` so the same RSA key can verify every RS* and PS256;
+            // an EC key is pinned to the one algorithm its curve signs.
             if (is_array($details['ec'] ?? null)) {
                 $curveX = $details['ec']['x'] ?? null;
                 $curveY = $details['ec']['y'] ?? null;
+                $curve = match ($details['ec']['curve_name'] ?? null) {
+                    'prime256v1' => 'P-256',
+                    default => 'P-384',
+                };
 
                 if (! is_string($curveX) || ! is_string($curveY)) {
                     throw new RuntimeException('OpenSSL could not read an EC test key.');
                 }
 
-                // OpenSSL may omit leading zero octets; JWK P-256 coords are fixed 32 bytes.
-                $curveX = str_pad($curveX, 32, "\0", STR_PAD_LEFT);
-                $curveY = str_pad($curveY, 32, "\0", STR_PAD_LEFT);
+                // OpenSSL may omit leading zero octets; JWK coordinates have
+                // the fixed length of the curve (RFC 7518 §6.2.1.2).
+                $coordinateBytes = $this->ecCurve($curve)['bytes'];
+                $curveX = str_pad($curveX, $coordinateBytes, "\0", STR_PAD_LEFT);
+                $curveY = str_pad($curveY, $coordinateBytes, "\0", STR_PAD_LEFT);
 
                 $publishedKeys[] = [
                     'kty' => 'EC',
                     'use' => 'sig',
-                    'alg' => 'ES256',
-                    'crv' => 'P-256',
+                    'alg' => $this->ecCurve($curve)['alg'],
+                    'crv' => $curve,
                     'kid' => $keyId,
                     'x' => JWT::urlsafeB64Encode($curveX),
                     'y' => JWT::urlsafeB64Encode($curveY),

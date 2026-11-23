@@ -152,7 +152,7 @@ final class ConfigureOidcCommand extends Command
 
     private function checkSigningKeys(IdentityProviderHttpService $identityProviderHttp, DiscoveryDocumentData $discoveryDocument): void
     {
-        $allowedAlgorithms = array_intersect(JwtValidatorService::SUPPORTED_ALGORITHMS, $this->configuredStrings('oidc.id_token.algorithms'));
+        $allowedAlgorithms = array_intersect(JwtValidatorService::supportedAlgorithms(), $this->configuredStrings('oidc.id_token.algorithms'));
         $commonAlgorithms = array_intersect($allowedAlgorithms, $discoveryDocument->idTokenSigningAlgorithms);
 
         if ($commonAlgorithms === []) {

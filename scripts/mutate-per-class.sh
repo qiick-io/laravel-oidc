@@ -16,6 +16,8 @@ classes=(
   'Qiick\Oidc\Factories\OidcOutboundStackFactory'
   'Qiick\Oidc\Services\SessionRevocationService'
   'Qiick\Oidc\Services\IdTokenValidatorService'
+  'Qiick\Oidc\Services\JwtValidatorService'
+  'Qiick\Oidc\Services\JwksService'
 )
 
 status=0

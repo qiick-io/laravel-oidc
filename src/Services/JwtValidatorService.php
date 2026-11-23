@@ -10,10 +10,12 @@ use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 use Firebase\JWT\SignatureInvalidException;
 use Illuminate\Support\Facades\Date;
+use phpseclib3\Crypt\RSA;
 use Qiick\Oidc\Data\DiscoveryDocumentData;
 use Qiick\Oidc\Data\ProviderConfigurationData;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Exceptions\InvalidTokenException;
+use ReflectionProperty;
 use Throwable;
 
 /**
@@ -36,12 +38,6 @@ use Throwable;
 final readonly class JwtValidatorService
 {
     /**
-     * Asymmetric algorithms the package can verify. The configured list is
-     * intersected with this one, so a config typo cannot enable HS256.
-     */
-    public const array SUPPORTED_ALGORITHMS = ['RS256', 'RS384', 'RS512', 'PS256', 'ES256', 'ES384'];
-
-    /**
      * @param  list<string>  $allowedAlgorithms
      * @param  list<string>  $trustedAudiences  audiences besides the client id
      */
@@ -51,6 +47,19 @@ final readonly class JwtValidatorService
         private int $leewaySeconds,
         private array $trustedAudiences,
     ) {}
+
+    /**
+     * Asymmetric algorithms the package can verify. The configured list is
+     * intersected with this one, so a config typo cannot enable HS256.
+     * A method rather than a constant, so the list is executed code that
+     * mutation testing can check entry by entry.
+     *
+     * @return list<string>
+     */
+    public static function supportedAlgorithms(): array
+    {
+        return ['RS256', 'RS384', 'RS512', 'PS256', 'ES256', 'ES384'];
+    }
 
     /**
      * @return array<string, mixed> the verified claims
@@ -66,8 +75,15 @@ final readonly class JwtValidatorService
         $header = $this->decodeHeader($token);
         $algorithm = $header['alg'] ?? null;
 
-        if (! is_string($algorithm) || ! in_array($algorithm, array_intersect(self::SUPPORTED_ALGORITHMS, $this->allowedAlgorithms), true)) {
+        if (! is_string($algorithm) || ! in_array($algorithm, array_intersect(self::supportedAlgorithms(), $this->allowedAlgorithms), true)) {
             throw new InvalidTokenException('Token signing algorithm is not allowed.');
+        }
+
+        // RFC 7515 §4.1.11: a recipient must refuse a token whose `crit`
+        // lists an extension it does not understand, and the package
+        // understands none. An empty or malformed `crit` is invalid too.
+        if (array_key_exists('crit', $header)) {
+            throw new InvalidTokenException('Token header [crit] lists JWS extensions the package does not understand.');
         }
 
         $keyId = $header['kid'] ?? null;
@@ -128,8 +144,12 @@ final readonly class JwtValidatorService
     {
         $previousTimestamp = JWT::$timestamp;
         $previousLeeway = JWT::$leeway;
+        $previousSaltLengthDiscovery = (new ReflectionProperty(RSA::class, 'autoSaltLength'))->getValue();
         JWT::$timestamp = Date::now()->getTimestamp();
         JWT::$leeway = $this->leewaySeconds;
+        // RFC 7518 §3.5: the PSS salt is as long as the hash. phpseclib, which
+        // php-jwt uses for PS256, accepts any salt length unless told not to.
+        RSA::disableSaltLengthDiscovery();
 
         try {
             $payload = JWT::decode($token, $key);
@@ -144,9 +164,13 @@ final readonly class JwtValidatorService
         } finally {
             JWT::$timestamp = $previousTimestamp;
             JWT::$leeway = $previousLeeway;
+
+            if ($previousSaltLengthDiscovery === true) {
+                RSA::enableSaltLengthDiscovery();
+            }
         }
 
-        $claims = json_decode((string) json_encode($payload), true);
+        $claims = json_decode(json_encode($payload, JSON_THROW_ON_ERROR), true);
 
         if (! is_array($claims)) {
             throw new InvalidTokenException('Token payload is not a JSON object.');
@@ -203,7 +227,9 @@ final readonly class JwtValidatorService
     {
         $now = Date::now()->getTimestamp();
 
-        if (! is_int($claims['exp'] ?? null) && ! is_float($claims['exp'] ?? null)) {
+        $expiresAt = $claims['exp'] ?? null;
+
+        if (! is_int($expiresAt) && ! is_float($expiresAt)) {
             throw new InvalidTokenException('Token has no numeric [exp].');
         }
 
