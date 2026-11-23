@@ -166,7 +166,9 @@ final readonly class JwtValidatorService
         $audienceClaim = $claims['aud'] ?? null;
         $audiences = is_string($audienceClaim) ? [$audienceClaim] : (is_array($audienceClaim) ? $audienceClaim : []);
 
-        if ($audiences === [] || array_filter($audiences, is_string(...)) !== $audiences) {
+        // OIDC Core §2: `aud` is a string or a JSON array of strings. A JSON
+        // object decodes to a keyed array, which array_is_list() refuses.
+        if ($audiences === [] || ! array_is_list($audiences) || array_filter($audiences, is_string(...)) !== $audiences) {
             throw new InvalidTokenException('Token [aud] is missing or not a list of strings.');
         }
 

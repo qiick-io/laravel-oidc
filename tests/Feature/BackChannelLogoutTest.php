@@ -112,6 +112,7 @@ it('refuses invalid logout tokens with 400', function (array $overrides): void {
     'sub with a leading space' => [['sub' => ' fake-subject-1']],
     'no jti' => [['jti' => null]],
     'other audience' => [['aud' => 'other-app']],
+    'audience as an object' => [['aud' => ['client' => 'laravel-app']]],
     'other issuer' => [['iss' => 'https://evil.example.com']],
     'expired' => [['iat' => 1, 'exp' => 2]],
 ]);
