@@ -72,7 +72,10 @@ return new class extends Migration
             $table->timestamps();
 
             $table->unique(['issuer', 'subject']);
-            $table->index(['user_id', 'issuer']);
+            // One identity per user and issuer: the auto-link guard in
+            // UserLinkingService checks it first, this key closes the race
+            // between that check and the insert.
+            $table->unique(['user_id', 'issuer']);
         });
     }
 

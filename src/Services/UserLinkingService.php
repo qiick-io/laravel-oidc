@@ -7,7 +7,9 @@ namespace Qiick\Oidc\Services;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
 use Qiick\Oidc\Enums\LoginRefusalReasonEnum;
@@ -102,7 +104,17 @@ final readonly class UserLinkingService
             throw new LoginRefusedException(LoginRefusalReasonEnum::LinkedToAnotherIdentity);
         }
 
-        $linkedIdentity = $this->createIdentity($user, $identity, $email, 'auto_link_email');
+        // The check above and this insert are two statements: a concurrent
+        // callback can link the user in between. Unique (user_id, issuer)
+        // decides, and the loser is refused like the check would have. The
+        // transaction is a savepoint inside an app transaction, so PostgreSQL
+        // can roll back the failed insert without aborting the outer one.
+        try {
+            $linkedIdentity = DB::transaction(fn (): UserIdentity => $this->createIdentity($user, $identity, $email, 'auto_link_email'));
+        } catch (UniqueConstraintViolationException) {
+            throw new LoginRefusedException(LoginRefusalReasonEnum::LinkedToAnotherIdentity);
+        }
+
         $this->events->dispatch(new OidcIdentityLinkedEvent($user, $identity));
 
         return $linkedIdentity;
@@ -113,7 +125,7 @@ final readonly class UserLinkingService
      */
     private function provisionUser(AuthenticatedIdentityData $identity, string $email): UserIdentity
     {
-        $domain = substr($email, (int) strrpos($email, '@') + 1);
+        $domain = Str::afterLast($email, '@');
 
         if ($this->allowedDomains !== [] && ! in_array($domain, $this->allowedDomains, true)) {
             throw new LoginRefusedException(LoginRefusalReasonEnum::DomainNotAllowed);
@@ -143,7 +155,6 @@ final readonly class UserLinkingService
     ): UserIdentity {
         $preferredUsername = $identity->claim('preferred_username');
         $displayName = $identity->claim('name');
-        $emailVerified = $identity->claim('email_verified');
 
         $linkedIdentity = UserIdentity::query()->create([
             'user_id' => $user->getAuthIdentifier(),
@@ -151,9 +162,7 @@ final readonly class UserLinkingService
             'subject' => $identity->subject,
             'link_method' => $linkMethod,
             'email_at_link' => $email,
-            'email_verified_at_link' => $emailVerified === true || $emailVerified === 'true'
-                ? true
-                : ($emailVerified === false || $emailVerified === 'false' ? false : null),
+            'email_verified_at_link' => $this->emailVerifiedClaim($identity),
             'preferred_username_at_link' => is_string($preferredUsername) && $preferredUsername !== ''
                 ? $preferredUsername
                 : null,
@@ -165,7 +174,7 @@ final readonly class UserLinkingService
 
     /**
      * The lower-cased email claim, checked against `email_verified` (OIDC Core
-     * 5.1). Some IdPs send the flag as the string "true".
+     * 5.1).
      *
      * @throws LoginRefusedException
      */
@@ -177,14 +186,24 @@ final readonly class UserLinkingService
             throw new LoginRefusedException(LoginRefusalReasonEnum::EmailMissing);
         }
 
-        $emailVerified = $identity->claim('email_verified');
-        $isEmailVerified = $emailVerified === true || $emailVerified === 'true';
-
-        if ($this->isVerifiedEmailRequired && ! $isEmailVerified) {
+        if ($this->isVerifiedEmailRequired && $this->emailVerifiedClaim($identity) !== true) {
             throw new LoginRefusedException(LoginRefusalReasonEnum::EmailNotVerified);
         }
 
         return mb_strtolower(trim($email));
+    }
+
+    /**
+     * The `email_verified` claim (OIDC Core 5.1) as a boolean, or null when
+     * the IdP did not send one. Some IdPs send it as the string "true".
+     */
+    private function emailVerifiedClaim(AuthenticatedIdentityData $identity): ?bool
+    {
+        return match ($identity->claim('email_verified')) {
+            true, 'true' => true,
+            false, 'false' => false,
+            default => null,
+        };
     }
 
     /**
@@ -207,7 +226,7 @@ final readonly class UserLinkingService
      */
     private function assertActive(Model $user): void
     {
-        if ($this->activeColumn !== null && ! (bool) $user->getAttribute($this->activeColumn)) {
+        if ($this->activeColumn !== null && ! $user->getAttribute($this->activeColumn)) {
             throw new LoginRefusedException(LoginRefusalReasonEnum::InactiveUser);
         }
     }

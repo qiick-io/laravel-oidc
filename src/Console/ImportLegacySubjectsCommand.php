@@ -52,7 +52,7 @@ final class ImportLegacySubjectsCommand extends Command
         }
 
         $counts = ['imported' => 0, 'already_linked' => 0, 'conflicts' => 0];
-        $isDryRun = (bool) $this->option('dry-run');
+        $isDryRun = $this->option('dry-run') === true;
 
         $userModel::query()->whereNotNull($column)->where($column, '!=', '')->orderBy('id')
             ->each(function (Model $user) use ($column, $issuer, $isDryRun, &$counts): void {
@@ -69,6 +69,17 @@ final class ImportLegacySubjectsCommand extends Command
                     if ($outcome === 'conflicts') {
                         $this->warn("User {$userKey}: this sub is already linked to user {$existing->user_id}; skipped.");
                     }
+
+                    return;
+                }
+
+                // One identity per user and issuer (unique user_id, issuer):
+                // a user auto-linked to another subject is left as it is.
+                $isUserLinkedToIssuer = UserIdentity::query()->where('user_id', $user->getKey())->where('issuer', $issuer)->exists();
+
+                if ($isUserLinkedToIssuer) {
+                    $counts['conflicts']++;
+                    $this->warn("User {$userKey}: already linked to another subject of this issuer; skipped.");
 
                     return;
                 }
