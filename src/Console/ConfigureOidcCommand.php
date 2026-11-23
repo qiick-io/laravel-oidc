@@ -24,9 +24,10 @@ use Qiick\Oidc\Services\JwtValidatorService;
  * section 4, "Agent-first").
  *
  * It reads the current settings, overridden by the options, then checks the
- * discovery document, the JWKS, the signing algorithms, the redirect and
- * logout URIs, that `app.timezone` is UTC, the front-channel logout setup
- * when it is on and, in SSO-only mode, that a break-glass account exists. It
+ * discovery document and the capabilities it advertises, the JWKS, the
+ * signing algorithms, the redirect and logout URIs, that `app.timezone` is
+ * UTC, the front-channel logout setup when it is on and, in SSO-only mode,
+ * that a break-glass account exists. It
  * prints the URIs to register at the IdP. With `--write-env` it writes the
  * settings to `.env`, only when no check failed. `--json` prints a machine
  * readable report. The exit code is 0 without failures, 1 otherwise.
@@ -49,6 +50,14 @@ final class ConfigureOidcCommand extends Command
      */
     private array $results = [];
 
+    /**
+     * The IdP's advertised capabilities (standards review S5), for the JSON
+     * report; null until discovery succeeded.
+     *
+     * @var array<string, bool|list<string>|null>|null
+     */
+    private ?array $capabilities = null;
+
     public function handle(
         ProviderConfigurationRepositoryContract $configurationRepository,
         DiscoveryService $discovery,
@@ -63,6 +72,7 @@ final class ConfigureOidcCommand extends Command
 
             if ($discoveryDocument !== null) {
                 $this->checkSigningKeys($identityProviderHttp, $discoveryDocument);
+                $this->checkCapabilities($discoveryDocument);
             }
 
             $this->checkClient($configuration);
@@ -169,6 +179,58 @@ final class ConfigureOidcCommand extends Command
             'signing keys',
             $signingKeys === [] ? 'failure' : 'ok',
             $signingKeys === [] ? 'The JWKS has no RSA or EC signing key.' : count($signingKeys).' signing key(s) in the JWKS.',
+        );
+    }
+
+    /**
+     * Reports what the IdP advertises (DISC §3, BCL §2.1, FCL §3). Optional
+     * metadata is never fatal: a missing capability is at most a warning.
+     */
+    private function checkCapabilities(DiscoveryDocumentData $discoveryDocument): void
+    {
+        $this->capabilities = [
+            'frontchannel_logout_supported' => $discoveryDocument->isFrontChannelLogoutSupported,
+            'frontchannel_logout_session_supported' => $discoveryDocument->isFrontChannelLogoutSessionSupported,
+            'backchannel_logout_supported' => $discoveryDocument->isBackChannelLogoutSupported,
+            'backchannel_logout_session_supported' => $discoveryDocument->isBackChannelLogoutSessionSupported,
+            'acr_values_supported' => $discoveryDocument->acrValuesSupported,
+            'claims_parameter_supported' => $discoveryDocument->isClaimsParameterSupported,
+        ];
+
+        if (! $discoveryDocument->isBackChannelLogoutSupported) {
+            $this->record('back-channel logout', 'warning', 'The IdP does not advertise backchannel_logout_supported: a logout at the IdP may not end local sessions.');
+        } elseif (! $discoveryDocument->isBackChannelLogoutSessionSupported) {
+            $this->record('back-channel logout', 'warning', 'The IdP does not advertise backchannel_logout_session_supported: its logout tokens carry no sid, so each logout ends every session of the user.');
+        } else {
+            $this->record('back-channel logout', 'ok', 'The IdP sends back-channel logout tokens with sid.');
+        }
+
+        if (Config::boolean('oidc.frontchannel_logout.enabled')) {
+            $isFrontChannelUsable = $discoveryDocument->isFrontChannelLogoutSupported && $discoveryDocument->isFrontChannelLogoutSessionSupported;
+
+            $this->record(
+                'front-channel support',
+                $isFrontChannelUsable ? 'ok' : 'warning',
+                $isFrontChannelUsable
+                    ? 'The IdP supports front-channel logout with iss and sid.'
+                    : 'oidc.frontchannel_logout.enabled is on but the IdP does not advertise frontchannel_logout_supported and frontchannel_logout_session_supported.',
+            );
+        }
+
+        $requestedAcrValues = Config::get('oidc.mfa.request_acr_values');
+
+        if (! is_string($requestedAcrValues) || $requestedAcrValues === '' || $discoveryDocument->acrValuesSupported === null) {
+            return;
+        }
+
+        $unsupportedAcrValues = array_diff(explode(' ', $requestedAcrValues), $discoveryDocument->acrValuesSupported);
+
+        $this->record(
+            'acr values',
+            $unsupportedAcrValues === [] ? 'ok' : 'warning',
+            $unsupportedAcrValues === []
+                ? 'The IdP advertises every requested acr value.'
+                : 'oidc.mfa.request_acr_values asks for '.implode(', ', $unsupportedAcrValues).', which the IdP does not list in acr_values_supported.',
         );
     }
 
@@ -355,6 +417,7 @@ final class ConfigureOidcCommand extends Command
                 'ok' => ! $hasFailure,
                 'checks' => $this->results,
                 'register_at_identity_provider' => $urisToRegister,
+                'identity_provider_capabilities' => $this->capabilities,
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
 
             return;

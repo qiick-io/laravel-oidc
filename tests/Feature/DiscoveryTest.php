@@ -320,3 +320,59 @@ it('keeps only string signing algorithms and reindexes the list', function (): v
 
     expect(discover()->idTokenSigningAlgorithms)->toBe(['RS256', 'ES256']);
 });
+
+it('reads the capabilities the IdP advertises, counting only a JSON true', function (): void {
+    FakeIdentityProvider::fake()->withDiscovery([
+        'frontchannel_logout_supported' => true,
+        'frontchannel_logout_session_supported' => true,
+        'backchannel_logout_supported' => 'true',
+        'backchannel_logout_session_supported' => 1,
+        'acr_values_supported' => [3 => 'urn:qiick:loa:mfa', 4 => 42],
+        'claims_parameter_supported' => true,
+        'authorization_response_iss_parameter_supported' => true,
+    ]);
+
+    $discovery = discover();
+
+    expect([
+        $discovery->isFrontChannelLogoutSupported,
+        $discovery->isFrontChannelLogoutSessionSupported,
+        $discovery->isBackChannelLogoutSupported,
+        $discovery->isBackChannelLogoutSessionSupported,
+        $discovery->acrValuesSupported,
+        $discovery->isClaimsParameterSupported,
+        $discovery->isAuthorizationResponseIssuerSupported,
+    ])->toBe([true, true, false, false, ['urn:qiick:loa:mfa'], true, true]);
+});
+
+it('defaults every capability to its spec default when the IdP omits it', function (): void {
+    FakeIdentityProvider::fake()->withDiscovery([
+        'backchannel_logout_supported' => null,
+        'backchannel_logout_session_supported' => null,
+    ]);
+
+    $discovery = discover();
+
+    expect([
+        $discovery->isFrontChannelLogoutSupported,
+        $discovery->isFrontChannelLogoutSessionSupported,
+        $discovery->isBackChannelLogoutSupported,
+        $discovery->isBackChannelLogoutSessionSupported,
+        $discovery->acrValuesSupported,
+        $discovery->isClaimsParameterSupported,
+        $discovery->isAuthorizationResponseIssuerSupported,
+    ])->toBe([false, false, false, false, null, false, false]);
+});
+
+it('keeps the capabilities through the cache and rebuilds a document cached without them', function (): void {
+    FakeIdentityProvider::fake()->withDiscovery(['frontchannel_logout_supported' => true, 'acr_values_supported' => ['gold']]);
+    $discovery = discover();
+
+    $roundTrip = DiscoveryDocumentData::fromArray($discovery->toArray());
+    $cachedByAnOlderRelease = DiscoveryDocumentData::fromArray(array_slice($discovery->toArray(), 0, 8));
+
+    expect($roundTrip)->toEqual($discovery)
+        ->and($cachedByAnOlderRelease->isFrontChannelLogoutSupported)->toBeFalse()
+        ->and($cachedByAnOlderRelease->acrValuesSupported)->toBeNull()
+        ->and($cachedByAnOlderRelease->issuer)->toBe($discovery->issuer);
+});
