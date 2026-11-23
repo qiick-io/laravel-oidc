@@ -10,7 +10,7 @@ use Qiick\Oidc\Services\IdTokenValidatorService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
 
 /*
- * Every algorithm in JwtValidatorService::SUPPORTED_ALGORITHMS must verify a
+ * Every algorithm in JwtValidatorService::supportedAlgorithms() must verify a
  * real signature end to end: an algorithm the package declares but cannot
  * verify would only fail closed at the first login.
  */

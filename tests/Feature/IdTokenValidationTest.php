@@ -370,3 +370,12 @@ it('refuses at_hash when the JWS alg is missing or has no hash mapping', functio
     'alg absent' => [['typ' => 'JWT']],
     'alg unsupported' => [['alg' => 'HS256', 'typ' => 'JWT']],
 ]);
+
+it('accepts an iat exactly at the leeway edge and refuses one second past it', function (): void {
+    Date::setTestNow(Date::now()->startOfSecond());
+    $now = Date::now()->getTimestamp();
+
+    expect(validateIdToken(signedIdToken($this->identityProvider, ['iat' => $now + 60, 'exp' => $now + 600]))['sub'])->toBe('fake-subject-1')
+        ->and(fn () => validateIdToken(signedIdToken($this->identityProvider, ['iat' => $now + 61, 'exp' => $now + 600])))
+        ->toThrow(InvalidTokenException::class, 'not valid yet');
+});

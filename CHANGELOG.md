@@ -10,12 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Upgrade notes
 
 - **Recreate beta databases (`php artisan migrate:fresh`).** `user_identities` now has a unique `(user_id, issuer)` key instead of a plain index. A database that already holds two identities of one issuer for the same user cannot take the new key; keep one of them before recreating.
+- `JwtValidatorService::SUPPORTED_ALGORITHMS` is replaced by `JwtValidatorService::supportedAlgorithms()`, with the same list.
 
 ### Security
 
 - A `sub`-only back-channel logout received while the app's second factor was pending no longer stops matching once the challenge completes: promotion keeps the callback time as the session's `authenticated_at`.
 - Auto-link can no longer link one user to two identities of the same issuer under concurrent callbacks: unique `(user_id, issuer)` decides and the loser is refused with `linked_to_another_identity`. `oidc:import-legacy-subjects` reports such a user as a conflict instead of failing on the key.
 - `aud` shaped as a JSON object is refused in `id_token` and `logout_token` (OIDC Core §2: a string or an array of strings).
+- RSA keys shorter than 2048 bits are refused for every RSA algorithm (RFC 7518 §3.3 and §3.5); php-jwt checked it for `RS*` but not for `PS256`.
+- `PS256` signatures must use a salt as long as the hash (RFC 7518 §3.5): phpseclib accepts any salt length by default, so validation turns that off for the duration of the check and restores the previous setting.
+- An EC key verifies only the algorithm of its curve: `ES256` on P-256, `ES384` on P-384 (RFC 7518 §3.4).
+- A token with a `crit` header is refused, since the package understands no JWS extension (RFC 7515 §4.1.11).
+- A JWKS that publishes the token's `kid` twice for the same key type is refused instead of using the first key.
+- A JWKS key with `key_ops` is used only when it lists `verify` (RFC 7517 §4.3).
 
 ### Added
 
@@ -23,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `oidc:configure` warns when the IdP does not advertise back-channel logout with `sid`, front-channel logout with `iss` and `sid` while it is on, or a requested `acr` value, and its JSON report lists the capabilities under `identity_provider_capabilities`.
 - `oidc:configure` lists `frontchannel_logout_uri` among the URIs to register when `oidc.frontchannel_logout.enabled` is on, explains that the IdP client needs `frontchannel_logout_session_required`, and fails when the flag is on but the route is not registered (standards review S3).
 - `phpseclib/phpseclib` (`^3.0.48`) is a dependency, so `PS256` `id_token`s are verified instead of always failing closed: `firebase/php-jwt` needs it for RSASSA-PSS, and the package already listed `PS256` as supported.
+- `phpseclib/phpseclib` (`^3.0.58`) is a dependency, so `PS256` `id_token`s are verified instead of always failing closed: `firebase/php-jwt` needs it for RSASSA-PSS, and the package already listed `PS256` as supported. `firebase/php-jwt` now needs `^7.1.1`, the first release with PS256.
 - The fake IdP signs with P-384 keys (`rotateSigningKey(keyType: 'EC', curve: 'P-384')`) and publishes them for `ES384`; every supported algorithm now has an end-to-end verification test.
 - `oidc:configure` warns when `app.timezone` is not `UTC`, and the README documents that the package's timestamps are UTC (standards review M7).
 
