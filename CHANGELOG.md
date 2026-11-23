@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `phpseclib/phpseclib` (`^3.0.58`) is a dependency, so `PS256` `id_token`s are verified instead of always failing closed: `firebase/php-jwt` needs it for RSASSA-PSS, and the package already listed `PS256` as supported. `firebase/php-jwt` now needs `^7.1.1`, the first release with PS256.
 - The fake IdP signs with P-384 keys (`rotateSigningKey(keyType: 'EC', curve: 'P-384')`) and publishes them for `ES384`; every supported algorithm now has an end-to-end verification test.
 - `OidcLogoutReceivedEvent` (channel, issuer, subject, SHA-256 of `sid`) is dispatched for every stored back-channel and front-channel logout, so products can log it (standards review S8). `SessionRevocationService` takes the event dispatcher as a third constructor argument; the service provider passes it.
+- `OidcLogoutReceivedEvent` (channel, issuer, subject, SHA-256 of `sid`) is dispatched for every stored back-channel and front-channel logout, so products can log it (standards review S8). `SessionRevocationService` takes the event dispatcher as a third constructor argument; the service provider passes it. The event is dispatched after the revocation is stored and cached; a listener that throws is logged and does not fail the logout.
 - `oidc:configure` warns when `app.timezone` is not `UTC`, and the README documents that the package's timestamps are UTC (standards review M7).
 
 ### Fixed

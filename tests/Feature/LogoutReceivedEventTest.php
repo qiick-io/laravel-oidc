@@ -2,9 +2,14 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Testing\TestResponse;
+use Qiick\Oidc\Data\IdentitySessionData;
 use Qiick\Oidc\Events\OidcLogoutReceivedEvent;
+use Qiick\Oidc\Models\OidcLogoutRevocation;
+use Qiick\Oidc\Services\SessionRevocationService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
 
 /*
@@ -69,4 +74,30 @@ it('never puts the raw sid in the event', function (): void {
     postSignedLogoutToken($this->identityProvider)->assertOk();
 
     Event::assertDispatched(OidcLogoutReceivedEvent::class, fn (OidcLogoutReceivedEvent $event): bool => ! str_contains(serialize($event), 'fake-session-1'));
+});
+
+it('stores, caches and answers a logout even when an app listener throws', function (): void {
+    // The real dispatcher, so the listener actually runs.
+    Event::swap(Event::getFacadeRoot()->dispatcher);
+    Event::listen(OidcLogoutReceivedEvent::class, function (): void {
+        throw new RuntimeException('activity log is down');
+    });
+    Log::spy();
+
+    postSignedLogoutToken($this->identityProvider)->assertOk();
+
+    // The cache was warmed after the listener ran: without the rows it still answers.
+    OidcLogoutRevocation::query()->delete();
+
+    expect(app(SessionRevocationService::class)->isRevoked(new IdentitySessionData(
+        issuer: $this->identityProvider->issuer,
+        subject: 'fake-subject-1',
+        sessionId: 'fake-session-1',
+        idToken: 'header.payload.signature',
+        authenticatedAt: Date::now()->getTimestamp(),
+    )))->toBeTrue();
+    Log::shouldHaveReceived('error')->withArgs(
+        fn (string $message, array $context): bool => str_contains($message, 'OidcLogoutReceivedEvent listener failed')
+            && $context === ['exception' => RuntimeException::class],
+    );
 });

@@ -212,7 +212,7 @@ Schedule::command('oidc:prune-logout-revocations')->daily();
 
 The model is also `MassPrunable`, so `model:prune` has the same effect. A missed run only leaves extra rows.
 
-Every stored logout, back-channel or front-channel, dispatches `OidcLogoutReceivedEvent` after its row is committed: `channel` (`backchannel` or `frontchannel`), `issuer`, `subject` (null for front-channel) and `sessionIdHash` (the SHA-256 of `sid`, or null). Listen to it to write the logout into the app's activity log; a refused or replayed logout dispatches nothing.
+Every stored logout, back-channel or front-channel, dispatches `OidcLogoutReceivedEvent` after its row is committed: `channel` (`backchannel` or `frontchannel`), `issuer`, `subject` (null for front-channel) and `sessionIdHash` (the SHA-256 of `sid`, or null). Listen to it to write the logout into the app's activity log; a refused or replayed logout dispatches nothing. A listener that throws is logged and does not fail the logout, which is already stored; a queued listener is still the better choice for slow work.
 
 ### Front-channel logout
 

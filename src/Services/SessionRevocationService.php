@@ -37,7 +37,8 @@ final readonly class SessionRevocationService
     /**
      * Persist the revocation, then warm the cache. A duplicate (issuer, jti)
      * is a replay and is refused. Dispatches OidcLogoutReceivedEvent once the
-     * row is committed, so a listener never logs a logout that was not stored.
+     * row is committed and cached, so a listener never logs a logout that was
+     * not stored.
      *
      * @throws InvalidTokenException when the logout token jti was already used
      */
@@ -63,22 +64,36 @@ final readonly class SessionRevocationService
             throw new InvalidTokenException('logout_token [jti] was already used.');
         }
 
-        $this->events->dispatch(new OidcLogoutReceivedEvent(
-            channel: $logoutToken->channel,
-            issuer: $logoutToken->issuer,
-            subject: $logoutToken->subject,
-            sessionIdHash: $logoutToken->sessionId !== null ? hash('sha256', $logoutToken->sessionId) : null,
-        ));
-
         // Accelerator only; the table remains the source of truth.
         if ($logoutToken->sessionId !== null) {
             $this->warmCache($this->cacheKey('sid', $logoutToken->issuer, $logoutToken->sessionId), $receivedAt->getTimestamp(), $expiresAt);
-
-            return;
+        } elseif ($logoutToken->subject !== null) {
+            $this->warmCache($this->cacheKey('sub', $logoutToken->issuer, $logoutToken->subject), $receivedAt->getTimestamp(), $expiresAt);
         }
 
-        if ($logoutToken->subject !== null) {
-            $this->warmCache($this->cacheKey('sub', $logoutToken->issuer, $logoutToken->subject), $receivedAt->getTimestamp(), $expiresAt);
+        $this->dispatchLogoutReceived($logoutToken);
+    }
+
+    /**
+     * Tells the app about a stored logout. The logout is already committed
+     * and cached, so an app listener that throws must not turn it into an
+     * error answer: the IdP would retry and hit the `jti` replay check, and
+     * the caller would skip the rest of its work (the remember token). The
+     * failure is logged instead, without the token or the sid.
+     */
+    private function dispatchLogoutReceived(LogoutTokenData $logoutToken): void
+    {
+        try {
+            $this->events->dispatch(new OidcLogoutReceivedEvent(
+                channel: $logoutToken->channel,
+                issuer: $logoutToken->issuer,
+                subject: $logoutToken->subject,
+                sessionIdHash: $logoutToken->sessionId !== null ? hash('sha256', $logoutToken->sessionId) : null,
+            ));
+        } catch (Throwable $throwable) {
+            Log::error('OidcLogoutReceivedEvent listener failed; the logout itself is stored.', [
+                'exception' => $throwable::class,
+            ]);
         }
     }
 
