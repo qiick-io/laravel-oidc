@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `oidc:configure` warns when `app.timezone` is not `UTC`, and the README documents that the package's timestamps are UTC (standards review M7).
 
+### Fixed
+
+- `oidc:configure` treats an `http://[::1]` redirect URI as local instead of warning about plain http on a public host.
+
 ## [1.0.0-beta.6] - 2026-11-22
 
 ### Upgrade notes

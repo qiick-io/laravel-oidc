@@ -141,8 +141,8 @@ final class ConfigureOidcCommand extends Command
 
     private function checkSigningKeys(IdentityProviderHttpService $identityProviderHttp, DiscoveryDocumentData $discoveryDocument): void
     {
-        $allowedAlgorithms = array_values(array_intersect(JwtValidatorService::SUPPORTED_ALGORITHMS, $this->configuredStrings('oidc.id_token.algorithms')));
-        $commonAlgorithms = array_values(array_intersect($allowedAlgorithms, $discoveryDocument->idTokenSigningAlgorithms));
+        $allowedAlgorithms = array_intersect(JwtValidatorService::SUPPORTED_ALGORITHMS, $this->configuredStrings('oidc.id_token.algorithms'));
+        $commonAlgorithms = array_intersect($allowedAlgorithms, $discoveryDocument->idTokenSigningAlgorithms);
 
         if ($commonAlgorithms === []) {
             $this->record('algorithms', 'failure', 'The IdP signs id_tokens with '.implode(', ', $discoveryDocument->idTokenSigningAlgorithms)
@@ -186,7 +186,8 @@ final class ConfigureOidcCommand extends Command
     {
         $scheme = parse_url($redirectUri, PHP_URL_SCHEME);
         $host = parse_url($redirectUri, PHP_URL_HOST);
-        $isLocalHost = in_array($host, ['localhost', '127.0.0.1', '::1'], true) || (is_string($host) && str_ends_with($host, '.test'));
+        // parse_url() keeps the brackets around an IPv6 host.
+        $isLocalHost = in_array($host, ['localhost', '127.0.0.1', '[::1]'], true) || (is_string($host) && str_ends_with($host, '.test'));
 
         if (! is_string($host) || ! in_array($scheme, ['http', 'https'], true)) {
             $this->record('redirect uri', 'failure', "[{$redirectUri}] is not an absolute URL. Set APP_URL or oidc.redirect_uri.");
@@ -321,11 +322,11 @@ final class ConfigureOidcCommand extends Command
     private function report(bool $hasFailure, array $urisToRegister): void
     {
         if ($this->option('json')) {
-            $this->line((string) json_encode([
+            $this->line(json_encode([
                 'ok' => ! $hasFailure,
                 'checks' => $this->results,
                 'register_at_identity_provider' => $urisToRegister,
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
 
             return;
         }
