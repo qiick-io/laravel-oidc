@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `oidc:configure` lists `frontchannel_logout_uri` among the URIs to register when `oidc.frontchannel_logout.enabled` is on, explains that the IdP client needs `frontchannel_logout_session_required`, and fails when the flag is on but the route is not registered (standards review S3).
+
+### Added
+
 - `oidc:configure` warns when `app.timezone` is not `UTC`, and the README documents that the package's timestamps are UTC (standards review M7).
 
 ### Fixed

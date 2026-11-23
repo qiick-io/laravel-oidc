@@ -385,3 +385,46 @@ it('prints the failure line and no URIs without settings', function (): void {
         ->doesntExpectOutput('Register at the IdP:')
         ->assertFailed();
 });
+
+it('lists the front-channel logout URI and how to register it when front-channel logout is on', function (): void {
+    FakeIdentityProvider::fake(configOverrides: ['frontchannel_logout.enabled' => true]);
+
+    [$exitCode, $report] = configureOidc();
+
+    expect($exitCode)->toBe(0)
+        ->and(collect($report['checks'])->firstWhere('check', 'front-channel logout'))->toBe([
+            'check' => 'front-channel logout',
+            'status' => 'ok',
+            'detail' => 'Register http://localhost/auth/oidc/frontchannel-logout as the front-channel logout URI with "front-channel logout session required" (frontchannel_logout_session_required), so the IdP sends iss and sid.',
+        ])
+        ->and($report['register_at_identity_provider'])->toBe([
+            'redirect_uri' => 'http://localhost/auth/oidc/callback',
+            'post_logout_redirect_uri' => 'http://localhost',
+            'backchannel_logout_uri' => 'http://localhost/auth/oidc/backchannel-logout',
+            'frontchannel_logout_uri' => 'http://localhost/auth/oidc/frontchannel-logout',
+        ]);
+});
+
+it('neither checks nor lists front-channel logout while it is off', function (): void {
+    FakeIdentityProvider::fake();
+
+    [, $report] = configureOidc();
+
+    expect(statusesByCheck($report))->not->toHaveKey('front-channel logout')
+        ->and($report['register_at_identity_provider'])->not->toHaveKey('frontchannel_logout_uri');
+});
+
+it('fails when front-channel logout is on but its route is missing', function (): void {
+    FakeIdentityProvider::fake(configOverrides: ['frontchannel_logout.enabled' => true, 'redirect_uri' => 'https://app.example.com/cb']);
+    Route::setRoutes(new RouteCollection);
+
+    [$exitCode, $report] = configureOidc();
+
+    expect($exitCode)->toBe(1)
+        ->and(collect($report['checks'])->firstWhere('check', 'front-channel logout'))->toBe([
+            'check' => 'front-channel logout',
+            'status' => 'failure',
+            'detail' => 'oidc.frontchannel_logout.enabled is on but the oidc.frontchannel-logout route is not registered.',
+        ])
+        ->and($report['register_at_identity_provider'])->not->toHaveKey('frontchannel_logout_uri');
+});

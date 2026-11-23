@@ -25,8 +25,8 @@ use Qiick\Oidc\Services\JwtValidatorService;
  *
  * It reads the current settings, overridden by the options, then checks the
  * discovery document, the JWKS, the signing algorithms, the redirect and
- * logout URIs, that `app.timezone` is UTC and, in SSO-only mode, that a
- * break-glass account exists. It
+ * logout URIs, that `app.timezone` is UTC, the front-channel logout setup
+ * when it is on and, in SSO-only mode, that a break-glass account exists. It
  * prints the URIs to register at the IdP. With `--write-env` it writes the
  * settings to `.env`, only when no check failed. `--json` prints a machine
  * readable report. The exit code is 0 without failures, 1 otherwise.
@@ -68,6 +68,7 @@ final class ConfigureOidcCommand extends Command
             $this->checkClient($configuration);
             $this->checkRedirectUri($configuration->redirectUri);
             $this->checkTimezone();
+            $this->checkFrontChannelLogout();
             $this->checkBreakGlass($breakGlassPolicy);
         }
 
@@ -246,6 +247,33 @@ final class ConfigureOidcCommand extends Command
     }
 
     /**
+     * Front-channel logout is opt-in (OIDC Front-Channel Logout 1.0, standards
+     * review S3). When it is on, the IdP must append `iss` and `sid` to the
+     * URI (FCL §2, `frontchannel_logout_session_required`), or the endpoint
+     * refuses every call with 400.
+     */
+    private function checkFrontChannelLogout(): void
+    {
+        if (! Config::boolean('oidc.frontchannel_logout.enabled')) {
+            return;
+        }
+
+        if (! $this->isFrontChannelLogoutReady()) {
+            $this->record('front-channel logout', 'failure', 'oidc.frontchannel_logout.enabled is on but the oidc.frontchannel-logout route is not registered.');
+
+            return;
+        }
+
+        $this->record('front-channel logout', 'ok', 'Register '.route('oidc.frontchannel-logout')
+            .' as the front-channel logout URI with "front-channel logout session required" (frontchannel_logout_session_required), so the IdP sends iss and sid.');
+    }
+
+    private function isFrontChannelLogoutReady(): bool
+    {
+        return Config::boolean('oidc.frontchannel_logout.enabled') && Route::has('oidc.frontchannel-logout');
+    }
+
+    /**
      * @return array<string, string>
      */
     private function urisToRegister(ProviderConfigurationData $configuration): array
@@ -254,6 +282,7 @@ final class ConfigureOidcCommand extends Command
             'redirect_uri' => $configuration->redirectUri,
             'post_logout_redirect_uri' => $configuration->postLogoutRedirectUri,
             'backchannel_logout_uri' => Route::has('oidc.backchannel-logout') ? route('oidc.backchannel-logout') : null,
+            'frontchannel_logout_uri' => $this->isFrontChannelLogoutReady() ? route('oidc.frontchannel-logout') : null,
         ], fn (?string $uri): bool => $uri !== null);
     }
 
