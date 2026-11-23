@@ -58,6 +58,7 @@ it('passes for a working IdP and lists the URIs to register', function (): void 
             'signing keys' => 'ok',
             'client' => 'ok',
             'redirect uri' => 'ok',
+            'timezone' => 'ok',
         ])
         ->and($report['register_at_identity_provider'])->toBe([
             'redirect_uri' => 'http://localhost/auth/oidc/callback',
@@ -100,6 +101,18 @@ it('warns when the IdP has no end session endpoint', function (): void {
     [$exitCode, $report] = configureOidc();
 
     expect($exitCode)->toBe(0)->and(statusesByCheck($report)['end session'])->toBe('warning');
+});
+
+it('warns when app.timezone is not UTC', function (): void {
+    FakeIdentityProvider::fake();
+    Config::set('app.timezone', 'Europe/Rome');
+
+    [$exitCode, $report] = configureOidc();
+    $timezoneCheck = collect($report['checks'])->firstWhere('check', 'timezone');
+
+    expect($exitCode)->toBe(0)
+        ->and($timezoneCheck['status'])->toBe('warning')
+        ->and($timezoneCheck['detail'])->toBe('app.timezone is Europe/Rome; the package expects UTC in its timestamp columns, so set it to UTC.');
 });
 
 it('fails in SSO-only mode without a break-glass account', function (bool $hasBreakGlassAccount): void {

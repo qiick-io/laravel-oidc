@@ -25,7 +25,8 @@ use Qiick\Oidc\Services\JwtValidatorService;
  *
  * It reads the current settings, overridden by the options, then checks the
  * discovery document, the JWKS, the signing algorithms, the redirect and
- * logout URIs and, in SSO-only mode, that a break-glass account exists. It
+ * logout URIs, that `app.timezone` is UTC and, in SSO-only mode, that a
+ * break-glass account exists. It
  * prints the URIs to register at the IdP. With `--write-env` it writes the
  * settings to `.env`, only when no check failed. `--json` prints a machine
  * readable report. The exit code is 0 without failures, 1 otherwise.
@@ -66,6 +67,7 @@ final class ConfigureOidcCommand extends Command
 
             $this->checkClient($configuration);
             $this->checkRedirectUri($configuration->redirectUri);
+            $this->checkTimezone();
             $this->checkBreakGlass($breakGlassPolicy);
         }
 
@@ -199,6 +201,25 @@ final class ConfigureOidcCommand extends Command
         }
 
         $this->record('redirect uri', 'ok', $redirectUri);
+    }
+
+    /**
+     * The package stores `last_login_at`, `last_auth_time_at` and the logout
+     * revocation times as plain `timestamp` columns, which carry no zone, and
+     * reads them back in `app.timezone` (standards review M7 and R5). Only
+     * UTC keeps them comparable across apps and with the IdP's epoch claims.
+     */
+    private function checkTimezone(): void
+    {
+        $timezone = Config::string('app.timezone');
+
+        if ($timezone === 'UTC') {
+            $this->record('timezone', 'ok', 'app.timezone is UTC.');
+
+            return;
+        }
+
+        $this->record('timezone', 'warning', "app.timezone is {$timezone}; the package expects UTC in its timestamp columns, so set it to UTC.");
     }
 
     /**

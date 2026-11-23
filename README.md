@@ -38,6 +38,7 @@ php artisan oidc:configure --issuer=https://idp.example.com/realms/acme --client
 `oidc:configure` checks the setup against the IdP without a browser:
 - settings, discovery (exact issuer, code flow, PKCE `S256`), end-session support;
 - signing algorithms and JWKS keys, client type, redirect URI;
+- that `app.timezone` is `UTC` (a warning otherwise, see "Timestamps are UTC");
 - in SSO-only mode, that a break-glass account exists.
 
 It prints the URIs to register at the IdP: the redirect URI, the post-logout redirect URI and the back-channel logout URI. `--json` prints a machine-readable report for agents. `--write-env` writes `OIDC_ENABLED`, `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` to `.env`, only when every check passed. The exit code is `0` without failures. The client secret is never printed.
@@ -67,6 +68,10 @@ Every key in `config/oidc.php` has an env var. They are defaults: an app can ove
 | Verified email (`oidc.require_verified_email`) | **on** | Auto-link and JIT need `email_verified: true`. Per-provider opt-out for IdPs that never send the claim (Entra ID). |
 | Remember-me for SSO (`oidc.remember`) | **off** | A remember cookie would outlive the IdP session and a back-channel logout. |
 | 2FA after SSO | App challenge when `id_token` lacks accepted `amr` / `acr` | See “Second factor (MFA)” below; release notes must say SSO does not skip the app's 2FA. |
+
+### Timestamps are UTC
+
+The package's tables store times without a time zone: `timestamp` columns for past events (`user_identities.last_login_at`, `last_auth_time_at`, `oidc_logout_revocations.received_at` and every `created_at` / `updated_at`) and a `dateTime` column for the future pruning date (`oidc_logout_revocations.expires_at`). Laravel writes and reads them in `app.timezone`, so the package expects `app.timezone` to be `UTC`, as in Externa and Excubia App. With another time zone the stored values are local times, and comparisons with the IdP's epoch claims (`auth_time`, `exp`) and between app servers become ambiguous. `oidc:configure` warns when `app.timezone` is not `UTC`.
 
 ## Protocol profile
 
