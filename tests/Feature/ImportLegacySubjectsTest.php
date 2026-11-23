@@ -2,9 +2,12 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Qiick\Oidc\Models\UserIdentity;
 
 beforeEach(function (): void {
@@ -23,6 +26,9 @@ it('imports legacy subjects with the configured issuer and is idempotent', funct
 
     expect(UserIdentity::query()->sole()->only(['user_id', 'issuer', 'subject']))
         ->toBe(['user_id' => $linkedUser->id, 'issuer' => 'https://idp.example.com/realms/externa', 'subject' => 'sub-ada']);
+    expect(UserIdentity::query()->sole()->created_at)->not->toBeNull()
+        ->and(UserIdentity::query()->sole()->updated_at)->not->toBeNull()
+        ->and(UserIdentity::query()->sole()->public_id)->toBeString();
 
     $this->artisan('oidc:import-legacy-subjects')
         ->expectsOutputToContain('Imported 0 identities for issuer https://idp.example.com/realms/externa; 1 already linked, 0 conflicts.')
@@ -78,6 +84,34 @@ it('fails with an empty configured issuer', function (): void {
 
     $this->artisan('oidc:import-legacy-subjects')->expectsOutputToContain('No issuer')->assertFailed();
 });
+
+it('counts a link made by a concurrent login while importing', function (string $concurrentSubject, string $expectedOutput): void {
+    $user = localUser('ada@example.com', ['oidc_sub' => 'sub-ada']);
+    $hasRun = false;
+
+    // A login links the user between the importer's checks and its insert.
+    DB::listen(function (QueryExecuted $query) use ($user, $concurrentSubject, &$hasRun): void {
+        if ($hasRun || ! str_starts_with($query->sql, 'select exists') || ! str_contains($query->sql, 'user_identities')) {
+            return;
+        }
+
+        $hasRun = true;
+        DB::table('user_identities')->insert([
+            'public_id' => (string) Str::uuid7(),
+            'user_id' => $user->id,
+            'issuer' => 'https://idp.example.com/realms/externa',
+            'subject' => $concurrentSubject,
+        ]);
+    });
+
+    $this->artisan('oidc:import-legacy-subjects')->expectsOutputToContain($expectedOutput);
+
+    expect(UserIdentity::query()->sole()->subject)->toBe($concurrentSubject);
+})->with([
+    'same subject' => ['sub-ada', '0 identities for issuer https://idp.example.com/realms/externa; 1 already linked, 0 conflicts.'],
+    'another subject' => ['sub-other', 'linked concurrently to another identity of this issuer; skipped.'],
+    'another subject, counted' => ['sub-other', '0 identities for issuer https://idp.example.com/realms/externa; 0 already linked, 1 conflicts.'],
+]);
 
 it('writes nothing on a dry run', function (): void {
     localUser('ada@example.com', ['oidc_sub' => 'sub-ada']);

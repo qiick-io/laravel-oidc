@@ -7,7 +7,7 @@ namespace Qiick\Oidc\Console;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Config;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Schema;
 use Qiick\Oidc\Models\UserIdentity;
 
@@ -84,13 +84,28 @@ final class ImportLegacySubjectsCommand extends Command
                     return;
                 }
 
-                if (! $isDryRun) {
-                    DB::transaction(fn () => UserIdentity::query()->create([
-                        'user_id' => $user->getKey(),
-                        'issuer' => $issuer,
-                        'subject' => $subject,
-                        'link_method' => 'legacy_import',
-                    ]));
+                // insertOrIgnore is atomic on every database: a login that
+                // linked the user or this sub after the checks above makes it
+                // insert nothing, and the row it wrote is reported instead.
+                $isInserted = $isDryRun || UserIdentity::query()->insertOrIgnore([
+                    'public_id' => (new UserIdentity)->newUniqueId(),
+                    'user_id' => $user->getKey(),
+                    'issuer' => $issuer,
+                    'subject' => $subject,
+                    'link_method' => 'legacy_import',
+                    'created_at' => Date::now(),
+                    'updated_at' => Date::now(),
+                ]) === 1;
+
+                if (! $isInserted) {
+                    $isSameLink = UserIdentity::query()->where('issuer', $issuer)->where('subject', $subject)->where('user_id', $user->getKey())->exists();
+                    $counts[$isSameLink ? 'already_linked' : 'conflicts']++;
+
+                    if (! $isSameLink) {
+                        $this->warn("User {$userKey}: linked concurrently to another identity of this issuer; skipped.");
+                    }
+
+                    return;
                 }
 
                 $counts['imported']++;

@@ -114,6 +114,8 @@ it('refuses a token for another client', function (mixed $audience): void {
     'not strings' => [[42]],
     // OIDC Core §2: a string or a JSON array; a JSON object is neither.
     'object holding the client id' => [['client' => 'laravel-app']],
+    // {"0":"laravel-app"} decodes to a PHP list, so the JSON type is checked first.
+    'object with a numeric key' => [(object) ['0' => 'laravel-app']],
 ]);
 
 it('refuses an untrusted extra audience', function (): void {

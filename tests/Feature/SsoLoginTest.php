@@ -139,6 +139,63 @@ it('refuses an auto-link that loses the race to a concurrent link of the same us
     Event::assertNotDispatched(OidcIdentityLinkedEvent::class);
 });
 
+/**
+ * Runs $concurrentLogin once, right after this login looked its (issuer, sub)
+ * up and found nothing: the window in which a concurrent login of the same
+ * IdP account can finish first.
+ */
+function afterIdentityLookup(Closure $concurrentLogin): void
+{
+    $hasRun = false;
+    DB::listen(function (QueryExecuted $query) use ($concurrentLogin, &$hasRun): void {
+        if ($hasRun || ! str_starts_with($query->sql, 'select *') || ! str_contains($query->sql, 'user_identities') || ! str_contains($query->sql, 'subject')) {
+            return;
+        }
+
+        $hasRun = true;
+        $concurrentLogin();
+    });
+}
+
+it('signs in the loser of two concurrent first logins of the same sub as the linked user', function (array $configOverrides, bool $hasLocalUser): void {
+    $user = $hasLocalUser ? localUser('sso.user@example.com') : null;
+
+    afterIdentityLookup(function () use (&$user): void {
+        $user ??= localUser('sso.user@example.com');
+        DB::table('user_identities')->insert([
+            'public_id' => (string) Str::uuid7(),
+            'user_id' => $user->id,
+            'issuer' => 'https://idp.example.com/realms/test',
+            'subject' => 'fake-subject-1',
+        ]);
+    });
+
+    ssoLogin($this, fakeProvider($configOverrides))->assertRedirect('/');
+
+    expect(auth()->id())->toBe($user->id)
+        ->and(UserIdentity::query()->sole()->user_id)->toBe($user->id);
+    Event::assertNotDispatched(OidcIdentityLinkedEvent::class);
+    Event::assertNotDispatched(OidcUserProvisionedEvent::class);
+})->with([
+    'auto-link' => [['auto_link' => true], true],
+    'JIT' => [['jit' => true], false],
+    'JIT and auto-link' => [['jit' => true, 'auto_link' => true], false],
+]);
+
+it('still refuses an inactive user who won the race', function (): void {
+    Schema::table('users', fn (Blueprint $table) => $table->boolean('is_active')->default(true));
+    $user = localUser('sso.user@example.com', ['is_active' => false]);
+
+    afterIdentityLookup(fn () => DB::table('user_identities')->insert([
+        'public_id' => (string) Str::uuid7(),
+        'user_id' => $user->id,
+        'issuer' => 'https://idp.example.com/realms/test',
+        'subject' => 'fake-subject-1',
+    ]));
+
+    assertRefused(ssoLogin($this, fakeProvider(['auto_link' => true, 'users.active_column' => 'is_active'])), LoginRefusalReasonEnum::InactiveUser);
+});
+
 it('auto-links a user linked only at another issuer', function (): void {
     $user = localUser('sso.user@example.com');
     linkIdentity($user, 'fake-subject-1', 'https://old-idp.example.com');
@@ -234,6 +291,13 @@ it('refuses inactive users', function (array $configOverrides, Closure $prepareU
 })->with([
     'linked' => [[], fn () => linkIdentity(localUser(attributes: ['is_active' => false]))],
     'auto-linked' => [['auto_link' => true], fn () => localUser('sso.user@example.com', ['is_active' => false])],
+    'provisioned inactive by the app' => [['jit' => true], fn () => app()->bind(UserProvisioningContract::class, fn () => new class implements UserProvisioningContract
+    {
+        public function provision(AuthenticatedIdentityData $identity, string $email): User
+        {
+            return localUser($email, ['is_active' => false]);
+        }
+    })],
 ]);
 
 it('sends protocol failures back to the login page with a generic message', function (): void {
