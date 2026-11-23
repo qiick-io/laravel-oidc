@@ -113,6 +113,7 @@ it('refuses invalid logout tokens with 400', function (array $overrides): void {
     'no jti' => [['jti' => null]],
     'other audience' => [['aud' => 'other-app']],
     'audience as an object' => [['aud' => ['client' => 'laravel-app']]],
+    'audience as an object with a numeric key' => [['aud' => (object) ['0' => 'laravel-app']]],
     'other issuer' => [['iss' => 'https://evil.example.com']],
     'expired' => [['iat' => 1, 'exp' => 2]],
 ]);

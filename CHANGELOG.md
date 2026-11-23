@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A token with a `crit` header is refused, since the package understands no JWS extension (RFC 7515 §4.1.11).
 - A JWKS that publishes the token's `kid` twice for the same key type is refused instead of using the first key.
 - A JWKS key with `key_ops` is used only when it lists `verify` (RFC 7517 §4.3).
+- `aud` shaped as a JSON object is refused in `id_token` and `logout_token` (OIDC Core §2: a string or an array of strings), including an object with numeric keys such as `{"0": "client"}`, which decodes to a PHP list: the JSON type is checked before decoding to arrays.
+- The loser of two concurrent first logins of the same (issuer, `sub`) signs in as the user the winner linked, instead of being refused with a wrong reason (`linked_to_another_identity` or `account_not_linked`). An inactive user is still refused.
+- `oidc:import-legacy-subjects` inserts with `insertOrIgnore`, so a login that links the user or the `sub` during the import is reported as already linked or as a conflict instead of failing the command.
 
 ### Added
 

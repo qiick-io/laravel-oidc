@@ -55,6 +55,29 @@ final readonly class UserLinkingService
      */
     public function resolve(AuthenticatedIdentityData $identity): UserIdentity
     {
+        $linkedIdentity = $this->linkedIdentity($identity);
+
+        if ($linkedIdentity !== null) {
+            return $linkedIdentity;
+        }
+
+        try {
+            return $this->linkOrProvision($identity);
+        } catch (LoginRefusedException|UniqueConstraintViolationException $exception) {
+            // A concurrent first login of the same (issuer, sub) may have
+            // linked it after the lookup above: this login is then that
+            // identity and signs in as its user, like any later login.
+            return $this->linkedIdentity($identity) ?? throw $exception;
+        }
+    }
+
+    /**
+     * The identity already linked to (issuer, sub), checked for an active user.
+     *
+     * @throws LoginRefusedException
+     */
+    private function linkedIdentity(AuthenticatedIdentityData $identity): ?UserIdentity
+    {
         $linkedIdentity = UserIdentity::query()
             ->where('issuer', $identity->issuer)
             ->where('subject', $identity->subject)
@@ -62,10 +85,19 @@ final readonly class UserLinkingService
 
         if ($linkedIdentity !== null) {
             $this->assertActive($linkedIdentity->user ?? throw new LoginRefusedException(LoginRefusalReasonEnum::NoLinkedUser));
-
-            return $linkedIdentity;
         }
 
+        return $linkedIdentity;
+    }
+
+    /**
+     * Steps 2 to 4 of the class docblock, for an (issuer, sub) not linked yet.
+     *
+     * @throws LoginRefusedException
+     * @throws UniqueConstraintViolationException when a concurrent login inserted a conflicting row
+     */
+    private function linkOrProvision(AuthenticatedIdentityData $identity): UserIdentity
+    {
         if (! $this->isAutoLinkEnabled && ! $this->isJitEnabled) {
             throw new LoginRefusedException(LoginRefusalReasonEnum::NoLinkedUser);
         }

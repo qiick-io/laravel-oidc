@@ -170,6 +170,13 @@ final readonly class JwtValidatorService
             }
         }
 
+        // OIDC Core §2: `aud` is a string or a JSON array. Checked on the
+        // decoded JSON types, because an object such as {"0": "client"}
+        // becomes a PHP list once decoded to arrays.
+        if (isset($payload->aud) && ! is_string($payload->aud) && ! is_array($payload->aud)) {
+            throw new InvalidTokenException('Token [aud] is missing or not a list of strings.');
+        }
+
         $claims = json_decode(json_encode($payload, JSON_THROW_ON_ERROR), true);
 
         if (! is_array($claims)) {
