@@ -158,15 +158,18 @@ it('refuses a PS256 signature whose salt is not as long as the hash', function (
     'salt one byte short' => [31],
 ]);
 
-it('accepts a PS256 signature with a 32-byte salt and leaves phpseclib as it found it', function (): void {
+it('accepts a PS256 signature with a 32-byte salt and leaves phpseclib as it found it', function (bool $isSaltLengthDiscoveryOn): void {
     $privateKey = rsaKey(2048);
     $identityProvider = serveJwks([rsaJwk($privateKey, 'pss-key')], 'PS256');
-    $autoSaltLength = new ReflectionProperty(RSA::class, 'autoSaltLength');
-    $previousAutoSaltLength = $autoSaltLength->getValue();
+    $isSaltLengthDiscoveryOn ? RSA::enableSaltLengthDiscovery() : RSA::disableSaltLengthDiscovery();
 
-    expect(validateWithServedJwks(ps256SignedWithSalt($identityProvider, $privateKey, 'pss-key', 32))['sub'])->toBe('fake-subject-1')
-        ->and($autoSaltLength->getValue())->toBe($previousAutoSaltLength);
-});
+    try {
+        expect(validateWithServedJwks(ps256SignedWithSalt($identityProvider, $privateKey, 'pss-key', 32))['sub'])->toBe('fake-subject-1')
+            ->and((new ReflectionProperty(RSA::class, 'autoSaltLength'))->getValue())->toBe($isSaltLengthDiscoveryOn);
+    } finally {
+        RSA::enableSaltLengthDiscovery();
+    }
+})->with(['discovery on (phpseclib default)' => true, 'discovery off' => false]);
 
 it('refuses an EC key whose curve does not belong to the token algorithm', function (string $algorithm, string $keyCurve): void {
     $privateKey = ecKey($keyCurve);
@@ -213,6 +216,13 @@ it('ignores keys of another type when counting kid duplicates', function (): voi
 
     expect(validateWithServedJwks(signedWith($identityProvider, $privateKey, 'RS256', 'shared'))['sub'])->toBe('fake-subject-1');
 });
+
+it('refuses an encryption key that carries the token kid', function (): void {
+    $privateKey = rsaKey(2048);
+    $identityProvider = serveJwks([rsaJwk($privateKey, 'enc-key', ['use' => 'enc'])], 'RS256');
+
+    validateWithServedJwks(signedWith($identityProvider, $privateKey, 'RS256', 'enc-key'));
+})->throws(InvalidTokenException::class, 'No signing key in the JWKS matches');
 
 it('honours key_ops when the JWKS sets it', function (mixed $keyOperations, bool $isAccepted): void {
     $privateKey = rsaKey(2048);

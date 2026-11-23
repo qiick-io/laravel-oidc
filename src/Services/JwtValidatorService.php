@@ -170,7 +170,7 @@ final readonly class JwtValidatorService
             }
         }
 
-        $claims = json_decode((string) json_encode($payload), true);
+        $claims = json_decode(json_encode($payload, JSON_THROW_ON_ERROR), true);
 
         if (! is_array($claims)) {
             throw new InvalidTokenException('Token payload is not a JSON object.');
@@ -227,7 +227,9 @@ final readonly class JwtValidatorService
     {
         $now = Date::now()->getTimestamp();
 
-        if (! is_int($claims['exp'] ?? null) && ! is_float($claims['exp'] ?? null)) {
+        $expiresAt = $claims['exp'] ?? null;
+
+        if (! is_int($expiresAt) && ! is_float($expiresAt)) {
             throw new InvalidTokenException('Token has no numeric [exp].');
         }
 

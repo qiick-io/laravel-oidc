@@ -379,3 +379,23 @@ it('accepts an iat exactly at the leeway edge and refuses one second past it', f
         ->and(fn () => validateIdToken(signedIdToken($this->identityProvider, ['iat' => $now + 61, 'exp' => $now + 600])))
         ->toThrow(InvalidTokenException::class, 'not valid yet');
 });
+
+it('refuses an aud list with a non-string member, even beside the client id', function (): void {
+    validateIdToken(signedIdToken($this->identityProvider, ['aud' => ['laravel-app', 42]]));
+})->throws(InvalidTokenException::class, 'not a list of strings');
+
+it('reads a JOSE header up to the JSON depth limit of 16 and refuses a deeper one', function (int $nestedLevels, string $message): void {
+    // json_decode() counts the header object and the innermost scalar too:
+    // $nestedLevels - 1 arrays make a document of depth $nestedLevels + 1.
+    $nestedValue = 'leaf';
+
+    for ($level = 1; $level < $nestedLevels; $level++) {
+        $nestedValue = [$nestedValue];
+    }
+
+    expect(fn () => validateIdToken(unsignedToken(['typ' => 'JWT', 'x-nested' => $nestedValue], ['sub' => 'fake-subject-1'], 'c2ln')))
+        ->toThrow(InvalidTokenException::class, $message);
+})->with([
+    'depth 16: read, then refused for its missing alg' => [15, 'algorithm is not allowed'],
+    'depth 17: not valid JSON' => [16, 'not valid JSON'],
+]);

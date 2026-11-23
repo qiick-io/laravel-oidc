@@ -7,6 +7,7 @@ namespace Qiick\Oidc\Services;
 use Firebase\JWT\JWK;
 use Firebase\JWT\Key;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Support\Facades\Date;
 use OpenSSLAsymmetricKey;
 use Qiick\Oidc\Data\DiscoveryDocumentData;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
@@ -37,7 +38,7 @@ final readonly class JwksService
      */
     public function key(DiscoveryDocumentData $discovery, ?string $keyId, string $algorithm): Key
     {
-        $cacheKey = 'oidc:jwks:'.hash('sha256', $discovery->jwksUri);
+        $cacheKey = sprintf('oidc:jwks:%s', hash('sha256', $discovery->jwksUri));
         $cachedKeys = $this->cache->get($cacheKey);
         $publishedKeys = is_array($cachedKeys) ? $cachedKeys : $this->fetchAndCache($discovery, $cacheKey);
         $matchingKey = $this->findKey($publishedKeys, $keyId, $algorithm);
@@ -83,7 +84,7 @@ final readonly class JwksService
     }
 
     /**
-     * @return list<array<string, mixed>>
+     * @return array<array-key, mixed>
      *
      * @throws IdentityProviderRequestException
      */
@@ -96,12 +97,10 @@ final readonly class JwksService
             throw new IdentityProviderRequestException('The JWKS has no [keys] array.');
         }
 
-        /** @var list<array<string, mixed>> $validKeys */
-        $validKeys = array_values(array_filter($publishedKeys, is_array(...)));
+        // Cached as published: findKey() skips any entry that is not a key object.
+        $this->cache->put($cacheKey, $publishedKeys, $this->cacheSeconds);
 
-        $this->cache->put($cacheKey, $validKeys, $this->cacheSeconds);
-
-        return $validKeys;
+        return $publishedKeys;
     }
 
     /**
@@ -176,6 +175,6 @@ final readonly class JwksService
      */
     private function mayRefetch(string $cacheKey): bool
     {
-        return $this->cache->add("{$cacheKey}:refetch", true, $this->refetchCooldownSeconds);
+        return $this->cache->add("{$cacheKey}:refetch", Date::now()->getTimestamp(), $this->refetchCooldownSeconds);
     }
 }
