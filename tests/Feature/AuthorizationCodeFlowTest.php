@@ -211,3 +211,44 @@ it('refuses a token response without an id_token', function (): void {
 
     completeLogin($identityProvider);
 })->throws(IdentityProviderRequestException::class, 'no id_token');
+
+it('reports a malformed IdP error code as unknown', function (): void {
+    FakeIdentityProvider::fake();
+    $session = browserSession();
+    $state = queryParameters(startLogin($session))['state'];
+
+    expect(fn () => callback("http://localhost/auth/oidc/callback?state={$state}&error[]=access_denied", $session))
+        ->toThrow(InvalidCallbackException::class, 'The IdP refused the login (unknown).');
+});
+
+it('refuses a callback with an empty code', function (): void {
+    FakeIdentityProvider::fake();
+    $session = browserSession();
+    $state = queryParameters(startLogin($session))['state'];
+
+    callback("http://localhost/auth/oidc/callback?state={$state}&code=", $session);
+})->throws(InvalidCallbackException::class, 'no code');
+
+it('reads an empty sid as no IdP session', function (): void {
+    expect(completeLogin(FakeIdentityProvider::fake(), ['sid' => ''])->sessionId)->toBeNull();
+});
+
+it('refuses a pending login exactly when it expires', function (): void {
+    $identityProvider = FakeIdentityProvider::fake();
+    Date::setTestNow(Date::now()->startOfSecond());
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+
+    Date::setTestNow(Date::now()->addSeconds(600));
+
+    callback($callbackUrl, $session);
+})->throws(InvalidCallbackException::class, 'too long');
+
+it('keeps only the five newest pending logins', function (): void {
+    $identityProvider = FakeIdentityProvider::fake();
+    $session = browserSession();
+    $callbackUrls = array_map(fn (): string => $identityProvider->authorize(startLogin($session)), range(1, 6));
+
+    expect(fn () => callback($callbackUrls[0], $session))->toThrow(InvalidCallbackException::class, 'missing or unknown state')
+        ->and(callback($callbackUrls[1], $session)->subject)->toBe('fake-subject-1');
+});

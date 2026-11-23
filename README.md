@@ -151,7 +151,12 @@ The default `SecondFactorChallengeContract` reads `oidc.mfa.required` and starts
 $this->app->bind(SecondFactorChallengeContract::class, SsoSecondFactorChallengeService::class);
 ```
 
-`oidc.mfa.request_acr_values` asks the IdP for a stronger login (`acr_values` on the authorization request).
+`oidc.mfa.request_acr_values` asks the IdP for a stronger login (`acr_values` on the authorization request). An app can also ask per login, through `AuthorizationCodeFlowService::redirect($request, ['acr_values' => '...'])` or the `claims` parameter (`{"id_token":{"acr":{"essential":true,"values":[...]}}}`). Each pending login remembers what it asked for, and the callback checks the answer:
+
+- `acr` is optional and `acr_values` only a request (OIDC Core 2 and 3.1.2.1), so by default a missing `acr`, or one that is not among the requested values, does not refuse the login: it counts as "MFA not proven", whatever `amr` says, and the app's own second factor runs.
+- With `oidc.mfa.require_requested_acr = true`, such a login is refused instead, for apps without their own second factor. A `claims` request with `essential` and no `values` accepts any `acr` but requires one.
+
+`oidc.mfa.max_age` (seconds, null by default) is sent as `max_age` to ask for a recent login; a `max_age` passed to `redirect()` wins over it. When it is sent, the `id_token` must carry `auth_time`, and a login with `now - auth_time > max_age + oidc.id_token.leeway` is refused (OIDC Core 3.1.2.1 and 3.1.3.7 step 13). Without `max_age`, `auth_time` is optional. An app with its own settings repository passes `maxAge` to `ProviderConfigurationData`.
 
 ### SSO-only mode and break-glass
 
@@ -245,6 +250,7 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.break_glass.roles` / `require_two_factor` / `query_parameter` | `['super-admin']` / `true` / `local` | SSO-only mode, see above. |
 | `oidc.roles.*` | disabled | Role mapping, see above. |
 | `oidc.mfa.required` / `amr_values` / `acr_values` / `request_acr_values` | `false` / `['mfa']` / `['urn:qiick:loa:mfa']` / `null` | Second factor, see above. |
+| `oidc.mfa.max_age` / `require_requested_acr` | `null` / `false` | Recent login and strict `acr`, see "Second factor (MFA)". |
 | `oidc.post_logout_redirect_uri` | `null` | `null` means the package return route `{APP_URL}/auth/oidc/logged-out`, which checks the logout `state`. Sent on RP-initiated logout. |
 | `oidc.logout.redirect_to` | `/` | Where the post-logout return route sends the browser. |
 | `oidc.userinfo` | `true` | Merge the userinfo claims into the identity. |

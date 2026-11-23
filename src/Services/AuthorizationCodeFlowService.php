@@ -32,6 +32,13 @@ use Qiick\Oidc\Exceptions\OidcNotConfiguredException;
  *
  * The package does not log the user in: the app maps the identity to a local
  * user, regenerates the session and calls Auth::login().
+ *
+ * A pending login also remembers the `max_age` and the `acr` values it asked
+ * for, so the callback checks the answer against this login's own request
+ * (standards review S2). Pending logins stored before S2 lack both keys and
+ * read as "nothing asked".
+ *
+ * @phpstan-type PendingLogin array{issuer: string, redirect_uri: string, nonce: string, code_verifier: string, expires_at: int, max_age?: int|null, requested_acr_values?: list<string>|null}
  */
 final readonly class AuthorizationCodeFlowService
 {
@@ -41,20 +48,6 @@ final readonly class AuthorizationCodeFlowService
 
     public const int MAXIMUM_PENDING_LOGINS = 5;
 
-    /**
-     * Authorization request parameters the package always sets itself.
-     */
-    private const array RESERVED_PARAMETERS = [
-        'response_type', 'client_id', 'redirect_uri', 'scope', 'state', 'nonce', 'code_challenge', 'code_challenge_method',
-    ];
-
-    /**
-     * Claims that only count when they come from the signed id_token. The
-     * userinfo response is not signed, so these are dropped from it (an `amr`
-     * there could otherwise fake MFA).
-     */
-    private const array ID_TOKEN_ONLY_CLAIMS = ['iss', 'aud', 'azp', 'exp', 'iat', 'nbf', 'nonce', 'sid', 'auth_time', 'amr', 'acr'];
-
     public function __construct(
         private ProviderConfigurationRepositoryContract $configurationRepository,
         private DiscoveryService $discovery,
@@ -62,6 +55,8 @@ final readonly class AuthorizationCodeFlowService
         private IdTokenValidatorService $idTokenValidator,
         private UserinfoService $userinfo,
         private bool $shouldFetchUserinfo,
+        private int $leewaySeconds,
+        private bool $isRequestedAcrRequired,
     ) {}
 
     /**
@@ -69,7 +64,9 @@ final readonly class AuthorizationCodeFlowService
      * session and redirects the browser to the authorization endpoint.
      *
      * @param  array<string, string>  $additionalParameters  optional request parameters such as `prompt`,
-     *                                                       `login_hint` or `acr_values`; reserved ones are ignored
+     *                                                       `login_hint`, `max_age`, `acr_values` or `claims`.
+     *                                                       The parameters the package sets itself always win;
+     *                                                       a `max_age` here wins over the configured one.
      *
      * @throws OidcNotConfiguredException
      * @throws IdentityProviderRequestException when discovery fails
@@ -82,6 +79,8 @@ final readonly class AuthorizationCodeFlowService
         $state = $this->randomToken(32);
         $nonce = $this->randomToken(32);
         $codeVerifier = $this->randomToken(64);
+        $requestedMaxAge = filter_var($additionalParameters['max_age'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0], 'flags' => FILTER_NULL_ON_FAILURE]);
+        $maxAge = $requestedMaxAge ?? $configuration->maxAge;
 
         $this->storePendingLogin($request->session(), $state, [
             'issuer' => $configuration->issuer,
@@ -89,10 +88,15 @@ final readonly class AuthorizationCodeFlowService
             'nonce' => $nonce,
             'code_verifier' => $codeVerifier,
             'expires_at' => Date::now()->getTimestamp() + self::PENDING_LOGIN_SECONDS,
+            'max_age' => $maxAge,
+            'requested_acr_values' => $this->requestedAcrValues($additionalParameters),
         ]);
 
+        // Later keys win: the package's own parameters override any
+        // additional parameter of the same name.
         $parameters = [
-            ...array_diff_key($additionalParameters, array_flip(self::RESERVED_PARAMETERS)),
+            ...$additionalParameters,
+            ...($maxAge === null ? [] : ['max_age' => $maxAge]),
             'response_type' => 'code',
             'client_id' => $configuration->clientId,
             'redirect_uri' => $configuration->redirectUri,
@@ -106,7 +110,7 @@ final readonly class AuthorizationCodeFlowService
         $separator = str_contains($discovery->authorizationEndpoint, '?') ? '&' : '?';
 
         return new RedirectResponse(
-            $discovery->authorizationEndpoint.$separator.http_build_query($parameters, '', '&', PHP_QUERY_RFC3986)
+            $discovery->authorizationEndpoint.$separator.http_build_query($parameters, arg_separator: '&', encoding_type: PHP_QUERY_RFC3986)
         );
     }
 
@@ -164,11 +168,13 @@ final readonly class AuthorizationCodeFlowService
         }
 
         $claims = $this->idTokenValidator->validate($idToken, $discovery, $configuration, $pendingLogin['nonce'], $accessToken);
+        $this->assertAuthenticationIsRecent($claims, $pendingLogin['max_age'] ?? null);
+        $isRequestedAuthenticationContextMet = $this->isRequestedAuthenticationContextMet($claims, $pendingLogin['requested_acr_values'] ?? null);
         $subject = $claims['sub'];
         $sessionId = $claims['sid'] ?? null;
 
         if ($this->shouldFetchUserinfo) {
-            $userinfoClaims = array_diff_key($this->userinfo->fetch($discovery, $accessToken, $subject), array_flip(self::ID_TOKEN_ONLY_CLAIMS));
+            $userinfoClaims = array_diff_key($this->userinfo->fetch($discovery, $accessToken, $subject), array_flip($this->idTokenOnlyClaims()));
             $claims = [...$userinfoClaims, ...$claims];
         }
 
@@ -179,29 +185,124 @@ final readonly class AuthorizationCodeFlowService
             idToken: $idToken,
             accessToken: $accessToken,
             sessionId: is_string($sessionId) && $sessionId !== '' ? $sessionId : null,
+            isRequestedAuthenticationContextMet: $isRequestedAuthenticationContextMet,
         );
     }
 
     /**
-     * @param  array{issuer: string, redirect_uri: string, nonce: string, code_verifier: string, expires_at: int}  $pendingLogin
+     * Claims that only count when they come from the signed id_token. The
+     * userinfo response is not signed, so these are dropped from it (an `amr`
+     * there could otherwise fake MFA). `iss`, `aud`, `exp`, `iat` and `nonce`
+     * are not listed: the validated id_token always has them, and its claims
+     * win every conflict.
+     *
+     * @return list<string>
+     */
+    private function idTokenOnlyClaims(): array
+    {
+        return ['azp', 'nbf', 'sid', 'auth_time', 'amr', 'acr'];
+    }
+
+    /**
+     * The `acr` values this login asks for: `acr_values` (OIDC Core 3.1.2.1,
+     * space-separated) or the `acr` member of the id_token part of the
+     * `claims` parameter (5.5.1.1: `value` or `values`; `essential` alone
+     * asks for any `acr`, which an empty list stands for). Null when the
+     * login asks for none.
+     *
+     * @param  array<string, string>  $additionalParameters
+     * @return list<string>|null
+     */
+    private function requestedAcrValues(array $additionalParameters): ?array
+    {
+        $requestedAcrValues = preg_split('/ +/', $additionalParameters['acr_values'] ?? '', flags: PREG_SPLIT_NO_EMPTY) ?: [];
+        $claimsRequest = isset($additionalParameters['claims']) ? json_decode($additionalParameters['claims'], true) : null;
+        $idTokenClaimsRequest = is_array($claimsRequest) ? ($claimsRequest['id_token'] ?? null) : null;
+        $acrRequest = is_array($idTokenClaimsRequest) ? ($idTokenClaimsRequest['acr'] ?? null) : null;
+
+        if (is_array($acrRequest)) {
+            $requestedValues = is_string($acrRequest['value'] ?? null) ? [$acrRequest['value']] : ($acrRequest['values'] ?? []);
+
+            return [...$requestedAcrValues, ...array_values(array_filter(is_array($requestedValues) ? $requestedValues : [], is_string(...)))];
+        }
+
+        return $requestedAcrValues === [] ? null : $requestedAcrValues;
+    }
+
+    /**
+     * OIDC Core 3.1.3.7 step 13: when `max_age` was sent, `auth_time` is
+     * required (3.1.2.1) and must not be older than max_age, with the
+     * configured clock leeway.
+     *
+     * @param  array<string, mixed>  $claims
+     *
+     * @throws InvalidTokenException
+     */
+    private function assertAuthenticationIsRecent(array $claims, ?int $maxAge): void
+    {
+        if ($maxAge === null) {
+            return;
+        }
+
+        $authenticationTime = $claims['auth_time'] ?? null;
+
+        if (! is_int($authenticationTime)) {
+            throw new InvalidTokenException('id_token has no numeric [auth_time], which max_age requires.');
+        }
+
+        if (Date::now()->getTimestamp() - $authenticationTime > $maxAge + $this->leewaySeconds) {
+            throw new InvalidTokenException('id_token [auth_time] is older than max_age allows.');
+        }
+    }
+
+    /**
+     * Whether the id_token answers the `acr` this login asked for. `acr` is
+     * optional and `acr_values` voluntary (OIDC Core 2, 3.1.2.1), so a miss
+     * only means "MFA not proven", unless oidc.mfa.require_requested_acr
+     * makes it a refusal.
+     *
+     * @param  array<string, mixed>  $claims
+     * @param  list<string>|null  $requestedAcrValues  empty: any `acr` will do
+     *
+     * @throws InvalidTokenException when the requested acr is required and missing
+     */
+    private function isRequestedAuthenticationContextMet(array $claims, ?array $requestedAcrValues): bool
+    {
+        if ($requestedAcrValues === null) {
+            return true;
+        }
+
+        $authenticationContext = $claims['acr'] ?? null;
+        $isMet = is_string($authenticationContext)
+            && ($requestedAcrValues === [] || in_array($authenticationContext, $requestedAcrValues, true));
+
+        if (! $isMet && $this->isRequestedAcrRequired) {
+            throw new InvalidTokenException('id_token [acr] is not one of the requested values.');
+        }
+
+        return $isMet;
+    }
+
+    /**
+     * @param  PendingLogin  $pendingLogin
      */
     private function storePendingLogin(Session $session, string $state, array $pendingLogin): void
     {
-        $now = Date::now()->getTimestamp();
-        $pendingLogins = array_filter(
-            $this->pendingLogins($session),
-            fn (array $storedLogin): bool => $storedLogin['expires_at'] > $now,
-        );
+        // The newest MAXIMUM_PENDING_LOGINS are kept, oldest first, so an
+        // expired login always leaves before a live one; pullPendingLogin()
+        // refuses an expired one anyway. `state` keys are random base64url
+        // strings, which array_slice() never renumbers.
+        $pendingLogins = $this->pendingLogins($session);
         $pendingLogins[$state] = $pendingLogin;
 
-        $session->put(self::SESSION_KEY, array_slice($pendingLogins, -self::MAXIMUM_PENDING_LOGINS, null, true));
+        $session->put(self::SESSION_KEY, array_slice($pendingLogins, -self::MAXIMUM_PENDING_LOGINS));
     }
 
     /**
      * Removes the pending login before any other check, so a `state` can never
      * be used twice, not even after a failed callback.
      *
-     * @return array{issuer: string, redirect_uri: string, nonce: string, code_verifier: string, expires_at: int}
+     * @return PendingLogin
      *
      * @throws InvalidCallbackException
      */
@@ -209,7 +310,7 @@ final readonly class AuthorizationCodeFlowService
     {
         $pendingLogins = $this->pendingLogins($session);
 
-        if (! is_string($state) || $state === '' || ! array_key_exists($state, $pendingLogins)) {
+        if (! is_string($state) || ! array_key_exists($state, $pendingLogins)) {
             throw new InvalidCallbackException('The authorization response has a missing or unknown state.');
         }
 
@@ -225,13 +326,13 @@ final readonly class AuthorizationCodeFlowService
     }
 
     /**
-     * @return array<string, array{issuer: string, redirect_uri: string, nonce: string, code_verifier: string, expires_at: int}>
+     * @return array<string, PendingLogin>
      */
     private function pendingLogins(Session $session): array
     {
         $pendingLogins = $session->get(self::SESSION_KEY, []);
 
-        /** @var array<string, array{issuer: string, redirect_uri: string, nonce: string, code_verifier: string, expires_at: int}> */
+        /** @var array<string, PendingLogin> */
         return is_array($pendingLogins) ? $pendingLogins : [];
     }
 

@@ -14,6 +14,7 @@ final readonly class ProviderConfigurationData
 {
     /**
      * @param  list<string>  $scopes  always contains `openid`
+     * @param  int|null  $maxAge  seconds sent as `max_age` (OIDC Core 3.1.2.1); null sends none
      */
     public function __construct(
         public string $issuer,
@@ -24,6 +25,7 @@ final readonly class ProviderConfigurationData
         public array $scopes,
         public TokenEndpointAuthMethodEnum $tokenEndpointAuthMethod = TokenEndpointAuthMethodEnum::ClientSecretBasic,
         public ?string $postLogoutRedirectUri = null,
+        public ?int $maxAge = null,
     ) {}
 
     public function isPublicClient(): bool
