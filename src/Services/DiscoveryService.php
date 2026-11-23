@@ -122,7 +122,13 @@ final readonly class DiscoveryService
             userinfoEndpoint: $userinfoEndpoint === null ? null : $this->toServerUrl($userinfoEndpoint),
             endSessionEndpoint: $endSessionEndpoint,
             idTokenSigningAlgorithms: $this->stringList($metadata, 'id_token_signing_alg_values_supported') ?? ['RS256'],
-            isAuthorizationResponseIssuerSupported: ($metadata['authorization_response_iss_parameter_supported'] ?? false) === true,
+            isAuthorizationResponseIssuerSupported: $this->flag($metadata, 'authorization_response_iss_parameter_supported'),
+            isFrontChannelLogoutSupported: $this->flag($metadata, 'frontchannel_logout_supported'),
+            isFrontChannelLogoutSessionSupported: $this->flag($metadata, 'frontchannel_logout_session_supported'),
+            isBackChannelLogoutSupported: $this->flag($metadata, 'backchannel_logout_supported'),
+            isBackChannelLogoutSessionSupported: $this->flag($metadata, 'backchannel_logout_session_supported'),
+            acrValuesSupported: $this->stringList($metadata, 'acr_values_supported'),
+            isClaimsParameterSupported: $this->flag($metadata, 'claims_parameter_supported'),
         );
     }
 
@@ -188,6 +194,18 @@ final readonly class DiscoveryService
         $value = $metadata[$key] ?? null;
 
         return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /**
+     * A boolean metadata flag: only a JSON `true` counts, and an absent or
+     * malformed value is the spec default `false` (DISC §3, FCL §3, BCL §2.1,
+     * RFC 9207 §3).
+     *
+     * @param  array<string, mixed>  $metadata
+     */
+    private function flag(array $metadata, string $key): bool
+    {
+        return ($metadata[$key] ?? false) === true;
     }
 
     /**

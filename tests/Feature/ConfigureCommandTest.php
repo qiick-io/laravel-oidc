@@ -59,6 +59,7 @@ it('passes for a working IdP and lists the URIs to register', function (): void 
             'end session' => 'ok',
             'algorithms' => 'ok',
             'signing keys' => 'ok',
+            'back-channel logout' => 'ok',
             'client' => 'ok',
             'redirect uri' => 'ok',
             'timezone' => 'ok',
@@ -215,6 +216,7 @@ it('reports the detail of every check for a working IdP', function (): void {
         ['check' => 'end session', 'status' => 'ok', 'detail' => 'RP-initiated logout is available.'],
         ['check' => 'algorithms', 'status' => 'ok', 'detail' => 'id_token signed with RS256.'],
         ['check' => 'signing keys', 'status' => 'ok', 'detail' => '1 signing key(s) in the JWKS.'],
+        ['check' => 'back-channel logout', 'status' => 'ok', 'detail' => 'The IdP sends back-channel logout tokens with sid.'],
         ['check' => 'client', 'status' => 'ok', 'detail' => 'Confidential client (client_secret_basic).'],
         ['check' => 'redirect uri', 'status' => 'ok', 'detail' => 'http://localhost/auth/oidc/callback'],
         ['check' => 'timezone', 'status' => 'ok', 'detail' => 'app.timezone is UTC.'],
@@ -367,6 +369,7 @@ it('prints every check and the URIs to register in the table', function (): void
             ['end session', 'OK', 'RP-initiated logout is available.'],
             ['algorithms', 'OK', 'id_token signed with RS256.'],
             ['signing keys', 'OK', '1 signing key(s) in the JWKS.'],
+            ['back-channel logout', 'OK', 'The IdP sends back-channel logout tokens with sid.'],
             ['client', 'WARNING', 'No client secret: the IdP client must be public (PKCE only).'],
             ['redirect uri', 'OK', 'http://localhost/auth/oidc/callback'],
             ['timezone', 'OK', 'app.timezone is UTC.'],
@@ -428,3 +431,92 @@ it('fails when front-channel logout is on but its route is missing', function ()
         ])
         ->and($report['register_at_identity_provider'])->not->toHaveKey('frontchannel_logout_uri');
 });
+
+it('reports the capabilities the IdP advertises', function (): void {
+    FakeIdentityProvider::fake()->withDiscovery([
+        'frontchannel_logout_supported' => true,
+        'frontchannel_logout_session_supported' => 'true',
+        'acr_values_supported' => ['urn:qiick:loa:pwd', 42, 'urn:qiick:loa:mfa'],
+        'claims_parameter_supported' => true,
+    ]);
+
+    [, $report] = configureOidc();
+
+    expect($report['identity_provider_capabilities'])->toBe([
+        'frontchannel_logout_supported' => true,
+        'frontchannel_logout_session_supported' => false,
+        'backchannel_logout_supported' => true,
+        'backchannel_logout_session_supported' => true,
+        'acr_values_supported' => ['urn:qiick:loa:pwd', 'urn:qiick:loa:mfa'],
+        'claims_parameter_supported' => true,
+    ]);
+});
+
+it('reports no capabilities when discovery fails', function (): void {
+    FakeIdentityProvider::fake()->withDiscovery(['issuer' => 'https://evil.example.com']);
+
+    [, $report] = configureOidc();
+
+    expect($report['identity_provider_capabilities'])->toBeNull();
+});
+
+it('only warns about back-channel logout the IdP does not fully support', function (array $discoveryOverrides, string $detail): void {
+    FakeIdentityProvider::fake()->withDiscovery($discoveryOverrides);
+
+    [$exitCode, $report] = configureOidc();
+
+    expect($exitCode)->toBe(0)
+        ->and(collect($report['checks'])->firstWhere('check', 'back-channel logout'))
+        ->toBe(['check' => 'back-channel logout', 'status' => 'warning', 'detail' => $detail]);
+})->with([
+    'not advertised' => [
+        ['backchannel_logout_supported' => null, 'backchannel_logout_session_supported' => null],
+        'The IdP does not advertise backchannel_logout_supported: a logout at the IdP may not end local sessions.',
+    ],
+    'without sid' => [
+        ['backchannel_logout_session_supported' => false],
+        'The IdP does not advertise backchannel_logout_session_supported: its logout tokens carry no sid, so each logout ends every session of the user.',
+    ],
+]);
+
+it('checks front-channel support only when front-channel logout is on', function (array $discoveryOverrides, string $status, string $detail): void {
+    FakeIdentityProvider::fake(configOverrides: ['frontchannel_logout.enabled' => true])->withDiscovery($discoveryOverrides);
+
+    [$exitCode, $report] = configureOidc();
+
+    expect($exitCode)->toBe(0)
+        ->and(collect($report['checks'])->firstWhere('check', 'front-channel support'))
+        ->toBe(['check' => 'front-channel support', 'status' => $status, 'detail' => $detail]);
+})->with([
+    'with session' => [
+        ['frontchannel_logout_supported' => true, 'frontchannel_logout_session_supported' => true],
+        'ok',
+        'The IdP supports front-channel logout with iss and sid.',
+    ],
+    'without session' => [
+        ['frontchannel_logout_supported' => true],
+        'warning',
+        'oidc.frontchannel_logout.enabled is on but the IdP does not advertise frontchannel_logout_supported and frontchannel_logout_session_supported.',
+    ],
+    'session only' => [
+        ['frontchannel_logout_session_supported' => true],
+        'warning',
+        'oidc.frontchannel_logout.enabled is on but the IdP does not advertise frontchannel_logout_supported and frontchannel_logout_session_supported.',
+    ],
+]);
+
+it('compares the requested acr values with the advertised ones', function (?string $requestedAcrValues, mixed $acrValuesSupported, ?array $expectedCheck): void {
+    FakeIdentityProvider::fake(configOverrides: ['mfa.request_acr_values' => $requestedAcrValues])
+        ->withDiscovery(['acr_values_supported' => $acrValuesSupported]);
+
+    [$exitCode, $report] = configureOidc();
+
+    expect($exitCode)->toBe(0)
+        ->and(collect($report['checks'])->firstWhere('check', 'acr values'))->toBe($expectedCheck);
+})->with([
+    'all advertised' => ['gold silver', ['bronze', 'silver', 'gold'], ['check' => 'acr values', 'status' => 'ok', 'detail' => 'The IdP advertises every requested acr value.']],
+    'some missing' => ['gold platinum silver', ['silver'], ['check' => 'acr values', 'status' => 'warning', 'detail' => 'oidc.mfa.request_acr_values asks for gold, platinum, which the IdP does not list in acr_values_supported.']],
+    'not advertised' => ['gold', null, null],
+    'nothing requested' => [null, ['silver'], null],
+    'empty request' => ['', ['silver'], null],
+]);

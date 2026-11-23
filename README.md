@@ -37,6 +37,7 @@ php artisan oidc:configure --issuer=https://idp.example.com/realms/acme --client
 
 `oidc:configure` checks the setup against the IdP without a browser:
 - settings, discovery (exact issuer, code flow, PKCE `S256`), end-session support;
+- the capabilities the IdP advertises: back-channel logout with `sid`, front-channel logout with `iss` and `sid` (when it is on), and the requested `acr` values against `acr_values_supported`. These are warnings only; `--json` lists them under `identity_provider_capabilities` (`frontchannel_logout_supported`, `frontchannel_logout_session_supported`, `backchannel_logout_supported`, `backchannel_logout_session_supported`, `acr_values_supported`, `claims_parameter_supported`) for a settings UI;
 - signing algorithms and JWKS keys, client type, redirect URI;
 - that `app.timezone` is `UTC` (a warning otherwise, see "Timestamps are UTC");
 - when front-channel logout is on, that its route is registered;
