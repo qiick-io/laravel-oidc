@@ -25,7 +25,8 @@ use Qiick\Oidc\Services\JwtValidatorService;
  *
  * It reads the current settings, overridden by the options, then checks the
  * discovery document, the JWKS, the signing algorithms, the redirect and
- * logout URIs and, in SSO-only mode, that a break-glass account exists. It
+ * logout URIs, that `app.timezone` is UTC and, in SSO-only mode, that a
+ * break-glass account exists. It
  * prints the URIs to register at the IdP. With `--write-env` it writes the
  * settings to `.env`, only when no check failed. `--json` prints a machine
  * readable report. The exit code is 0 without failures, 1 otherwise.
@@ -66,6 +67,7 @@ final class ConfigureOidcCommand extends Command
 
             $this->checkClient($configuration);
             $this->checkRedirectUri($configuration->redirectUri);
+            $this->checkTimezone();
             $this->checkBreakGlass($breakGlassPolicy);
         }
 
@@ -139,8 +141,8 @@ final class ConfigureOidcCommand extends Command
 
     private function checkSigningKeys(IdentityProviderHttpService $identityProviderHttp, DiscoveryDocumentData $discoveryDocument): void
     {
-        $allowedAlgorithms = array_values(array_intersect(JwtValidatorService::SUPPORTED_ALGORITHMS, $this->configuredStrings('oidc.id_token.algorithms')));
-        $commonAlgorithms = array_values(array_intersect($allowedAlgorithms, $discoveryDocument->idTokenSigningAlgorithms));
+        $allowedAlgorithms = array_intersect(JwtValidatorService::SUPPORTED_ALGORITHMS, $this->configuredStrings('oidc.id_token.algorithms'));
+        $commonAlgorithms = array_intersect($allowedAlgorithms, $discoveryDocument->idTokenSigningAlgorithms);
 
         if ($commonAlgorithms === []) {
             $this->record('algorithms', 'failure', 'The IdP signs id_tokens with '.implode(', ', $discoveryDocument->idTokenSigningAlgorithms)
@@ -184,7 +186,8 @@ final class ConfigureOidcCommand extends Command
     {
         $scheme = parse_url($redirectUri, PHP_URL_SCHEME);
         $host = parse_url($redirectUri, PHP_URL_HOST);
-        $isLocalHost = in_array($host, ['localhost', '127.0.0.1', '::1'], true) || (is_string($host) && str_ends_with($host, '.test'));
+        // parse_url() keeps the brackets around an IPv6 host.
+        $isLocalHost = in_array($host, ['localhost', '127.0.0.1', '[::1]'], true) || (is_string($host) && str_ends_with($host, '.test'));
 
         if (! is_string($host) || ! in_array($scheme, ['http', 'https'], true)) {
             $this->record('redirect uri', 'failure', "[{$redirectUri}] is not an absolute URL. Set APP_URL or oidc.redirect_uri.");
@@ -199,6 +202,25 @@ final class ConfigureOidcCommand extends Command
         }
 
         $this->record('redirect uri', 'ok', $redirectUri);
+    }
+
+    /**
+     * The package stores `last_login_at`, `last_auth_time_at` and the logout
+     * revocation times as plain `timestamp` columns, which carry no zone, and
+     * reads them back in `app.timezone` (standards review M7 and R5). Only
+     * UTC keeps them comparable across apps and with the IdP's epoch claims.
+     */
+    private function checkTimezone(): void
+    {
+        $timezone = Config::string('app.timezone');
+
+        if ($timezone === 'UTC') {
+            $this->record('timezone', 'ok', 'app.timezone is UTC.');
+
+            return;
+        }
+
+        $this->record('timezone', 'warning', "app.timezone is {$timezone}; the package expects UTC in its timestamp columns, so set it to UTC.");
     }
 
     /**
@@ -300,11 +322,11 @@ final class ConfigureOidcCommand extends Command
     private function report(bool $hasFailure, array $urisToRegister): void
     {
         if ($this->option('json')) {
-            $this->line((string) json_encode([
+            $this->line(json_encode([
                 'ok' => ! $hasFailure,
                 'checks' => $this->results,
                 'register_at_identity_provider' => $urisToRegister,
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
 
             return;
         }
