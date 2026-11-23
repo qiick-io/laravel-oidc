@@ -80,7 +80,7 @@ The package's tables store times without a time zone: `timestamp` columns for pa
 What the package implements, from the accepted Signaculum SSO design (2026-11-05):
 
 - **Flow:** authorization code with PKCE `S256` only, also for confidential clients. `state` and `nonce` on every login. No implicit flow, no password grant.
-- **`id_token`:** signed `RS256` by default; `RS384`, `RS512`, `ES256`, `ES384` and `PS256` can be enabled in `oidc.id_token.algorithms` (`PS256` also needs `phpseclib/phpseclib` in the app). Validated on every login: signature through the JWKS (cached, refetched on an unknown `kid`), `iss`, `aud` (a string or a list of strings), `exp`, `iat`, `nonce`, `azp` when present, and `at_hash` against the access token when present (OIDC Core 3.1.3.8).
+- **`id_token`:** signed `RS256` by default; `RS384`, `RS512`, `ES256`, `ES384` and `PS256` can be enabled in `oidc.id_token.algorithms`. Validated on every login: signature through the JWKS (cached, refetched on an unknown `kid`), `iss`, `aud` (a string or a list of strings), `exp`, `iat`, `nonce`, `azp` when present, and `at_hash` against the access token when present (OIDC Core 3.1.3.8).
 - **Session:** after the callback the app keeps its own Laravel session, regenerated. The session remembers the issuer, `sub`, `sid`, `acr`, `amr`, `auth_time` and the `id_token` (for logout) in a versioned payload; an unknown version ends the session. Access and refresh tokens are not stored.
 - **Logout:** RP-initiated logout (`end_session_endpoint`, `id_token_hint`, `post_logout_redirect_uri`), back-channel logout (signed `logout_token`, matched by `sid` / `sub`) and, behind `oidc.frontchannel_logout.enabled` (off by default), front-channel logout (`iss` + `sid` in an IdP iframe). Revocations are stored durably in `oidc_logout_revocations`.
 - **Claims:** `sub`, `email`, `email_verified`, `name`, `given_name`, `family_name`, `preferred_username`, `picture`, `locale`, `amr` / `acr`. Provider-specific claims, such as an `orgs` claim for roles, are read through config, never hard-coded.
@@ -278,7 +278,7 @@ $callbackUrl = $identityProvider->authorize($authorizationUrl, ['sub' => 'user-4
 $this->get($callbackUrl);
 ```
 
-It checks the PKCE verifier, the code, the redirect URI and the client secret like a strict IdP, and signs `id_token`s with a key generated per test. `authorize()` also takes userinfo claims, and `logoutTokenClaims()` + `sign()` build back-channel logout tokens. `withDiscovery()`, `rotateSigningKey()`, `sign()` and `modifyTokenResponseUsing()` cover the failure cases.
+It checks the PKCE verifier, the code, the redirect URI and the client secret like a strict IdP, and signs `id_token`s with a key generated per test. `authorize()` also takes userinfo claims, and `logoutTokenClaims()` + `sign()` build back-channel logout tokens. `withDiscovery()`, `rotateSigningKey()`, `sign()` and `modifyTokenResponseUsing()` cover the failure cases. `rotateSigningKey(keyType: 'EC', curve: 'P-384')` and `sign(..., algorithm: 'ES384')` cover EC keys; RSA keys sign every `RS*` algorithm and `PS256`.
 
 ## Migrating Externa and Excubia App
 

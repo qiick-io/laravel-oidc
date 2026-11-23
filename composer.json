@@ -32,6 +32,7 @@
         "illuminate/cache": "^12.0 || ^13.0",
         "illuminate/http": "^12.0 || ^13.0",
         "illuminate/support": "^12.0 || ^13.0",
+        "phpseclib/phpseclib": "^3.0.48",
         "qiick/laravel-outbound": "^0.1"
     },
     "require-dev": {
