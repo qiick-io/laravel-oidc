@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `oidc:configure` treats an `http://[::1]` redirect URI as local instead of warning about plain http on a public host.
 
+### Documentation
+
+- README brought up to beta.6: version, the `oidc_logout_revocations` table as the source of truth with the prune schedule, front-channel logout setup, `oidc.routes.except`, and the supported `id_token` algorithms.
+
 ## [1.0.0-beta.6] - 2026-11-22
 
 ### Upgrade notes
