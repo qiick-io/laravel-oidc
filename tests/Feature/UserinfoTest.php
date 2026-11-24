@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Firebase\JWT\JWT;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
 use Qiick\Oidc\Exceptions\InvalidTokenException;
 use Qiick\Oidc\Services\AuthorizationCodeFlowService;
@@ -46,4 +47,28 @@ it('skips userinfo when turned off or when the IdP has no endpoint', function (a
 })->with([
     'turned off' => [['userinfo' => false], []],
     'no endpoint' => [[], ['userinfo_endpoint' => null]],
+]);
+
+it('never takes a trust-sensitive claim from userinfo, even when the id_token lacks it', function (string $claim, mixed $userinfoValue): void {
+    $identityProvider = FakeIdentityProvider::fake();
+
+    // Re-sign the id_token without the claim at all (not even as null), so
+    // only the filter keeps the userinfo value out.
+    $identityProvider->modifyTokenResponseUsing(function (array $tokenResponse) use ($identityProvider, $claim): array {
+        $idTokenClaims = json_decode(JWT::urlsafeB64Decode(explode('.', $tokenResponse['id_token'])[1]), true);
+        unset($idTokenClaims[$claim]);
+
+        return [...$tokenResponse, 'id_token' => $identityProvider->sign($idTokenClaims)];
+    });
+
+    $identity = loginWithUserinfo($identityProvider, userinfoClaims: [$claim => $userinfoValue]);
+
+    expect($identity->claims)->not->toHaveKey($claim);
+})->with([
+    'amr' => ['amr', ['mfa']],
+    'acr' => ['acr', 'urn:qiick:loa:mfa'],
+    'auth_time' => ['auth_time', 1],
+    'sid' => ['sid', 'userinfo-session'],
+    'azp' => ['azp', 'laravel-app'],
+    'nbf' => ['nbf', 1],
 ]);

@@ -196,6 +196,22 @@ return [
          */
         'request_acr_values' => null,
 
+        /*
+         * Sent as `max_age` (seconds) to ask the IdP for a recent login. When
+         * it is sent, the id_token must carry `auth_time`, and a login older
+         * than max_age plus `id_token.leeway` is refused (OIDC Core 3.1.2.1,
+         * 3.1.3.7 step 13). Null sends nothing.
+         */
+        'max_age' => null,
+
+        /*
+         * When the login asked for an `acr` (acr_values or the claims
+         * parameter), refuse an id_token whose `acr` is missing or not one of
+         * the requested values. Off by default: such a login then only counts
+         * as "MFA not proven" and the app's own second factor runs.
+         */
+        'require_requested_acr' => false,
+
     ],
 
     /*

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
+- **A login that asked for an `acr` (`oidc.mfa.request_acr_values`, `acr_values` or the `claims` parameter) and got none of the requested values no longer counts as MFA, even with `amr=mfa`**: the app's second factor runs (or, with `oidc.mfa.require_requested_acr`, the login is refused).
+- `AuthorizationCodeFlowService` takes two more constructor arguments (`leewaySeconds`, `isRequestedAcrRequired`); the service provider passes them, an app that builds it by hand must too. `redirect()` throws `InvalidArgumentException` for a `max_age` that is not a whole number of seconds, 0 or more.
 - **Register `{APP_URL}/auth/oidc/logged-out` at the IdP as a post-logout redirect URI.** It is the new default `oidc.post_logout_redirect_uri`; `oidc:configure` prints it. See `UPGRADING.md`.
 - **Recreate beta databases (`php artisan migrate:fresh`).** `user_identities` now has a unique `(user_id, issuer)` key instead of a plain index. A database that already holds two identities of one issuer for the same user cannot take the new key; keep one of them before recreating.
 - `JwtValidatorService::SUPPORTED_ALGORITHMS` is replaced by `JwtValidatorService::supportedAlgorithms()`, with the same list.
@@ -42,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The fake IdP signs with P-384 keys (`rotateSigningKey(keyType: 'EC', curve: 'P-384')`) and publishes them for `ES384`; every supported algorithm now has an end-to-end verification test.
 - `OidcLogoutReceivedEvent` (channel, issuer, subject, SHA-256 of `sid`) is dispatched for every stored back-channel and front-channel logout, so products can log it (standards review S8). `SessionRevocationService` takes the event dispatcher as a third constructor argument; the service provider passes it.
 - `OidcLogoutReceivedEvent` (channel, issuer, subject, SHA-256 of `sid`) is dispatched for every stored back-channel and front-channel logout, so products can log it (standards review S8). `SessionRevocationService` takes the event dispatcher as a third constructor argument; the service provider passes it. The event is dispatched after the revocation is stored and cached; a listener that throws is logged and does not fail the logout.
+- `oidc.mfa.max_age` (and a per-login `max_age` passed to `redirect()`) is sent as `max_age`; the id_token must then carry `auth_time` no older than max_age plus the leeway (OIDC Core 3.1.2.1, 3.1.3.7 step 13). `ProviderConfigurationData` gains a trailing optional `maxAge` (standards review S2).
+- The `acr` a login asked for (`acr_values` or the `claims` parameter) is checked against the id_token: a missing or other `acr` counts as "MFA not proven" (the app's second factor runs), or refuses the login with `oidc.mfa.require_requested_acr`. `AuthenticatedIdentityData` gains a trailing optional `isRequestedAuthenticationContextMet` (standards review S2).
 - `oidc:configure` warns when `app.timezone` is not `UTC`, and the README documents that the package's timestamps are UTC (standards review M7).
 
 ### Changed

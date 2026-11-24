@@ -131,6 +131,8 @@ final class OidcServiceProvider extends ServiceProvider
             idTokenValidator: $app->make(IdTokenValidatorService::class),
             userinfo: $app->make(UserinfoService::class),
             shouldFetchUserinfo: $this->config($app)->boolean('oidc.userinfo', true),
+            leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway', 60),
+            isRequestedAcrRequired: $this->config($app)->boolean('oidc.mfa.require_requested_acr', false),
         ));
 
         $this->app->bind(UserProvisioningContract::class, EloquentUserProvisioningService::class);

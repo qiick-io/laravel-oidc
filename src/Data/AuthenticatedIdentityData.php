@@ -22,6 +22,8 @@ final readonly class AuthenticatedIdentityData
 {
     /**
      * @param  array<string, mixed>  $claims  the validated id_token claims
+     * @param  bool  $isRequestedAuthenticationContextMet  false when the login asked for an `acr` and the
+     *                                                     id_token has none of the requested values
      */
     public function __construct(
         public string $issuer,
@@ -32,6 +34,7 @@ final readonly class AuthenticatedIdentityData
         #[\SensitiveParameter]
         public string $accessToken,
         public ?string $sessionId,
+        public bool $isRequestedAuthenticationContextMet = true,
     ) {}
 
     public function claim(string $name): mixed

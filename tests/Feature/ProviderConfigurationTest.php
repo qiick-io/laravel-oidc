@@ -57,3 +57,47 @@ it('treats an empty secret as a public client and honours an explicit redirect u
         ->and($configuration->redirectUri)->toBe('https://app.example.com/sso/callback')
         ->and($configuration->tokenEndpointAuthMethod)->toBe(TokenEndpointAuthMethodEnum::ClientSecretPost);
 });
+
+it('keeps the scopes a list when a duplicate openid sits in the middle', function (): void {
+    enableConfiguredProvider();
+    Config::set('oidc.scopes', ['profile', 'openid', 'email']);
+
+    expect(app(ProviderConfigurationRepositoryContract::class)->configuration()->scopes)->toBe(['openid', 'profile', 'email']);
+});
+
+it('reads max_age as whole seconds from config or env', function (mixed $configuredMaxAge, ?int $maxAge): void {
+    enableConfiguredProvider();
+    Config::set('oidc.mfa.max_age', $configuredMaxAge);
+
+    expect(app(ProviderConfigurationRepositoryContract::class)->configuration()->maxAge)->toBe($maxAge);
+})->with([
+    'unset' => [null, null],
+    'integer' => [300, 300],
+    'zero' => [0, 0],
+    'env string' => ['300', 300],
+    'negative' => [-1, null],
+    'negative string' => ['-5', null],
+    'not a number' => ['soon', null],
+]);
+
+it('treats a blank secret as no secret and trims the configured values', function (): void {
+    enableConfiguredProvider();
+    Config::set('oidc.client_secret', '   ');
+    Config::set('oidc.client_id', ' laravel-app ');
+
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+
+    expect($configuration->clientSecret)->toBeNull()
+        ->and($configuration->clientId)->toBe('laravel-app');
+});
+
+it('reads a token endpoint auth method with surrounding spaces and defaults an unknown one', function (string $configuredMethod, TokenEndpointAuthMethodEnum $method): void {
+    enableConfiguredProvider();
+    Config::set('oidc.token_endpoint_auth_method', $configuredMethod);
+
+    expect(app(ProviderConfigurationRepositoryContract::class)->configuration()->tokenEndpointAuthMethod)->toBe($method);
+})->with([
+    'spaces' => [' client_secret_post ', TokenEndpointAuthMethodEnum::ClientSecretPost],
+    'unknown' => ['private_key_jwt', TokenEndpointAuthMethodEnum::ClientSecretBasic],
+    'blank' => ['  ', TokenEndpointAuthMethodEnum::ClientSecretBasic],
+]);
