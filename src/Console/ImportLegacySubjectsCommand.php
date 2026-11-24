@@ -26,7 +26,7 @@ final class ImportLegacySubjectsCommand extends Command
     protected $signature = 'oidc:import-legacy-subjects
         {--column=oidc_sub : Column of the users table that holds the legacy sub}
         {--issuer= : Issuer of those subjects (default: the configured OIDC issuer)}
-        {--dry-run : Report what would be imported without writing}';
+        {--dry-run : Report what would be imported without writing (works before the package migration)}';
 
     protected $description = 'Import legacy users.oidc_sub values into user_identities';
 
@@ -53,9 +53,24 @@ final class ImportLegacySubjectsCommand extends Command
 
         $counts = ['imported' => 0, 'already_linked' => 0, 'conflicts' => 0];
         $isDryRun = $this->option('dry-run') === true;
+        $identityModel = new UserIdentity;
+        $identitiesTable = $identityModel->getTable();
+        // A dry run is most useful before the package migration has run, so
+        // it does not need the table: every subject then counts as new.
+        $hasIdentitiesTable = $identityModel->getConnection()->getSchemaBuilder()->hasTable($identitiesTable);
+
+        if (! $hasIdentitiesTable && ! $isDryRun) {
+            $this->error("The [{$identitiesTable}] table does not exist: run php artisan migrate first.");
+
+            return self::FAILURE;
+        }
+
+        if (! $hasIdentitiesTable) {
+            $this->warn("The [{$identitiesTable}] table does not exist yet (run php artisan migrate): every subject counts as new.");
+        }
 
         $userModel::query()->whereNotNull($column)->where($column, '!=', '')->orderBy('id')
-            ->each(function (Model $user) use ($column, $issuer, $isDryRun, &$counts): void {
+            ->each(function (Model $user) use ($column, $issuer, $isDryRun, $hasIdentitiesTable, &$counts): void {
                 $userKey = $user->getKey();
                 $userKey = is_int($userKey) || is_string($userKey) ? (string) $userKey : '';
                 $subjectValue = $user->getAttribute($column);
@@ -65,6 +80,12 @@ final class ImportLegacySubjectsCommand extends Command
                 if (strlen($subject) > 255) {
                     $counts['conflicts']++;
                     $this->warn("User {$userKey}: the legacy subject is longer than 255 characters; skipped.");
+
+                    return;
+                }
+
+                if (! $hasIdentitiesTable) {
+                    $counts['imported']++;
 
                     return;
                 }

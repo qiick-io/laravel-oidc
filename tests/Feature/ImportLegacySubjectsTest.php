@@ -91,7 +91,8 @@ it('counts a link made by a concurrent login while importing', function (string 
 
     // A login links the user between the importer's checks and its insert.
     DB::listen(function (QueryExecuted $query) use ($user, $concurrentSubject, &$hasRun): void {
-        if ($hasRun || ! str_starts_with($query->sql, 'select exists') || ! str_contains($query->sql, 'user_identities')) {
+        // The importer's own existence check, not its schema check on the table.
+        if ($hasRun || ! str_starts_with($query->sql, 'select exists') || ! str_contains($query->sql, 'user_identities') || ! str_contains($query->sql, 'issuer')) {
             return;
         }
 
@@ -121,6 +122,26 @@ it('writes nothing on a dry run', function (): void {
         ->assertSuccessful();
 
     expect(UserIdentity::query()->count())->toBe(0);
+});
+
+it('dry-runs before the package migration, counting every subject as new', function (): void {
+    localUser('ada@example.com', ['oidc_sub' => 'sub-ada']);
+    localUser('grace@example.com', ['oidc_sub' => 'sub-grace']);
+    Schema::drop('user_identities');
+
+    $this->artisan('oidc:import-legacy-subjects', ['--dry-run' => true])
+        ->expectsOutputToContain('The [user_identities] table does not exist yet (run php artisan migrate): every subject counts as new.')
+        ->expectsOutputToContain('Would import 2 identities for issuer https://idp.example.com/realms/externa; 0 already linked, 0 conflicts.')
+        ->assertSuccessful();
+});
+
+it('refuses a real import before the package migration', function (): void {
+    localUser('ada@example.com', ['oidc_sub' => 'sub-ada']);
+    Schema::drop('user_identities');
+
+    $this->artisan('oidc:import-legacy-subjects')
+        ->expectsOutputToContain('The [user_identities] table does not exist: run php artisan migrate first.')
+        ->assertFailed();
 });
 
 it('fails without an issuer or without the column', function (): void {
