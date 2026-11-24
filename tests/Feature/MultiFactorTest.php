@@ -111,7 +111,7 @@ it('drops the pending identity when another user signs in or it expired', functi
     ssoLogin($this, fakeProvider());
 
     if ($case === 'expired') {
-        Date::setTestNow(Date::now()->addSeconds(IdentitySessionService::PENDING_SECONDS + 1));
+        Date::setTestNow(Date::now()->addSeconds(601));
         Auth::login($this->user);
     } else {
         Auth::login(localUser('someone.else@example.com'));

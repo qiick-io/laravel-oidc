@@ -22,11 +22,6 @@ final readonly class IdentitySessionService
 
     public const string PENDING_SESSION_KEY = 'oidc.pending_identity';
 
-    /**
-     * How long an identity waits for the app's second factor, in seconds.
-     */
-    public const int PENDING_SECONDS = 600;
-
     public function remember(Session $session, AuthenticatedIdentityData $identity): void
     {
         $session->put(self::SESSION_KEY, $this->identitySession($identity)->toArray());
@@ -42,7 +37,8 @@ final readonly class IdentitySessionService
     {
         $session->put(self::PENDING_SESSION_KEY, [
             'user_id' => $userId,
-            'expires_at' => Date::now()->getTimestamp() + self::PENDING_SECONDS,
+            // The app's second factor gets ten minutes.
+            'expires_at' => Date::now()->addMinutes(10)->getTimestamp(),
             'identity' => $this->identitySession($identity)->toArray(),
         ]);
     }
@@ -70,11 +66,11 @@ final readonly class IdentitySessionService
             return;
         }
 
+        // An identity that no longer reads (APP_KEY rotated during the
+        // challenge) is still stored: the session middleware then ends the
+        // session instead of leaving a login without back-channel coverage.
         $identity = IdentitySessionData::fromArray($pending['identity'] ?? null);
-
-        if ($identity !== null) {
-            $session->put(self::SESSION_KEY, $identity->toArray());
-        }
+        $session->put(self::SESSION_KEY, $identity?->toArray() ?? 'unreadable');
     }
 
     private function identitySession(AuthenticatedIdentityData $identity): IdentitySessionData
@@ -97,7 +93,15 @@ final readonly class IdentitySessionService
      */
     public function current(Session $session): ?IdentitySessionData
     {
-        return IdentitySessionData::fromArray($session->get(self::SESSION_KEY));
+        $identity = IdentitySessionData::fromArray($session->get(self::SESSION_KEY));
+
+        // Upgrade on read: a version 1 payload from beta.6 holds the raw
+        // id_token, so it is rewritten encrypted the first time it is read.
+        if ($identity?->formatVersion === 1) {
+            $session->put(self::SESSION_KEY, $identity->toArray());
+        }
+
+        return $identity;
     }
 
     public function forget(Session $session): void

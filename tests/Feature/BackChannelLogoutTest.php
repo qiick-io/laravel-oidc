@@ -13,7 +13,6 @@ use Illuminate\Testing\TestResponse;
 use Qiick\Oidc\Data\IdentitySessionData;
 use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
-use Qiick\Oidc\Services\IdentitySessionService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
 use Tests\TestCase;
 
@@ -46,13 +45,13 @@ function postLogoutToken(TestCase|Orchestra\Testbench\TestCase $testCase, FakeId
  */
 function ssoSession(?string $sessionId = 'fake-session-1', string $subject = 'fake-subject-1', ?int $authenticatedAt = null): array
 {
-    return [IdentitySessionService::SESSION_KEY => (new IdentitySessionData(
+    return storedSsoSession(new IdentitySessionData(
         issuer: 'https://idp.example.com/realms/test',
         subject: $subject,
         sessionId: $sessionId,
         idToken: 'header.payload.signature',
         authenticatedAt: $authenticatedAt ?? Date::now()->getTimestamp(),
-    ))->toArray()];
+    ));
 }
 
 it('accepts a valid logout_token without session or CSRF token', function (): void {

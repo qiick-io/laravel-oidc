@@ -9,7 +9,6 @@ use Illuminate\Support\Facades\Date;
 use Qiick\Oidc\Data\IdentitySessionData;
 use Qiick\Oidc\Http\Controllers\FrontChannelLogoutController;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
-use Qiick\Oidc\Services\IdentitySessionService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
 
 /*
@@ -44,13 +43,13 @@ it('revokes the IdP session from iss and sid when front-channel logout is on', f
         ->and($row->jti)->toBeNull();
 
     $this->actingAs(new GenericUser(['id' => 1, 'remember_token' => null]))
-        ->withSession([IdentitySessionService::SESSION_KEY => (new IdentitySessionData(
+        ->withSession(storedSsoSession(new IdentitySessionData(
             issuer: $issuer,
             subject: 'user-1',
             sessionId: 'front-sid-1',
             idToken: 'header.payload.signature',
             authenticatedAt: Date::now()->getTimestamp(),
-        ))->toArray()])
+        )))
         ->get('/probe')
         ->assertSeeText('guest');
 });
