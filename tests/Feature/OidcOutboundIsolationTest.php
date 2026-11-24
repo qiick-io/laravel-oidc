@@ -110,7 +110,7 @@ it('refuses browser endpoints with credentials through DiscoveryService from the
 
 it('maps timeout 0 to the unlimited ceiling', function (): void {
     expect(IdentityProviderHttpService::resolveTimeoutSeconds(0))
-        ->toBe(IdentityProviderHttpService::UnlimitedTimeoutSeconds)
+        ->toBe(86_400)
         ->and(IdentityProviderHttpService::resolveTimeoutSeconds(10))->toBe(10);
 });
 
@@ -152,9 +152,9 @@ it('raises the private outbound ceilings to at least the configured hop timeouts
     Config::set('oidc.http.timeout', 0);
     Config::set('oidc.http.connect_timeout', 0);
     $unlimitedLimits = app(OidcOutboundStackFactory::class)->make()->httpLimits;
-    expect($unlimitedLimits->maxTimeoutSeconds)->toBe(IdentityProviderHttpService::UnlimitedTimeoutSeconds)
-        ->and($unlimitedLimits->maxConnectTimeoutSeconds)->toBe(IdentityProviderHttpService::UnlimitedTimeoutSeconds)
-        ->and($unlimitedLimits->totalDeadlineSeconds)->toBe(IdentityProviderHttpService::UnlimitedTimeoutSeconds * 3)
+    expect($unlimitedLimits->maxTimeoutSeconds)->toBe(86_400)
+        ->and($unlimitedLimits->maxConnectTimeoutSeconds)->toBe(86_400)
+        ->and($unlimitedLimits->totalDeadlineSeconds)->toBe(86_400 * 3)
         ->and(app(IdentityProviderHttpService::class)->getJson('https://idp.example.com/token'))
         ->toBe(['ok' => true]);
 });

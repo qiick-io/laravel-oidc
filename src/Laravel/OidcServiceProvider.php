@@ -13,6 +13,7 @@ use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Contracts\Foundation\CachesConfiguration;
 use Illuminate\Contracts\Http\Kernel as HttpKernelContract;
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
 use Illuminate\Http\Client\Factory as HttpFactory;
@@ -72,7 +73,7 @@ final class OidcServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->mergeConfigFrom(__DIR__.'/../../config/oidc.php', 'oidc');
+        $this->mergeConfigDefaults();
 
         $this->app->bind(ProviderConfigurationRepositoryContract::class, ConfigProviderConfigurationRepository::class);
 
@@ -207,6 +208,47 @@ final class OidcServiceProvider extends ServiceProvider
             jwtValidator: $app->make(JwtValidatorService::class),
             sessionRevocation: $app->make(SessionRevocationService::class),
         ));
+    }
+
+    /**
+     * Laravel's mergeConfigFrom() fills only top-level keys, so an app that
+     * published config/oidc.php before a nested key existed (for example
+     * `http.connect_timeout` or `mfa.max_age`) would read null for it. The
+     * package defaults are merged into nested arrays too, so every key always
+     * has a value. Lists (scopes, algorithms, role maps) are the app's own
+     * choice and are never merged with the defaults.
+     */
+    private function mergeConfigDefaults(): void
+    {
+        if ($this->app instanceof CachesConfiguration && $this->app->configurationIsCached()) {
+            return;
+        }
+
+        $config = $this->config($this->app);
+        $configured = $config->get('oidc', []);
+
+        /** @var array<string, mixed> $defaults */
+        $defaults = require __DIR__.'/../../config/oidc.php';
+
+        $config->set('oidc', $this->withDefaults($defaults, is_array($configured) ? $configured : []));
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $defaults
+     * @param  array<array-key, mixed>  $configured
+     * @return array<array-key, mixed>
+     */
+    private function withDefaults(array $defaults, array $configured): array
+    {
+        foreach ($defaults as $key => $defaultValue) {
+            if (! array_key_exists($key, $configured)) {
+                $configured[$key] = $defaultValue;
+            } elseif (is_array($defaultValue) && ! array_is_list($defaultValue) && is_array($configured[$key]) && ! array_is_list($configured[$key])) {
+                $configured[$key] = $this->withDefaults($defaultValue, $configured[$key]);
+            }
+        }
+
+        return $configured;
     }
 
     public function boot(): void

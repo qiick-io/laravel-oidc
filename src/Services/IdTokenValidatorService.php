@@ -26,12 +26,6 @@ use Qiick\Oidc\Exceptions\InvalidTokenException;
  */
 final readonly class IdTokenValidatorService
 {
-    /**
-     * OIDC Core 2: `sub` is at most 255 ASCII characters.
-     */
-    // Spec ceiling; Increment/Decrement would still refuse the oversized fixture.
-    private const int MAXIMUM_SUBJECT_LENGTH = 255; // @pest-mutate-ignore: IncrementInteger,DecrementInteger
-
     public function __construct(
         private JwtValidatorService $jwtValidator,
     ) {}
@@ -65,12 +59,13 @@ final readonly class IdTokenValidatorService
         DiscoveryDocumentData $discovery,
         ProviderConfigurationData $configuration,
         #[\SensitiveParameter] string $expectedNonce,
-        #[\SensitiveParameter] string $accessToken = '', // @pest-mutate-ignore: EmptyStringToNotEmpty
+        #[\SensitiveParameter] ?string $accessToken = null,
     ): array {
         $claims = $this->jwtValidator->validate($idToken, $discovery, $configuration);
         $subject = $claims['sub'] ?? null;
 
-        if (! is_string($subject) || $subject === '' || strlen($subject) > self::MAXIMUM_SUBJECT_LENGTH) {
+        // OIDC Core 2: `sub` is at most 255 ASCII characters.
+        if (! is_string($subject) || $subject === '' || strlen($subject) > 255) {
             throw new InvalidTokenException('id_token has no valid [sub].');
         }
 
@@ -89,7 +84,7 @@ final readonly class IdTokenValidatorService
         }
 
         if (array_key_exists('at_hash', $claims)) {
-            if ($accessToken === '') {
+            if ($accessToken === null) {
                 throw new InvalidTokenException('id_token [at_hash] is present but no access_token was issued.');
             }
 
@@ -121,8 +116,8 @@ final readonly class IdTokenValidatorService
         }
 
         try {
-            // Depth is operational; 15 vs 16 never changes a real JOSE header.
-            $header = json_decode(JWT::urlsafeB64Decode($segments[0]), true, 16, JSON_THROW_ON_ERROR); // @pest-mutate-ignore: IncrementInteger,DecrementInteger
+            // JwtValidatorService already read this header with a depth limit.
+            $header = json_decode(JWT::urlsafeB64Decode($segments[0]), true, flags: JSON_THROW_ON_ERROR);
         } catch (\Throwable) {
             throw new InvalidTokenException('id_token header is not valid JSON.');
         }
@@ -135,8 +130,7 @@ final readonly class IdTokenValidatorService
         }
 
         $digest = hash($hashAlgorithm, $accessToken, true);
-        // Hash digests are even-length; the cast is for PHPStan.
-        $expectedHash = JWT::urlsafeB64Encode(substr($digest, 0, (int) (strlen($digest) / 2))); // @pest-mutate-ignore: RemoveIntegerCast
+        $expectedHash = JWT::urlsafeB64Encode(substr($digest, 0, intdiv(strlen($digest), 2)));
 
         if (! hash_equals($expectedHash, $accessTokenHash)) {
             throw new InvalidTokenException('id_token [at_hash] does not match the access_token.');

@@ -50,13 +50,10 @@ final readonly class OidcOutboundStackFactory
         }
 
         $isPrivateHostAllowed = $this->config->boolean('oidc.http.allow_private_hosts');
-        // Defaults are dead: mergeConfigFrom always publishes oidc.http.timeout / connect_timeout.
-        $timeoutSeconds = IdentityProviderHttpService::resolveTimeoutSeconds(
-            $this->config->integer('oidc.http.timeout', 10), // @pest-mutate-ignore: IncrementInteger,DecrementInteger
-        );
-        $connectTimeoutSeconds = IdentityProviderHttpService::resolveTimeoutSeconds(
-            $this->config->integer('oidc.http.connect_timeout', 10), // @pest-mutate-ignore: IncrementInteger,DecrementInteger
-        );
+        // The service provider merges the package defaults into nested keys,
+        // so both keys exist even in a config published before they did.
+        $timeoutSeconds = IdentityProviderHttpService::resolveTimeoutSeconds($this->config->integer('oidc.http.timeout'));
+        $connectTimeoutSeconds = IdentityProviderHttpService::resolveTimeoutSeconds($this->config->integer('oidc.http.connect_timeout'));
 
         $remoteUrlGuard = new RemoteUrlGuard(
             hostResolver: $this->hostResolver,
