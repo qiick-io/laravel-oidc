@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use Qiick\Oidc\Data\IdentitySessionData;
 use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
+use Qiick\Oidc\Models\OidcLogoutRevocation;
 use Qiick\Oidc\Services\IdentitySessionService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
 use Tests\TestCase;
@@ -108,6 +109,7 @@ it('refuses invalid logout tokens with 400', function (array $overrides): void {
     'other event' => [['events' => ['https://example.com/other-event' => new stdClass]]],
     'nonce present (an id_token)' => [['nonce' => 'abc']],
     'neither sub nor sid' => [['sub' => null, 'sid' => null]],
+    'empty sub and no sid' => [['sub' => '', 'sid' => null]],
     'sub with a trailing space' => [['sub' => 'fake-subject-1 ']],
     'sub with a leading space' => [['sub' => ' fake-subject-1']],
     'no jti' => [['jti' => null]],
@@ -175,3 +177,43 @@ it('orders its session check after the session starts and before auth', function
         ->and($startSession)->toBeLessThan($session)
         ->and($session)->toBeLessThan($auth);
 });
+
+it('refuses a logout token whose sub, sid or jti does not fit the revocation table', function (string $claim): void {
+    postLogoutToken($this, $this->identityProvider, [$claim => str_repeat('a', 256)])
+        ->assertStatus(400)
+        ->assertJson(['error' => 'invalid_request']);
+})->with(['sub', 'sid', 'jti']);
+
+it('accepts a sub, sid and jti of exactly 255 characters', function (): void {
+    postLogoutToken($this, $this->identityProvider, ['sub' => str_repeat('s', 255), 'sid' => str_repeat('i', 255), 'jti' => str_repeat('j', 255)])
+        ->assertOk();
+});
+
+it('keeps the revocation until the logout token itself expires, plus two minutes', function (): void {
+    Date::setTestNow(Date::now()->startOfSecond());
+    $tokenExpiresAt = Date::now()->addDays(2)->getTimestamp();
+
+    postLogoutToken($this, $this->identityProvider, ['exp' => $tokenExpiresAt])->assertOk();
+
+    expect(OidcLogoutRevocation::query()->sole()->expires_at->getTimestamp())->toBe($tokenExpiresAt + 120);
+});
+
+it('cycles the remember token of the linked user, and only a set one, without touching updated_at', function (?string $rememberToken): void {
+    Date::setTestNow('2026-11-24 09:00:00');
+    $user = localUser(attributes: ['remember_token' => $rememberToken]);
+    linkIdentity($user, 'fake-subject-1', $this->identityProvider->issuer);
+    $updatedAt = $user->fresh()->updated_at;
+    Date::setTestNow('2026-11-24 10:00:00');
+
+    postLogoutToken($this, $this->identityProvider, ['sid' => null])->assertOk();
+
+    $user->refresh();
+
+    if ($rememberToken === 'old-remember-token') {
+        expect($user->remember_token)->not->toBe('old-remember-token')->toHaveLength(60);
+    } else {
+        expect($user->remember_token)->toBe($rememberToken);
+    }
+
+    expect($user->updated_at?->equalTo($updatedAt))->toBeTrue();
+})->with(['set' => 'old-remember-token', 'null' => null, 'empty' => '']);

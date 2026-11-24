@@ -60,6 +60,15 @@ final class ImportLegacySubjectsCommand extends Command
                 $userKey = is_int($userKey) || is_string($userKey) ? (string) $userKey : '';
                 $subjectValue = $user->getAttribute($column);
                 $subject = is_string($subjectValue) || is_int($subjectValue) ? (string) $subjectValue : '';
+                // OIDC Core 2 caps `sub` at 255 characters, the size of the
+                // column: MySQL would silently truncate a longer one.
+                if (strlen($subject) > 255) {
+                    $counts['conflicts']++;
+                    $this->warn("User {$userKey}: the legacy subject is longer than 255 characters; skipped.");
+
+                    return;
+                }
+
                 $existing = UserIdentity::query()->where('issuer', $issuer)->where('subject', $subject)->first();
 
                 if ($existing !== null) {

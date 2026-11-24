@@ -131,3 +131,16 @@ it('fails without an issuer or without the column', function (): void {
         ->expectsOutputToContain('has no [missing] column')
         ->assertFailed();
 });
+
+it('reports a legacy subject longer than 255 characters instead of truncating it', function (): void {
+    Schema::table('users', fn (Blueprint $table) => $table->string('long_oidc_sub', 300)->nullable());
+    $user = localUser('ada@example.com', ['long_oidc_sub' => str_repeat('s', 256)]);
+    $fittingUser = localUser('grace@example.com', ['long_oidc_sub' => str_repeat('g', 255)]);
+
+    $this->artisan('oidc:import-legacy-subjects', ['--column' => 'long_oidc_sub'])
+        ->expectsOutputToContain("User {$user->id}: the legacy subject is longer than 255 characters; skipped.")
+        ->expectsOutputToContain('Imported 1 identity for issuer https://idp.example.com/realms/externa; 0 already linked, 1 conflicts.')
+        ->assertFailed();
+
+    expect(UserIdentity::query()->sole()->only(['user_id', 'subject']))->toBe(['user_id' => $fittingUser->id, 'subject' => str_repeat('g', 255)]);
+});

@@ -4,15 +4,12 @@ declare(strict_types=1);
 
 namespace Qiick\Oidc\Services;
 
-use Illuminate\Contracts\Cache\Repository as CacheRepository;
-use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Str;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Data\LogoutTokenData;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Exceptions\InvalidTokenException;
 use Qiick\Oidc\Exceptions\OidcNotConfiguredException;
-use Qiick\Oidc\Models\OidcLogoutRevocation;
 use Qiick\Oidc\Models\UserIdentity;
 
 /**
@@ -40,7 +37,6 @@ final readonly class BackChannelLogoutService
         private DiscoveryService $discovery,
         private JwtValidatorService $jwtValidator,
         private SessionRevocationService $sessionRevocation,
-        private CacheRepository $cache,
     ) {}
 
     /**
@@ -83,10 +79,9 @@ final readonly class BackChannelLogoutService
             throw new InvalidTokenException('logout_token has no [jti].');
         }
 
-        // Accelerator only: never refuse on a cache-only hit. Durable replay
-        // refusal is unique (issuer, jti) on insert (M10).
-        $this->assertNotAlreadyUsed($discovery->issuer, $tokenId);
-
+        // Replay (BCL §2.6 step 8) is refused by the unique (issuer, jti) key
+        // when the revocation is stored (M10); no cache pre-check could add
+        // anything to that answer.
         $expiresAtClaim = $claims['exp'] ?? null;
 
         $logout = new LogoutTokenData(
@@ -98,7 +93,6 @@ final readonly class BackChannelLogoutService
             channel: 'backchannel',
         );
         $this->sessionRevocation->revoke($logout);
-        $this->rememberUsedTokenId($claims, $discovery->issuer, $tokenId);
 
         if ($subject !== null) {
             $this->cycleRememberToken($discovery->issuer, $subject);
@@ -122,7 +116,8 @@ final readonly class BackChannelLogoutService
             ->first()
             ?->user;
 
-        if ($user === null || in_array($user->getRememberToken(), [null, ''], true)) {
+        // Eloquent returns '' for a missing token; other user models may return null.
+        if ($user === null || (string) $user->getRememberToken() === '') {
             return;
         }
 
@@ -132,59 +127,23 @@ final readonly class BackChannelLogoutService
     }
 
     /**
-     * Cache hit is never a terminal replay by itself: confirm a live table
-     * row. A cache-only ghost (insert failed after a previous bug, or a
-     * flushed/partial store) must not block the IdP's retry.
-     *
-     * @throws InvalidTokenException
-     */
-    private function assertNotAlreadyUsed(string $issuer, string $tokenId): void
-    {
-        if (! $this->cache->has($this->tokenIdCacheKey($issuer, $tokenId))) {
-            return;
-        }
-
-        $hasLiveRow = OidcLogoutRevocation::query()
-            ->where('issuer', $issuer)
-            ->where('jti', $tokenId)
-            ->where('expires_at', '>', Date::now())
-            ->exists();
-
-        if ($hasLiveRow) {
-            throw new InvalidTokenException('logout_token [jti] was already used.');
-        }
-    }
-
-    /**
-     * Warm the jti accelerator only after the durable insert succeeded, so a
-     * failed insert cannot poison the IdP's retry.
-     *
-     * @param  array<string, mixed>  $claims
-     */
-    private function rememberUsedTokenId(array $claims, string $issuer, string $tokenId): void
-    {
-        $expiresAt = $claims['exp'] ?? 0;
-        $secondsUntilExpiry = (int) (is_int($expiresAt) || is_float($expiresAt) ? $expiresAt : 0) - Date::now()->getTimestamp();
-
-        $this->cache->put(
-            $this->tokenIdCacheKey($issuer, $tokenId),
-            true,
-            max(60, $secondsUntilExpiry + 120),
-        );
-    }
-
-    private function tokenIdCacheKey(string $issuer, string $tokenId): string
-    {
-        return 'oidc:logout-jti:'.hash('sha256', $issuer.'|'.$tokenId);
-    }
-
-    /**
      * @param  array<string, mixed>  $claims
      */
     private function optionalString(array $claims, string $name): ?string
     {
         $value = $claims[$name] ?? null;
 
-        return is_string($value) && $value !== '' ? $value : null;
+        if (! is_string($value) || $value === '') {
+            return null;
+        }
+
+        // The revocation table keeps `sub`, `sid` and `jti` in 255-character
+        // columns (OIDC Core 2 caps `sub` there too); MySQL would truncate a
+        // longer value or refuse the row.
+        if (strlen($value) > 255) {
+            throw new InvalidTokenException("logout_token [{$name}] is longer than 255 characters.");
+        }
+
+        return $value;
     }
 }

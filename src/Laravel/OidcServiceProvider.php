@@ -204,7 +204,6 @@ final class OidcServiceProvider extends ServiceProvider
             discovery: $app->make(DiscoveryService::class),
             jwtValidator: $app->make(JwtValidatorService::class),
             sessionRevocation: $app->make(SessionRevocationService::class),
-            cache: $this->cacheStore($app),
         ));
     }
 
