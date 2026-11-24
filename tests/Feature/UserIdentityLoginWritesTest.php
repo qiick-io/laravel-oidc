@@ -5,7 +5,6 @@ declare(strict_types=1);
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Schema;
 use Qiick\Oidc\Contracts\UserClaimSynchronizationContract;
@@ -117,10 +116,9 @@ it('leaves local user columns untouched under the default no-op claim synchronis
 
 it('marks legacy imports with link_method legacy_import', function (): void {
     Schema::table('users', fn (Blueprint $table) => $table->string('oidc_sub')->nullable()->unique());
-    Config::set('oidc.issuer', 'https://idp.example.com/realms/externa');
     $user = localUser('ada@example.com', ['oidc_sub' => 'sub-ada']);
 
-    $this->artisan('oidc:import-legacy-subjects')->assertSuccessful();
+    $this->artisan('oidc:import-legacy-subjects', ['--issuer' => 'https://idp.example.com/realms/externa'])->assertSuccessful();
 
     expect(UserIdentity::query()->where('user_id', $user->id)->sole()->link_method)->toBe('legacy_import');
 });

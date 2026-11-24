@@ -6,15 +6,15 @@ namespace Qiick\Oidc\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Schema;
+use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Models\UserIdentity;
 
 /**
  * `php artisan oidc:import-legacy-subjects`: copies the `sub` that Externa and
  * Excubia App stored in `users.oidc_sub` into `user_identities`, with the
- * configured issuer (design section 4, "Linking"). Users keep signing in with
+ * issuer of the configured SSO provider (design section 4, "Linking"). Users keep signing in with
  * the same IdP account after the switch to the package.
  *
  * Idempotent: identities that already exist are skipped, and an identity
@@ -25,22 +25,33 @@ final class ImportLegacySubjectsCommand extends Command
 {
     protected $signature = 'oidc:import-legacy-subjects
         {--column=oidc_sub : Column of the users table that holds the legacy sub}
-        {--issuer= : Issuer of those subjects (default: the configured OIDC issuer)}
+        {--issuer= : Issuer of those subjects (default: the issuer of the configured SSO provider; required while SSO is off)}
         {--dry-run : Report what would be imported without writing (works before the package migration)}';
 
     protected $description = 'Import legacy users.oidc_sub values into user_identities';
 
-    public function handle(): int
+    /**
+     * The issuer stamped on every imported identity is the one logins use:
+     * `--issuer`, else the bound configuration repository (an app may keep
+     * its SSO settings in the database). While SSO is not configured there is
+     * no trustworthy default (config may hold a stale issuer), so the import
+     * then needs `--issuer` (#38).
+     */
+    public function handle(ProviderConfigurationRepositoryContract $configurationRepository): int
     {
         $columnOption = $this->option('column');
         $column = is_string($columnOption) && $columnOption !== '' ? $columnOption : 'oidc_sub';
-        $issuer = $this->option('issuer');
-        $issuer = is_string($issuer) && $issuer !== '' ? $issuer : Config::get('oidc.issuer');
+        $issuerOption = $this->option('issuer');
+        $issuer = match (true) {
+            is_string($issuerOption) && $issuerOption !== '' => $issuerOption,
+            $configurationRepository->isEnabled() => $configurationRepository->configuration()->issuer,
+            default => null,
+        };
         $userModel = UserIdentity::userModel();
         $usersTable = (new $userModel)->getTable();
 
-        if (! is_string($issuer) || $issuer === '') {
-            $this->error('No issuer: pass --issuer or set OIDC_ISSUER.');
+        if ($issuer === null) {
+            $this->error('No issuer: SSO is not configured yet, so pass --issuer explicitly.');
 
             return self::FAILURE;
         }

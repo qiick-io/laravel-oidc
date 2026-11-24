@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
+- **`oidc:import-legacy-subjects` takes the issuer from the bound `ProviderConfigurationRepositoryContract`, not from `oidc.issuer`, and needs `--issuer` while SSO is not configured.** An app with database settings no longer stamps imported identities with a stale config issuer that logins never use (#38). A deploy step that ran the import with SSO still off adds `--issuer`.
 - **A login that asked for an `acr` (`oidc.mfa.request_acr_values`, `acr_values` or the `claims` parameter) and got none of the requested values no longer counts as MFA, even with `amr=mfa`**: the app's second factor runs (or, with `oidc.mfa.require_requested_acr`, the login is refused).
 - `AuthorizationCodeFlowService` takes two more constructor arguments (`leewaySeconds`, `isRequestedAcrRequired`); the service provider passes them, an app that builds it by hand must too. `redirect()` throws `InvalidArgumentException` for a `max_age` that is not a whole number of seconds, 0 or more.
 - `IdentityProviderHttpService::UnlimitedTimeoutSeconds` is removed (the class is internal); `oidc.http.timeout = 0` still means a 24-hour ceiling.
