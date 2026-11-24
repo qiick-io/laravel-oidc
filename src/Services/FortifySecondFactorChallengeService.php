@@ -21,12 +21,17 @@ use Symfony\Component\HttpFoundation\Response;
  */
 final readonly class FortifySecondFactorChallengeService implements SecondFactorChallengeContract
 {
-    private const string FORTIFY_CLASS = 'Laravel\Fortify\Fortify';
-
-    private const string TWO_FACTOR_TRAIT = 'Laravel\Fortify\TwoFactorAuthenticatable';
-
+    /**
+     * The two class names are internal test hooks, so the default challenge
+     * is tested without Fortify installed; apps never pass them.
+     *
+     * @param  string  $fortifyClass  Fortify's facade-like class
+     * @param  string  $twoFactorTrait  the trait a user model uses for Fortify's two-factor columns
+     */
     public function __construct(
         private bool $isRequiredByDefault,
+        private string $fortifyClass = 'Laravel\Fortify\Fortify',
+        private string $twoFactorTrait = 'Laravel\Fortify\TwoFactorAuthenticatable',
     ) {}
 
     public function isRequired(Model&Authenticatable $user): bool
@@ -50,16 +55,20 @@ final readonly class FortifySecondFactorChallengeService implements SecondFactor
 
     private function hasConfirmedFortifySecondFactor(Model $user): bool
     {
-        if (! class_exists(self::FORTIFY_CLASS) || ! in_array(self::TWO_FACTOR_TRAIT, class_uses_recursive($user), true)) {
+        if (! class_exists($this->fortifyClass) || ! in_array($this->twoFactorTrait, class_uses_recursive($user), true)) {
             return false;
         }
 
-        if (in_array($user->getAttribute('two_factor_secret'), [null, ''], true)) {
+        // Fail closed: an app may cast the secret to an object (encrypted,
+        // AsStringable), so only null or an empty string means "no second factor".
+        $secret = $user->getAttribute('two_factor_secret');
+
+        if ($secret === null || $secret === '') {
             return false;
         }
 
-        $confirmationCheck = [self::FORTIFY_CLASS, 'confirmsTwoFactorAuthentication'];
-        $isConfirmationRequired = is_callable($confirmationCheck) && (bool) $confirmationCheck();
+        $confirmationCheck = [$this->fortifyClass, 'confirmsTwoFactorAuthentication'];
+        $isConfirmationRequired = is_callable($confirmationCheck) && $confirmationCheck() === true;
 
         return ! $isConfirmationRequired || $user->getAttribute('two_factor_confirmed_at') !== null;
     }

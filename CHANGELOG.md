@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The back-channel logout `jti` cache pre-check is removed: the unique `(issuer, jti)` key already refuses a replay with the same answer, so the pre-check only duplicated it. `BackChannelLogoutService` no longer takes a cache store.
+- `FortifySecondFactorChallengeService` takes the Fortify class and two-factor trait names as trailing optional constructor arguments (defaults unchanged), so the default challenge is tested without Fortify installed.
 
 ### Fixed
 
