@@ -2,8 +2,11 @@
 
 declare(strict_types=1);
 
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Session\Session;
 use Illuminate\Http\Client\Request as HttpRequest;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Http;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
@@ -126,6 +129,69 @@ it('accepts each state once, even after a failed callback', function (): void {
     callback($callbackUrl, $session);
 
     expect(fn () => callback($callbackUrl, $session))->toThrow(InvalidCallbackException::class, 'state');
+});
+
+it('accepts each state once across requests that read the session before either wrote it', function (): void {
+    // Two parallel callbacks with one state each load the session before
+    // either saves it, so both still hold the pending login.
+    $identityProvider = FakeIdentityProvider::fake();
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+    $parallelSession = clone $session;
+
+    callback($callbackUrl, $session);
+
+    expect(fn () => callback($callbackUrl, $parallelSession))->toThrow(InvalidCallbackException::class, 'state was already used')
+        ->and($identityProvider->tokenRequestCount)->toBe(1);
+});
+
+it('refuses the callback when the state cannot be recorded as used', function (): void {
+    Cache::extend('failing', fn (): CacheRepository => Cache::repository(new class extends ArrayStore
+    {
+        public function add($key, $value, $seconds): bool
+        {
+            throw new RuntimeException('Cache is down.');
+        }
+    }));
+    config()->set('cache.stores.failing', ['driver' => 'failing']);
+    config()->set('oidc.cache.store', 'failing');
+    $identityProvider = FakeIdentityProvider::fake();
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+
+    expect(fn () => callback($callbackUrl, $session))->toThrow(InvalidCallbackException::class, 'could not be recorded as used')
+        ->and($identityProvider->tokenRequestCount)->toBe(0);
+});
+
+it('refuses the per-request array cache outside tests, since it cannot make a state single-use', function (): void {
+    $identityProvider = FakeIdentityProvider::fake();
+    config()->set('oidc.cache.store', 'array');
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+    app()->detectEnvironment(fn (): string => 'production');
+
+    expect(fn () => callback($callbackUrl, $session))->toThrow(InvalidCallbackException::class, 'array')
+        ->and($identityProvider->tokenRequestCount)->toBe(0);
+});
+
+it('records the used state per issuer for as long as a pending login lives', function (): void {
+    $identityProvider = FakeIdentityProvider::fake();
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+
+    callback($callbackUrl, $session);
+
+    expect(Cache::get('oidc:state:'.hash('sha256', $identityProvider->issuer."\n".queryParameters($callbackUrl)['state'])))->toBeTrue();
+});
+
+it('accepts a shared cache store outside tests', function (): void {
+    $identityProvider = FakeIdentityProvider::fake();
+    config()->set('oidc.cache.store', 'file');
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+    app()->detectEnvironment(fn (): string => 'production');
+
+    expect(callback($callbackUrl, $session)->subject)->toBe('fake-subject-1');
 });
 
 it('keeps parallel logins from two tabs apart', function (): void {

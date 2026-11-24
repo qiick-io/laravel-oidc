@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Qiick\Oidc\Services;
 
 use Firebase\JWT\JWT;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Session\Session;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -18,6 +20,7 @@ use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Exceptions\InvalidCallbackException;
 use Qiick\Oidc\Exceptions\InvalidTokenException;
 use Qiick\Oidc\Exceptions\OidcNotConfiguredException;
+use Throwable;
 
 /**
  * The OIDC authorization code flow with PKCE (RFC 7636, `S256` only), `state`
@@ -29,7 +32,9 @@ use Qiick\Oidc\Exceptions\OidcNotConfiguredException;
  * identity from the validated id_token, enriched with the userinfo claims.
  *
  * Several pending logins can coexist (two tabs), up to MAXIMUM_PENDING_LOGINS;
- * each expires after PENDING_LOGIN_SECONDS.
+ * each expires after PENDING_LOGIN_SECONDS. Each `state` is also consumed
+ * through an atomic add on the OIDC cache store, so it is single-use even
+ * when parallel requests share one session.
  *
  * The package does not log the user in: the app maps the identity to a local
  * user, regenerates the session and calls Auth::login().
@@ -58,6 +63,8 @@ final readonly class AuthorizationCodeFlowService
         private bool $shouldFetchUserinfo,
         private int $leewaySeconds,
         private bool $isRequestedAcrRequired,
+        private CacheRepository $cache,
+        private bool $isArrayCacheAllowed,
     ) {}
 
     /**
@@ -125,7 +132,14 @@ final readonly class AuthorizationCodeFlowService
     public function handleCallback(Request $request): AuthenticatedIdentityData
     {
         $configuration = $this->configurationRepository->configuration();
-        $pendingLogin = $this->pullPendingLogin($request->session(), $request->query('state'));
+        $state = $request->query('state');
+
+        if (! is_string($state)) {
+            throw new InvalidCallbackException('The authorization response has a missing or unknown state.');
+        }
+
+        $pendingLogin = $this->pullPendingLogin($request->session(), $state);
+        $this->consumeStateOnce($pendingLogin['issuer'], $state);
 
         if ($pendingLogin['issuer'] !== $configuration->issuer || $pendingLogin['redirect_uri'] !== $configuration->redirectUri) {
             throw new InvalidCallbackException('The OIDC settings changed during the login. Start again.');
@@ -362,11 +376,11 @@ final readonly class AuthorizationCodeFlowService
      *
      * @throws InvalidCallbackException
      */
-    private function pullPendingLogin(Session $session, mixed $state): array
+    private function pullPendingLogin(Session $session, string $state): array
     {
         $pendingLogins = $this->pendingLogins($session);
 
-        if (! is_string($state) || ! array_key_exists($state, $pendingLogins)) {
+        if (! array_key_exists($state, $pendingLogins)) {
             throw new InvalidCallbackException('The authorization response has a missing or unknown state.');
         }
 
@@ -379,6 +393,36 @@ final readonly class AuthorizationCodeFlowService
         }
 
         return $pendingLogin;
+    }
+
+    /**
+     * Makes the `state` single-use across requests and servers (RFC 6749
+     * 10.12, RFC 9700 4.7). Removing it from the session is not enough: the
+     * session is not locked, so two parallel callbacks that loaded it before
+     * either saved it would both find the pending login. An atomic cache add
+     * decides; it lives as long as a pending login can.
+     *
+     * Fails closed: a cache that cannot answer refuses the login, and the
+     * per-request array store, which forgets the state at once, is refused
+     * outside the app's tests.
+     *
+     * @throws InvalidCallbackException
+     */
+    private function consumeStateOnce(string $issuer, string $state): void
+    {
+        if (! $this->isArrayCacheAllowed && $this->cache->getStore() instanceof ArrayStore) {
+            throw new InvalidCallbackException('oidc.cache.store uses the array driver, which cannot make the state single-use; configure a shared cache store.');
+        }
+
+        try {
+            $isFirstUse = $this->cache->add('oidc:state:'.hash('sha256', $issuer."\n".$state), true, self::PENDING_LOGIN_SECONDS);
+        } catch (Throwable) {
+            throw new InvalidCallbackException('The login state could not be recorded as used. Try again.');
+        }
+
+        if (! $isFirstUse) {
+            throw new InvalidCallbackException('The authorization response state was already used.');
+        }
     }
 
     /**

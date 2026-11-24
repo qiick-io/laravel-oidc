@@ -63,6 +63,7 @@ it('passes for a working IdP and lists the URIs to register', function (): void 
             'client' => 'ok',
             'redirect uri' => 'ok',
             'timezone' => 'ok',
+            'cache store' => 'ok',
         ])
         ->and($report['register_at_identity_provider'])->toBe([
             'redirect_uri' => 'http://localhost/auth/oidc/callback',
@@ -105,6 +106,44 @@ it('warns when the IdP has no end session endpoint', function (): void {
     [$exitCode, $report] = configureOidc();
 
     expect($exitCode)->toBe(0)->and(statusesByCheck($report)['end session'])->toBe('warning');
+});
+
+it('fails on the per-request array cache outside tests, where no login could complete', function (): void {
+    FakeIdentityProvider::fake();
+    Config::set('oidc.cache.store', 'array');
+    app()->detectEnvironment(fn (): string => 'production');
+
+    [$exitCode, $report] = configureOidc();
+    $cacheCheck = collect($report['checks'])->firstWhere('check', 'cache store');
+
+    expect($exitCode)->toBe(1)
+        ->and($cacheCheck['status'])->toBe('failure')
+        ->and($cacheCheck['detail'])->toContain('array');
+});
+
+it('names the cache store that makes each login state single-use', function (): void {
+    FakeIdentityProvider::fake();
+    Config::set('oidc.cache.store', 'file');
+
+    [, $report] = configureOidc();
+
+    expect(collect($report['checks'])->firstWhere('check', 'cache store'))->toBe([
+        'check' => 'cache store',
+        'status' => 'ok',
+        'detail' => 'Cache store [file]: each login state is consumed there once. With several app servers, use a store they share (database, redis).',
+    ]);
+});
+
+it('checks the app default cache store when oidc.cache.store is empty, and accepts a shared one outside tests', function (): void {
+    FakeIdentityProvider::fake();
+    Config::set('oidc.cache.store', '');
+    Config::set('cache.default', 'file');
+    app()->detectEnvironment(fn (): string => 'production');
+
+    [$exitCode, $report] = configureOidc();
+
+    expect($exitCode)->toBe(0)
+        ->and(collect($report['checks'])->firstWhere('check', 'cache store')['detail'])->toStartWith('Cache store [file]:');
 });
 
 it('warns when app.timezone is not UTC', function (): void {
@@ -220,6 +259,7 @@ it('reports the detail of every check for a working IdP', function (): void {
         ['check' => 'client', 'status' => 'ok', 'detail' => 'Confidential client (client_secret_basic).'],
         ['check' => 'redirect uri', 'status' => 'ok', 'detail' => 'http://localhost/auth/oidc/callback'],
         ['check' => 'timezone', 'status' => 'ok', 'detail' => 'app.timezone is UTC.'],
+        ['check' => 'cache store', 'status' => 'ok', 'detail' => 'Cache store [array]: each login state is consumed there once. With several app servers, use a store they share (database, redis).'],
     ]);
 });
 
@@ -373,6 +413,7 @@ it('prints every check and the URIs to register in the table', function (): void
             ['client', 'WARNING', 'No client secret: the IdP client must be public (PKCE only).'],
             ['redirect uri', 'OK', 'http://localhost/auth/oidc/callback'],
             ['timezone', 'OK', 'app.timezone is UTC.'],
+            ['cache store', 'OK', 'Cache store [array]: each login state is consumed there once. With several app servers, use a store they share (database, redis).'],
         ])
         ->expectsOutput('Register at the IdP:')
         ->expectsOutput('  redirect_uri: http://localhost/auth/oidc/callback')

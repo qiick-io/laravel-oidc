@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Upgrade notes
 
 - **`oidc:import-legacy-subjects` takes the issuer from the bound `ProviderConfigurationRepositoryContract`, not from `oidc.issuer`, and needs `--issuer` while SSO is not configured.** An app with database settings no longer stamps imported identities with a stale config issuer that logins never use (#38). A deploy step that ran the import with SSO still off adds `--issuer`.
+- **Each login `state` is now consumed on `oidc.cache.store` (the app's default store when null).** With several app servers that store must be shared (database, redis); the array driver makes every SSO callback fail outside the app's tests, and `oidc:configure` reports it as a failure. `AuthorizationCodeFlowService` takes two more constructor arguments (`cache`, `isArrayCacheAllowed`); the service provider passes them.
 - **A login that asked for an `acr` (`oidc.mfa.request_acr_values`, `acr_values` or the `claims` parameter) and got none of the requested values no longer counts as MFA, even with `amr=mfa`**: the app's second factor runs (or, with `oidc.mfa.require_requested_acr`, the login is refused).
 - `AuthorizationCodeFlowService` takes two more constructor arguments (`leewaySeconds`, `isRequestedAcrRequired`); the service provider passes them, an app that builds it by hand must too. `redirect()` throws `InvalidArgumentException` for a `max_age` that is not a whole number of seconds, 0 or more.
 - `IdentityProviderHttpService::UnlimitedTimeoutSeconds` is removed (the class is internal); `oidc.http.timeout = 0` still means a 24-hour ceiling.
@@ -21,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The authorization response `state` is single-use across requests and servers (RFC 6749 §10.12, RFC 9700 §4.7): the callback consumes it with an atomic add on the OIDC cache store before the code exchange. Removing it from the session alone let two parallel callbacks that loaded the session before either saved it both pass the check, leaving only the IdP's single-use code to stop the second. A cache that does not answer refuses the login (fail closed).
 - RP-initiated logout sends a random `state` and the new return route `GET /auth/oidc/logged-out` (`oidc.logged-out`) checks it against a ten-minute HttpOnly, SameSite=Lax cookie (Secure over https) before redirecting to `oidc.logout.redirect_to`, taken from config only (standards review S7). A missing or wrong state is logged and still redirects. An explicit post-logout URI skips the check.
 - A signed token whose payload holds a number JSON cannot carry back (`exp: 1e999`) is refused as an invalid token instead of failing with a 500.
 - A cached JWKS that published the token's `kid` twice no longer blocks logins until `oidc.cache.jwks_ttl`: the set is refetched once per refetch cooldown, so logins recover as soon as the IdP fixes it.
