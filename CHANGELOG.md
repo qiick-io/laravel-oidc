@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A login whose id_token and userinfo carry no email is refused with the new reason `email_not_released` ("the identity provider did not share an email address") instead of `email_missing`, which now means only an email that is not valid. The userinfo call stays the documented path for IdPs such as Signaculum that release the profile and email claims at userinfo only (OIDC Core 5.4); the `oidc.userinfo` config comment says so (#64).
 - `oidc:configure` treats an `http://[::1]` redirect URI as local instead of warning about plain http on a public host.
 
 ### Documentation

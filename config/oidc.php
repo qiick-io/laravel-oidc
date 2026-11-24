@@ -236,7 +236,10 @@ return [
     /*
      * Fetch the userinfo endpoint after the code exchange and merge its claims
      * under the id_token claims (the signed id_token wins on any conflict).
-     * Turn off for an IdP that puts every claim in the id_token.
+     * Turn off only for an IdP that puts every claim in the id_token. Keep it
+     * on for Signaculum: it releases the profile and email claims at userinfo
+     * only (OIDC Core 5.4), so without userinfo every login that needs an
+     * email is refused with `email_not_released`.
      */
     'userinfo' => true,
 

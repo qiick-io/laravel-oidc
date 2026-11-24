@@ -214,7 +214,13 @@ final readonly class UserLinkingService
     {
         $email = $identity->claim('email');
 
-        if (! is_string($email) || filter_var(trim($email), FILTER_VALIDATE_EMAIL) === false) {
+        // OIDC Core 5.4 lets an IdP release the email at userinfo only (as
+        // Signaculum does), so a missing claim usually means userinfo is off.
+        if (! is_string($email) || trim($email) === '') {
+            throw new LoginRefusedException(LoginRefusalReasonEnum::EmailNotReleased);
+        }
+
+        if (filter_var(trim($email), FILTER_VALIDATE_EMAIL) === false) {
             throw new LoginRefusedException(LoginRefusalReasonEnum::EmailMissing);
         }
 

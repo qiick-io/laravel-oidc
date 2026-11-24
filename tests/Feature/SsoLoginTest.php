@@ -102,9 +102,14 @@ it('links without email_verified when require_verified_email is off (Entra ID)',
     expect(auth()->id())->toBe($user->id);
 });
 
-it('refuses a login without a usable email when linking is needed', function (mixed $email): void {
-    assertRefused(ssoLogin($this, fakeProvider(['auto_link' => true, 'jit' => true]), ['email' => $email]), LoginRefusalReasonEnum::EmailMissing);
-})->with([null, '', 'not-an-email']);
+it('refuses a login without a usable email when linking is needed', function (mixed $email, LoginRefusalReasonEnum $reason): void {
+    assertRefused(ssoLogin($this, fakeProvider(['auto_link' => true, 'jit' => true]), ['email' => $email]), $reason);
+})->with([
+    'not released' => [null, LoginRefusalReasonEnum::EmailNotReleased],
+    'empty' => ['', LoginRefusalReasonEnum::EmailNotReleased],
+    'blank' => ['   ', LoginRefusalReasonEnum::EmailNotReleased],
+    'not an email' => ['not-an-email', LoginRefusalReasonEnum::EmailMissing],
+]);
 
 it('does not auto-link a user already linked to another identity of the same issuer', function (): void {
     $user = localUser('sso.user@example.com');
