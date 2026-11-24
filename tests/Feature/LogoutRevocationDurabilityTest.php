@@ -14,7 +14,6 @@ use Illuminate\Support\Facades\Route;
 use Qiick\Oidc\Data\IdentitySessionData;
 use Qiick\Oidc\Data\LogoutTokenData;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
-use Qiick\Oidc\Services\IdentitySessionService;
 use Qiick\Oidc\Services\SessionRevocationService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
 
@@ -35,13 +34,13 @@ beforeEach(function (): void {
  */
 function durableSsoSession(?string $sessionId = 'fake-session-1', string $subject = 'fake-subject-1', ?int $authenticatedAt = null): array
 {
-    return [IdentitySessionService::SESSION_KEY => (new IdentitySessionData(
+    return storedSsoSession(new IdentitySessionData(
         issuer: 'https://idp.example.com/realms/test',
         subject: $subject,
         sessionId: $sessionId,
         idToken: 'header.payload.signature',
         authenticatedAt: $authenticatedAt ?? Date::now()->getTimestamp(),
-    ))->toArray()];
+    ));
 }
 
 it('persists a back-channel logout in oidc_logout_revocations', function (): void {
