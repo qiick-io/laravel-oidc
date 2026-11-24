@@ -12,6 +12,8 @@ use Qiick\Oidc\Services\IdentitySessionService;
  * Completes an SSO login that went through the app's own second factor: when
  * the challenge signs the user in, the parked SSO identity becomes the
  * session identity.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class PromotePendingIdentityListener
 {

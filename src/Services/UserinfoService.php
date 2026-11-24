@@ -18,6 +18,8 @@ use Qiick\Oidc\Exceptions\InvalidTokenException;
  *
  * ponytail: only plain JSON responses. A signed or encrypted userinfo response
  * (`application/jwt`) is refused; add it if an IdP needs it.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class UserinfoService
 {

@@ -15,6 +15,8 @@ namespace Qiick\Oidc\Data;
  * to false as in their specs, and the package never refuses an IdP for one.
  * They are trailing and optional, so a discovery document cached by an older
  * release still rebuilds.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class DiscoveryDocumentData
 {

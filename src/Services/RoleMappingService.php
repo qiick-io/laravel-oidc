@@ -24,6 +24,8 @@ use Qiick\Oidc\Data\AuthenticatedIdentityData;
  * Signaculum's `orgs` list, of which only the configured organisation counts.
  * A login without that organisation in `orgs` revokes the managed roles: the
  * user is no longer a member.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class RoleMappingService
 {
