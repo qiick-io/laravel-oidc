@@ -6,6 +6,7 @@ namespace Qiick\Oidc\Repositories;
 
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Routing\UrlGenerator;
+use Illuminate\Support\Facades\Route;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Data\ProviderConfigurationData;
 use Qiick\Oidc\Enums\TokenEndpointAuthMethodEnum;
@@ -49,8 +50,18 @@ final readonly class ConfigProviderConfigurationRepository implements ProviderCo
             scopes: array_values(array_unique(['openid', ...$scopes])),
             tokenEndpointAuthMethod: TokenEndpointAuthMethodEnum::tryFrom((string) $this->string('oidc.token_endpoint_auth_method'))
                 ?? TokenEndpointAuthMethodEnum::ClientSecretBasic,
-            postLogoutRedirectUri: $this->string('oidc.post_logout_redirect_uri') ?? $this->urlGenerator->to('/'),
+            postLogoutRedirectUri: $this->string('oidc.post_logout_redirect_uri') ?? $this->defaultPostLogoutRedirectUri(),
         );
+    }
+
+    /**
+     * The package's post-logout return route, which checks the logout state
+     * (standards review S7), or the app root when the app left that route
+     * out through `oidc.routes.except` or `oidc.routes.enabled`.
+     */
+    private function defaultPostLogoutRedirectUri(): string
+    {
+        return Route::has('oidc.logged-out') ? $this->urlGenerator->route('oidc.logged-out') : $this->urlGenerator->to('/');
     }
 
     /**

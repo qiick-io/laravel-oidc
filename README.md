@@ -193,7 +193,7 @@ $request->session()->regenerateToken();
 return $endSessionUrl !== null ? redirect()->away($endSessionUrl) : redirect('/');
 ```
 
-Register `oidc.post_logout_redirect_uri` (default `{APP_URL}/`) as a post-logout redirect URI at the IdP.
+By default the IdP sends the browser back to the package route `GET /auth/oidc/logged-out` (`oidc.logged-out`), which `oidc:configure` prints: register it at the IdP as a post-logout redirect URI. `endSessionUrl()` adds a random `state` (RP-Initiated Logout 1.0 §2) and keeps it for ten minutes in an HttpOnly, SameSite=Lax cookie on `/auth/oidc` (Secure over https), because the app invalidates its session before the browser comes back. The route checks the state, forgets the cookie and redirects to `oidc.logout.redirect_to` (default `/`), which comes from config only. A missing or wrong state is logged as a warning and still redirects: the local logout has already happened. An explicit `oidc.post_logout_redirect_uri` (or an app repository that passes its own `postLogoutRedirectUri`) skips the state check.
 
 ### Back-channel logout
 
@@ -245,7 +245,8 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.break_glass.roles` / `require_two_factor` / `query_parameter` | `['super-admin']` / `true` / `local` | SSO-only mode, see above. |
 | `oidc.roles.*` | disabled | Role mapping, see above. |
 | `oidc.mfa.required` / `amr_values` / `acr_values` / `request_acr_values` | `false` / `['mfa']` / `['urn:qiick:loa:mfa']` / `null` | Second factor, see above. |
-| `oidc.post_logout_redirect_uri` | `null` | `null` means `{APP_URL}/`. Sent on RP-initiated logout. |
+| `oidc.post_logout_redirect_uri` | `null` | `null` means the package return route `{APP_URL}/auth/oidc/logged-out`, which checks the logout `state`. Sent on RP-initiated logout. |
+| `oidc.logout.redirect_to` | `/` | Where the post-logout return route sends the browser. |
 | `oidc.userinfo` | `true` | Merge the userinfo claims into the identity. |
 | `oidc.routes.enabled` / `prefix` / `middleware` | `true` / `auth/oidc` / `['web', 'guest']` | The package routes; `middleware` applies to redirect and callback. |
 | `oidc.routes.except` | `[]` | Names of package routes the app registers itself (for example `['oidc.callback']`); every other package route is still registered. |

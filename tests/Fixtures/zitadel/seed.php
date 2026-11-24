@@ -95,7 +95,7 @@ $application = zitadelRequest('POST', $zitadelUrl.'/management/v1/projects/'.$pr
     'name' => 'laravel-app',
     'redirectUris' => ['http://localhost/auth/oidc/callback'],
     // Exact match with Testbench's UrlGenerator::to('/') → http://localhost
-    'postLogoutRedirectUris' => ['http://localhost'],
+    'postLogoutRedirectUris' => ['http://localhost', 'http://localhost/auth/oidc/logged-out'],
     'responseTypes' => ['OIDC_RESPONSE_TYPE_CODE'],
     'grantTypes' => ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE'],
     'appType' => 'OIDC_APP_TYPE_WEB',

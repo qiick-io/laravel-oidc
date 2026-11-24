@@ -66,7 +66,7 @@ it('passes for a working IdP and lists the URIs to register', function (): void 
         ])
         ->and($report['register_at_identity_provider'])->toBe([
             'redirect_uri' => 'http://localhost/auth/oidc/callback',
-            'post_logout_redirect_uri' => 'http://localhost',
+            'post_logout_redirect_uri' => 'http://localhost/auth/oidc/logged-out',
             'backchannel_logout_uri' => 'http://localhost/auth/oidc/backchannel-logout',
         ])
         ->and($output)->not->toContain('fake-client-secret');
@@ -376,7 +376,7 @@ it('prints every check and the URIs to register in the table', function (): void
         ])
         ->expectsOutput('Register at the IdP:')
         ->expectsOutput('  redirect_uri: http://localhost/auth/oidc/callback')
-        ->expectsOutput('  post_logout_redirect_uri: http://localhost')
+        ->expectsOutput('  post_logout_redirect_uri: http://localhost/auth/oidc/logged-out')
         ->expectsOutput('  backchannel_logout_uri: http://localhost/auth/oidc/backchannel-logout')
         ->expectsOutput('The OIDC setup looks good.')
         ->assertSuccessful();
@@ -402,7 +402,7 @@ it('lists the front-channel logout URI and how to register it when front-channel
         ])
         ->and($report['register_at_identity_provider'])->toBe([
             'redirect_uri' => 'http://localhost/auth/oidc/callback',
-            'post_logout_redirect_uri' => 'http://localhost',
+            'post_logout_redirect_uri' => 'http://localhost/auth/oidc/logged-out',
             'backchannel_logout_uri' => 'http://localhost/auth/oidc/backchannel-logout',
             'frontchannel_logout_uri' => 'http://localhost/auth/oidc/frontchannel-logout',
         ]);

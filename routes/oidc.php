@@ -7,6 +7,7 @@ use Qiick\Oidc\Http\Controllers\BackChannelLogoutController;
 use Qiick\Oidc\Http\Controllers\FrontChannelLogoutController;
 use Qiick\Oidc\Http\Controllers\OidcCallbackController;
 use Qiick\Oidc\Http\Controllers\OidcRedirectController;
+use Qiick\Oidc\Http\Controllers\PostLogoutReturnController;
 
 /*
  * Routes registered by the package under `oidc.routes.prefix`.
@@ -37,6 +38,10 @@ Route::middleware(is_array($browserMiddleware) ? $browserMiddleware : ['web'])->
 if ($shouldRegister('oidc.backchannel-logout')) {
     Route::post('backchannel-logout', BackChannelLogoutController::class)
         ->name('oidc.backchannel-logout');
+}
+
+if ($shouldRegister('oidc.logged-out')) {
+    Route::middleware('web')->get('logged-out', PostLogoutReturnController::class)->name('oidc.logged-out');
 }
 
 if ($shouldRegister('oidc.frontchannel-logout')) {

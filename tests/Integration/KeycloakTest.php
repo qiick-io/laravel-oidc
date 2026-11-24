@@ -9,6 +9,7 @@ use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Cookie;
 use Psr\Http\Message\ResponseInterface;
 use Qiick\Oidc\Contracts\RoleSynchronizationContract;
 use Qiick\Oidc\Models\UserIdentity;
@@ -139,7 +140,14 @@ it('ends the Keycloak session through RP-initiated logout', function (): void {
     expect($silentLogin->getStatusCode())->toBe(302)
         ->and($silentLogin->getHeaderLine('Location'))->toStartWith('http://localhost/auth/oidc/callback?');
 
-    expect($browser->get($endSessionUrl)->getHeaderLine('Location'))->toBe('http://localhost');
+    $stateCookie = Cookie::queued(RpInitiatedLogoutService::STATE_COOKIE, null, '/auth/oidc');
+    $postLogoutLocation = $browser->get($endSessionUrl)->getHeaderLine('Location');
+
+    // The default post-logout URI is the package route, which checks the state (S7).
+    expect($postLogoutLocation)->toBe('http://localhost/auth/oidc/logged-out?state='.queryParameters($endSessionUrl)['state']);
+    $this->withCookie(RpInitiatedLogoutService::STATE_COOKIE, (string) $stateCookie?->getValue())
+        ->get($postLogoutLocation)
+        ->assertRedirect('/');
 
     $afterLogout = $browser->get((string) $this->get('/auth/oidc/redirect')->headers->get('Location'));
 
