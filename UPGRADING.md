@@ -1,5 +1,15 @@
 # Upgrading
 
+
+## Post-logout return route (from 1.0.0-beta.6)
+
+RP-initiated logout now sends a `state` and, by default, asks the IdP to return to the package route `{APP_URL}/auth/oidc/logged-out`, which checks that state and then redirects to `oidc.logout.redirect_to` (default `/`).
+
+- **Register `{APP_URL}/auth/oidc/logged-out` at the IdP** as a post-logout redirect URI (`php artisan oidc:configure` prints it). Until it is registered, the IdP refuses to redirect there after logout.
+- Set `oidc.logout.redirect_to` to the page users should land on (for example `/login`).
+- An app that sets `oidc.post_logout_redirect_uri`, or passes `postLogoutRedirectUri` from its own `ProviderConfigurationRepositoryContract`, keeps its URI and skips the state check; pass `route('oidc.logged-out')` there to get it.
+- An app that owns its routes can leave the route out with `oidc.routes.except = ['oidc.logged-out']`; the default post-logout URI then falls back to `{APP_URL}/`.
+
 ## Adopting `qiick/laravel-outbound` (from 1.0.0-beta.4)
 
 ### Composer

@@ -200,10 +200,22 @@ return [
 
     /*
      * Where the IdP sends the browser after RP-initiated logout. Null means
-     * `{APP_URL}/`. It must be registered at the IdP as a post-logout
-     * redirect URI, or the IdP shows its own confirmation page instead.
+     * the package route `{APP_URL}/auth/oidc/logged-out`, which checks the
+     * logout `state` and then redirects to `logout.redirect_to`. It must be
+     * registered at the IdP as a post-logout redirect URI (`oidc:configure`
+     * prints it). An explicit URI here skips the state check.
      */
     'post_logout_redirect_uri' => null,
+
+    'logout' => [
+
+        /*
+         * Where the post-logout return route sends the browser. Taken from
+         * config only, never from the request.
+         */
+        'redirect_to' => '/',
+
+    ],
 
     /*
      * Fetch the userinfo endpoint after the code exchange and merge its claims

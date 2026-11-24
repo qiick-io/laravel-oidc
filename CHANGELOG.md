@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
+- **Register `{APP_URL}/auth/oidc/logged-out` at the IdP as a post-logout redirect URI.** It is the new default `oidc.post_logout_redirect_uri`; `oidc:configure` prints it. See `UPGRADING.md`.
 - **Recreate beta databases (`php artisan migrate:fresh`).** `user_identities` now has a unique `(user_id, issuer)` key instead of a plain index. A database that already holds two identities of one issuer for the same user cannot take the new key; keep one of them before recreating.
 - `JwtValidatorService::SUPPORTED_ALGORITHMS` is replaced by `JwtValidatorService::supportedAlgorithms()`, with the same list.
 
 ### Security
 
+- RP-initiated logout sends a random `state` and the new return route `GET /auth/oidc/logged-out` (`oidc.logged-out`) checks it against a ten-minute HttpOnly, SameSite=Lax cookie (Secure over https) before redirecting to `oidc.logout.redirect_to`, taken from config only (standards review S7). A missing or wrong state is logged and still redirects. An explicit post-logout URI skips the check.
 - A `sub`-only back-channel logout received while the app's second factor was pending no longer stops matching once the challenge completes: promotion keeps the callback time as the session's `authenticated_at`.
 - Auto-link can no longer link one user to two identities of the same issuer under concurrent callbacks: unique `(user_id, issuer)` decides and the loser is refused with `linked_to_another_identity`. `oidc:import-legacy-subjects` reports such a user as a conflict instead of failing on the key.
 - `aud` shaped as a JSON object is refused in `id_token` and `logout_token` (OIDC Core §2: a string or an array of strings).

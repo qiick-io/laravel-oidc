@@ -61,7 +61,7 @@ final readonly class OidcSettingsRepositoryService implements ProviderConfigurat
             clientSecret: $this->settings->oidcClientSecret(),       // already decrypted by the service
             redirectUri: url('auth/oidc/callback'),
             scopes: ['openid', 'profile', 'email'],
-            postLogoutRedirectUri: url('/login'),
+            postLogoutRedirectUri: route('oidc.logged-out'), // checks the logout state; set oidc.logout.redirect_to to '/login'
         );
     }
 }
