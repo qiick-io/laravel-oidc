@@ -9,8 +9,6 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Config;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Data\LogoutTokenData;
-use Qiick\Oidc\Exceptions\InvalidTokenException;
-use Qiick\Oidc\Exceptions\OidcException;
 use Qiick\Oidc\Services\SessionRevocationService;
 
 /**
@@ -40,32 +38,29 @@ final class FrontChannelLogoutController
             return $this->error(400, 'Front-channel logout requires both [iss] and [sid].');
         }
 
+        // The revocation table keeps `sid` in a 255-character column.
+        if (strlen($sessionId) > 255) {
+            return $this->error(400, 'Front-channel logout [sid] is longer than 255 characters.');
+        }
+
         if (trim($sessionId) !== $sessionId) {
             return $this->error(400, 'Front-channel logout [sid] has leading or trailing whitespace.');
         }
 
-        try {
-            $configuration = $configurationRepository->configuration();
-        } catch (OidcException $exception) {
-            return $this->error(400, $exception->getMessage());
-        }
-
-        if ($issuer !== $configuration->issuer) {
+        // isEnabled() above guarantees the configuration can be built.
+        if ($issuer !== $configurationRepository->configuration()->issuer) {
             return $this->error(400, 'Front-channel logout [iss] does not match the configured issuer.');
         }
 
-        try {
-            $sessionRevocation->revoke(new LogoutTokenData(
-                issuer: $issuer,
-                subject: null,
-                sessionId: $sessionId,
-                tokenId: null,
-                expiresAt: null,
-                channel: 'frontchannel',
-            ));
-        } catch (InvalidTokenException $exception) {
-            return $this->error(400, $exception->getMessage());
-        }
+        // Without a jti there is no replay key to collide with: every call stores a row.
+        $sessionRevocation->revoke(new LogoutTokenData(
+            issuer: $issuer,
+            subject: null,
+            sessionId: $sessionId,
+            tokenId: null,
+            expiresAt: null,
+            channel: 'frontchannel',
+        ));
 
         $issuerOrigin = $this->issuerOrigin($issuer);
 
@@ -89,7 +84,8 @@ final class FrontChannelLogoutController
         $host = parse_url($issuer, PHP_URL_HOST);
         $port = parse_url($issuer, PHP_URL_PORT);
 
-        if (! is_string($scheme) || ! is_string($host) || $scheme === '' || $host === '') {
+        // parse_url() leaves out an empty scheme or host rather than returning ''.
+        if (! is_string($scheme) || ! is_string($host)) {
             return "'none'";
         }
 

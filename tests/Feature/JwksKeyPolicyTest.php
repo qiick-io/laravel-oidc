@@ -254,3 +254,33 @@ it('skips a cached JWKS entry that is not a key object', function (): void {
 
     expect(validateWithServedJwks(signedWith($identityProvider, $privateKey, 'RS256', 'rsa-key'))['sub'])->toBe('fake-subject-1');
 });
+
+it('refuses a signed token whose exp overflows to infinity, instead of failing with a 500', function (): void {
+    $privateKey = rsaKey(2048);
+    $identityProvider = serveJwks([rsaJwk($privateKey, 'rsa-key')], 'RS256');
+    $claimsJson = str_replace('"exp":'.($identityProvider->idTokenClaims()['exp']), '"exp":1e999', (string) json_encode($identityProvider->idTokenClaims(['nonce' => KEY_POLICY_NONCE])));
+    $signingInput = JWT::urlsafeB64Encode((string) json_encode(['typ' => 'JWT', 'alg' => 'RS256', 'kid' => 'rsa-key'])).'.'.JWT::urlsafeB64Encode($claimsJson);
+    openssl_sign($signingInput, $signature, $privateKey, 'sha256');
+
+    expect($claimsJson)->toContain('"exp":1e999');
+
+    validateWithServedJwks($signingInput.'.'.JWT::urlsafeB64Encode($signature));
+})->throws(InvalidTokenException::class);
+
+it('recovers as soon as the IdP fixes a JWKS that published the kid twice', function (): void {
+    $privateKey = rsaKey(2048);
+    $publishedKeys = [rsaJwk($privateKey, 'twin'), rsaJwk(rsaKey(2048), 'twin')];
+    Http::fake([KEY_POLICY_JWKS_URI => function () use (&$publishedKeys) {
+        return Http::response(['keys' => $publishedKeys]);
+    }]);
+    $identityProvider = FakeIdentityProvider::fake();
+    $identityProvider->withDiscovery(['jwks_uri' => KEY_POLICY_JWKS_URI]);
+
+    expect(fn () => validateWithServedJwks(signedWith($identityProvider, $privateKey, 'RS256', 'twin')))
+        ->toThrow(InvalidTokenException::class, 'more than once');
+
+    // The IdP fixes its key set: the cached broken set must not block logins until jwks_ttl.
+    $publishedKeys = [rsaJwk($privateKey, 'twin')];
+
+    expect(validateWithServedJwks(signedWith($identityProvider, $privateKey, 'RS256', 'twin'))['sub'])->toBe('fake-subject-1');
+});

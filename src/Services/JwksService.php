@@ -41,7 +41,18 @@ final readonly class JwksService
         $cacheKey = sprintf('oidc:jwks:%s', hash('sha256', $discovery->jwksUri));
         $cachedKeys = $this->cache->get($cacheKey);
         $publishedKeys = is_array($cachedKeys) ? $cachedKeys : $this->fetchAndCache($discovery, $cacheKey);
-        $matchingKey = $this->findKey($publishedKeys, $keyId, $algorithm);
+
+        try {
+            $matchingKey = $this->findKey($publishedKeys, $keyId, $algorithm);
+        } catch (InvalidTokenException $ambiguousKeyId) {
+            // A cached set with the kid twice must not block logins until the
+            // cache expires once the IdP fixes it: refetch, within the cooldown.
+            if (! is_array($cachedKeys) || ! $this->mayRefetch($cacheKey)) {
+                throw $ambiguousKeyId;
+            }
+
+            $matchingKey = $this->findKey($this->fetchAndCache($discovery, $cacheKey), $keyId, $algorithm);
+        }
 
         if ($matchingKey === null && is_array($cachedKeys) && $this->mayRefetch($cacheKey)) {
             $matchingKey = $this->findKey($this->fetchAndCache($discovery, $cacheKey), $keyId, $algorithm);

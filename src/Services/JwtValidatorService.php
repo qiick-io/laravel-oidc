@@ -10,6 +10,7 @@ use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 use Firebase\JWT\SignatureInvalidException;
 use Illuminate\Support\Facades\Date;
+use JsonException;
 use phpseclib3\Crypt\RSA;
 use Qiick\Oidc\Data\DiscoveryDocumentData;
 use Qiick\Oidc\Data\ProviderConfigurationData;
@@ -177,7 +178,13 @@ final readonly class JwtValidatorService
             throw new InvalidTokenException('Token [aud] is missing or not a list of strings.');
         }
 
-        $claims = json_decode(json_encode($payload, JSON_THROW_ON_ERROR), true);
+        try {
+            $claims = json_decode(json_encode($payload, JSON_THROW_ON_ERROR), true);
+        } catch (JsonException) {
+            // A signed payload can still hold a number JSON cannot carry back,
+            // such as `exp: 1e999` (INF): refuse it like any malformed token.
+            throw new InvalidTokenException('Token payload cannot be represented as JSON.');
+        }
 
         if (! is_array($claims)) {
             throw new InvalidTokenException('Token payload is not a JSON object.');

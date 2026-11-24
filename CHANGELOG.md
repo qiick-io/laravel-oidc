@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - RP-initiated logout sends a random `state` and the new return route `GET /auth/oidc/logged-out` (`oidc.logged-out`) checks it against a ten-minute HttpOnly, SameSite=Lax cookie (Secure over https) before redirecting to `oidc.logout.redirect_to`, taken from config only (standards review S7). A missing or wrong state is logged and still redirects. An explicit post-logout URI skips the check.
+- A signed token whose payload holds a number JSON cannot carry back (`exp: 1e999`) is refused as an invalid token instead of failing with a 500.
+- A cached JWKS that published the token's `kid` twice no longer blocks logins until `oidc.cache.jwks_ttl`: the set is refetched once per refetch cooldown, so logins recover as soon as the IdP fixes it.
+- `sub`, `sid` and `jti` longer than 255 characters are refused in back-channel and front-channel logout, and `oidc:import-legacy-subjects` reports such a legacy subject as a conflict, instead of MySQL truncating or refusing the value (OIDC Core 2 caps `sub` at 255).
 - A `sub`-only back-channel logout received while the app's second factor was pending no longer stops matching once the challenge completes: promotion keeps the callback time as the session's `authenticated_at`.
 - Auto-link can no longer link one user to two identities of the same issuer under concurrent callbacks: unique `(user_id, issuer)` decides and the loser is refused with `linked_to_another_identity`. `oidc:import-legacy-subjects` reports such a user as a conflict instead of failing on the key.
 - `aud` shaped as a JSON object is refused in `id_token` and `logout_token` (OIDC Core §2: a string or an array of strings).
@@ -40,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `OidcLogoutReceivedEvent` (channel, issuer, subject, SHA-256 of `sid`) is dispatched for every stored back-channel and front-channel logout, so products can log it (standards review S8). `SessionRevocationService` takes the event dispatcher as a third constructor argument; the service provider passes it.
 - `OidcLogoutReceivedEvent` (channel, issuer, subject, SHA-256 of `sid`) is dispatched for every stored back-channel and front-channel logout, so products can log it (standards review S8). `SessionRevocationService` takes the event dispatcher as a third constructor argument; the service provider passes it. The event is dispatched after the revocation is stored and cached; a listener that throws is logged and does not fail the logout.
 - `oidc:configure` warns when `app.timezone` is not `UTC`, and the README documents that the package's timestamps are UTC (standards review M7).
+
+### Changed
+
+- The back-channel logout `jti` cache pre-check is removed: the unique `(issuer, jti)` key already refuses a replay with the same answer, so the pre-check only duplicated it. `BackChannelLogoutService` no longer takes a cache store.
 
 ### Fixed
 
