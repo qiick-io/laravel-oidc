@@ -124,10 +124,18 @@ jobs:
           # Real-transport starts php -S per test; kill any leftover listeners.
           pkill -f 'php -S 127.0.0.1:' || true
 
-  mutate:
-    name: Mutation (per-class ≥95%)
+  # Per-class mutation gate over every class with logic in src/ (packages 1.0
+  # checklist item 3): one pest --mutate per class, split round-robin across
+  # parallel shards so no job runs near its timeout. Add a shard (and update
+  # MUTATE_SHARDS) before the longest one passes 30 minutes.
+  mutation-shards:
+    name: Mutation (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -147,7 +155,22 @@ jobs:
           composer update --no-interaction --prefer-dist --with-all-dependencies
 
       - name: Pest mutate per class
+        env:
+          MUTATE_SHARD: ${{ matrix.shard }}
+          MUTATE_SHARDS: 4
         run: bash scripts/mutate-per-class.sh
+
+  # One stable check name over every shard, for branch protection: it fails
+  # unless every shard succeeded (a cancelled or skipped shard fails it too).
+  mutate:
+    name: Mutation (per-class ≥95%)
+    needs: mutation-shards
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every shard passed
+        run: test "${{ needs.mutation-shards.result }}" = "success"
 
   # The identity key (issuer, subject) is case-sensitive, and the MySQL family's
   # default collations are not: the suite runs on each server engine the package
@@ -367,7 +390,7 @@ jobs:
 
   # The qiick standards pack (agent files, architecture test) must match app-ui.
   standards:
-    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@v0.11.0
+    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@cbb1843eb1f50ef5a38e7e7bdf9b8dbec7b48bed # v0.11.0
     with:
       standards: true
       registry: false

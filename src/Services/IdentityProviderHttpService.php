@@ -25,12 +25,6 @@ use Qiick\Outbound\Ssrf\UrlGuardOptions;
  */
 final readonly class IdentityProviderHttpService
 {
-    /**
-     * When `oidc.http.timeout` / `connect_timeout` is `0` ("no limit"), hop
-     * timeouts use this ceiling so outbound's ≥1s / ≤limits contract still holds.
-     */
-    public const int UnlimitedTimeoutSeconds = 86_400; // @pest-mutate-ignore: IncrementInteger,DecrementInteger
-
     public function __construct(
         private PinnedHttpClient $pinnedHttp,
         private UrlGuardOptions $urlGuardOptions,
@@ -99,13 +93,13 @@ final readonly class IdentityProviderHttpService
     }
 
     /**
-     * `0` keeps the historical "no limit" meaning by mapping onto
-     * {@see UnlimitedTimeoutSeconds}.
+     * `0` keeps the historical "no limit" meaning by mapping onto a 24-hour
+     * ceiling, so outbound's ≥1s / ≤limits contract still holds.
      */
     public static function resolveTimeoutSeconds(int $configuredSeconds): int
     {
         if ($configuredSeconds === 0) {
-            return self::UnlimitedTimeoutSeconds;
+            return 86_400;
         }
 
         return max(1, $configuredSeconds);

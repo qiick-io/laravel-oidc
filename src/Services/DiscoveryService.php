@@ -158,8 +158,8 @@ final readonly class DiscoveryService
             return $url;
         }
 
-        // preg_replace returns string for this subject; cast keeps the return type honest.
-        return (string) preg_replace('#^https?://[^/]+#i', rtrim($this->serverOrigin, '/'), $url); // @pest-mutate-ignore: RemoveStringCast
+        // preg_replace() returns null only on a regex engine error.
+        return preg_replace('#^https?://[^/]+#i', rtrim($this->serverOrigin, '/'), $url) ?? $url;
     }
 
     /**
@@ -170,8 +170,8 @@ final readonly class DiscoveryService
     {
         $payload = implode("\0", [
             $configuration->issuer,
-            (string) $this->discoveryBase, // @pest-mutate-ignore: RemoveStringCast
-            (string) $this->serverOrigin, // @pest-mutate-ignore: RemoveStringCast
+            $this->discoveryBase ?? '',
+            $this->serverOrigin ?? '',
         ]);
 
         return 'oidc:discovery:'.hash('sha256', $payload);

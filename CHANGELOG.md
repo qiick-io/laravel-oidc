@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A login that asked for an `acr` (`oidc.mfa.request_acr_values`, `acr_values` or the `claims` parameter) and got none of the requested values no longer counts as MFA, even with `amr=mfa`**: the app's second factor runs (or, with `oidc.mfa.require_requested_acr`, the login is refused).
 - `AuthorizationCodeFlowService` takes two more constructor arguments (`leewaySeconds`, `isRequestedAcrRequired`); the service provider passes them, an app that builds it by hand must too. `redirect()` throws `InvalidArgumentException` for a `max_age` that is not a whole number of seconds, 0 or more.
+- `IdentityProviderHttpService::UnlimitedTimeoutSeconds` is removed (the class is internal); `oidc.http.timeout = 0` still means a 24-hour ceiling.
 - **Register `{APP_URL}/auth/oidc/logged-out` at the IdP as a post-logout redirect URI.** It is the new default `oidc.post_logout_redirect_uri`; `oidc:configure` prints it. See `UPGRADING.md`.
 - `IdentitySessionService::PENDING_SECONDS` is removed; the pending SSO identity still waits ten minutes for the app's second factor.
 - **Recreate beta databases (`php artisan migrate:fresh`).** `user_identities` now has a unique `(user_id, issuer)` key instead of a plain index. A database that already holds two identities of one issuer for the same user cannot take the new key; keep one of them before recreating.
@@ -57,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A login whose id_token and userinfo carry no email is refused with the new reason `email_not_released` ("the identity provider did not share an email address") instead of `email_missing`, which now means only an email that is not valid. The userinfo call stays the documented path for IdPs such as Signaculum that release the profile and email claims at userinfo only (OIDC Core 5.4); the `oidc.userinfo` config comment says so (#64).
+- A `config/oidc.php` published before a nested key existed (for example `http.connect_timeout`, `http.max_response_bytes` or a new `mfa.*` key) now gets the package default for that key: the service provider merges the defaults into nested arrays, since Laravel's `mergeConfigFrom()` fills only top-level keys. Lists such as `scopes` stay the app's own.
 - `oidc:configure` treats an `http://[::1]` redirect URI as local instead of warning about plain http on a public host.
 
 ### Documentation
