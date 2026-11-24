@@ -9,6 +9,7 @@ use Illuminate\Contracts\Session\Session;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Date;
+use InvalidArgumentException;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
 use Qiick\Oidc\Data\ProviderConfigurationData;
@@ -79,8 +80,7 @@ final readonly class AuthorizationCodeFlowService
         $state = $this->randomToken(32);
         $nonce = $this->randomToken(32);
         $codeVerifier = $this->randomToken(64);
-        $requestedMaxAge = filter_var($additionalParameters['max_age'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0], 'flags' => FILTER_NULL_ON_FAILURE]);
-        $maxAge = $requestedMaxAge ?? $configuration->maxAge;
+        $maxAge = $this->maxAge($additionalParameters, $configuration->maxAge);
 
         $this->storePendingLogin($request->session(), $state, [
             'issuer' => $configuration->issuer,
@@ -204,6 +204,26 @@ final readonly class AuthorizationCodeFlowService
     }
 
     /**
+     * The `max_age` to send: the one passed to redirect(), else the
+     * configured one. A malformed value is refused rather than sent: the IdP
+     * might read `300.0` as 300 while the callback, holding no max_age,
+     * would leave `auth_time` unchecked (OIDC Core 3.1.3.7 step 13).
+     *
+     * @param  array<string, string>  $additionalParameters
+     *
+     * @throws InvalidArgumentException when the requested max_age is not a whole number of seconds, 0 or more
+     */
+    private function maxAge(array $additionalParameters, ?int $configuredMaxAge): ?int
+    {
+        if (! array_key_exists('max_age', $additionalParameters)) {
+            return $configuredMaxAge;
+        }
+
+        return filter_var($additionalParameters['max_age'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 0], 'flags' => FILTER_NULL_ON_FAILURE])
+            ?? throw new InvalidArgumentException('max_age must be a whole number of seconds, 0 or more.');
+    }
+
+    /**
      * The `acr` values this login asks for: `acr_values` (OIDC Core 3.1.2.1,
      * space-separated) or the `acr` member of the id_token part of the
      * `claims` parameter (5.5.1.1: `value` or `values`; `essential` alone
@@ -220,13 +240,39 @@ final readonly class AuthorizationCodeFlowService
         $idTokenClaimsRequest = is_array($claimsRequest) ? ($claimsRequest['id_token'] ?? null) : null;
         $acrRequest = is_array($idTokenClaimsRequest) ? ($idTokenClaimsRequest['acr'] ?? null) : null;
 
-        if (is_array($acrRequest)) {
-            $requestedValues = is_string($acrRequest['value'] ?? null) ? [$acrRequest['value']] : ($acrRequest['values'] ?? []);
+        $claimsAcrValues = is_array($acrRequest) ? $this->claimsAcrValues($acrRequest) : null;
 
-            return [...$requestedAcrValues, ...array_values(array_filter(is_array($requestedValues) ? $requestedValues : [], is_string(...)))];
+        if ($claimsAcrValues !== null) {
+            return [...$requestedAcrValues, ...$claimsAcrValues];
         }
 
         return $requestedAcrValues === [] ? null : $requestedAcrValues;
+    }
+
+    /**
+     * The `acr` member of the `claims` id_token request (OIDC Core 5.5.1):
+     * `value` or `values` name what is acceptable, `essential: true` alone
+     * asks for any `acr`, and a voluntary request without values asks for
+     * nothing (null). Malformed `values` make nothing acceptable, so the
+     * request fails closed instead of turning into "any acr" ([''] can never
+     * match, since an acceptable `acr` is never empty).
+     *
+     * @param  array<array-key, mixed>  $acrRequest
+     * @return list<string>|null
+     */
+    private function claimsAcrValues(array $acrRequest): ?array
+    {
+        if (is_string($acrRequest['value'] ?? null)) {
+            return [$acrRequest['value']];
+        }
+
+        if (array_key_exists('values', $acrRequest)) {
+            $values = $acrRequest['values'];
+
+            return is_array($values) && $values !== [] && array_is_list($values) && array_filter($values, is_string(...)) === $values ? $values : [''];
+        }
+
+        return ($acrRequest['essential'] ?? false) === true ? [] : null;
     }
 
     /**
@@ -244,13 +290,21 @@ final readonly class AuthorizationCodeFlowService
             return;
         }
 
-        $authenticationTime = $claims['auth_time'] ?? null;
+        $authenticationTimeClaim = $claims['auth_time'] ?? null;
 
-        if (! is_int($authenticationTime)) {
+        // A NumericDate may be fractional (RFC 7519 §2): whole seconds are enough here.
+        if (! is_int($authenticationTimeClaim) && ! is_float($authenticationTimeClaim)) {
             throw new InvalidTokenException('id_token has no numeric [auth_time], which max_age requires.');
         }
 
-        if (Date::now()->getTimestamp() - $authenticationTime > $maxAge + $this->leewaySeconds) {
+        $authenticationTime = (int) floor($authenticationTimeClaim);
+        $now = Date::now()->getTimestamp();
+
+        if ($authenticationTime > $now + $this->leewaySeconds) {
+            throw new InvalidTokenException('id_token [auth_time] is in the future.');
+        }
+
+        if ($now - $authenticationTime > $maxAge + $this->leewaySeconds) {
             throw new InvalidTokenException('id_token [auth_time] is older than max_age allows.');
         }
     }
@@ -272,9 +326,11 @@ final readonly class AuthorizationCodeFlowService
             return true;
         }
 
+        // An empty `acr` is no answer, and "0" means the login did not even
+        // meet ISO/IEC 29115 level 1 (OIDC Core 2), so neither counts as "any acr".
         $authenticationContext = $claims['acr'] ?? null;
-        $isMet = is_string($authenticationContext)
-            && ($requestedAcrValues === [] || in_array($authenticationContext, $requestedAcrValues, true));
+        $isMet = is_string($authenticationContext) && $authenticationContext !== ''
+            && ($requestedAcrValues === [] ? $authenticationContext !== '0' : in_array($authenticationContext, $requestedAcrValues, true));
 
         if (! $isMet && $this->isRequestedAcrRequired) {
             throw new InvalidTokenException('id_token [acr] is not one of the requested values.');

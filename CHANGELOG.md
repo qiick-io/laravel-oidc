@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
+- **A login that asked for an `acr` (`oidc.mfa.request_acr_values`, `acr_values` or the `claims` parameter) and got none of the requested values no longer counts as MFA, even with `amr=mfa`**: the app's second factor runs (or, with `oidc.mfa.require_requested_acr`, the login is refused).
+- `AuthorizationCodeFlowService` takes two more constructor arguments (`leewaySeconds`, `isRequestedAcrRequired`); the service provider passes them, an app that builds it by hand must too. `redirect()` throws `InvalidArgumentException` for a `max_age` that is not a whole number of seconds, 0 or more.
 - **Register `{APP_URL}/auth/oidc/logged-out` at the IdP as a post-logout redirect URI.** It is the new default `oidc.post_logout_redirect_uri`; `oidc:configure` prints it. See `UPGRADING.md`.
 - **Recreate beta databases (`php artisan migrate:fresh`).** `user_identities` now has a unique `(user_id, issuer)` key instead of a plain index. A database that already holds two identities of one issuer for the same user cannot take the new key; keep one of them before recreating.
 - `JwtValidatorService::SUPPORTED_ALGORITHMS` is replaced by `JwtValidatorService::supportedAlgorithms()`, with the same list.

@@ -154,9 +154,10 @@ $this->app->bind(SecondFactorChallengeContract::class, SsoSecondFactorChallengeS
 `oidc.mfa.request_acr_values` asks the IdP for a stronger login (`acr_values` on the authorization request). An app can also ask per login, through `AuthorizationCodeFlowService::redirect($request, ['acr_values' => '...'])` or the `claims` parameter (`{"id_token":{"acr":{"essential":true,"values":[...]}}}`). Each pending login remembers what it asked for, and the callback checks the answer:
 
 - `acr` is optional and `acr_values` only a request (OIDC Core 2 and 3.1.2.1), so by default a missing `acr`, or one that is not among the requested values, does not refuse the login: it counts as "MFA not proven", whatever `amr` says, and the app's own second factor runs.
-- With `oidc.mfa.require_requested_acr = true`, such a login is refused instead, for apps without their own second factor. A `claims` request with `essential` and no `values` accepts any `acr` but requires one.
+- With `oidc.mfa.require_requested_acr = true`, such a login is refused instead, for apps without their own second factor.
+- In the `claims` parameter, `"essential": true` without `values` accepts any `acr` except `"0"` (OIDC Core 2: level 1 not met) but requires one; a voluntary request without values asks for nothing; `values` that are not a non-empty list of strings make nothing acceptable.
 
-`oidc.mfa.max_age` (seconds, null by default) is sent as `max_age` to ask for a recent login; a `max_age` passed to `redirect()` wins over it. When it is sent, the `id_token` must carry `auth_time`, and a login with `now - auth_time > max_age + oidc.id_token.leeway` is refused (OIDC Core 3.1.2.1 and 3.1.3.7 step 13). Without `max_age`, `auth_time` is optional. An app with its own settings repository passes `maxAge` to `ProviderConfigurationData`.
+`oidc.mfa.max_age` (seconds, null by default) is sent as `max_age` to ask for a recent login; a `max_age` passed to `redirect()` wins over it and must be a whole number of seconds, 0 or more (anything else throws `InvalidArgumentException`). When it is sent, the `id_token` must carry `auth_time` (fractions of a second are dropped), and a login with `now - auth_time > max_age + oidc.id_token.leeway`, or an `auth_time` more than the leeway in the future, is refused (OIDC Core 3.1.2.1 and 3.1.3.7 step 13). Without `max_age`, `auth_time` is optional. An app with its own settings repository passes `maxAge` to `ProviderConfigurationData`.
 
 ### SSO-only mode and break-glass
 

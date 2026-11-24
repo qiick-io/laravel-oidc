@@ -143,8 +143,16 @@ it('applies the same rules to an acr requested through the claims parameter', fu
     'essential without values, present' => ['{"id_token":{"acr":{"essential":true}}}', ['acr' => 'anything'], true],
     'essential without values, missing' => ['{"id_token":{"acr":{"essential":true}}}', [], false],
     'single value, lower' => ['{"id_token":{"acr":{"value":"gold"}}}', ['acr' => 'bronze'], false],
-    'non-string values only: any acr, present' => ['{"id_token":{"acr":{"values":[42]}}}', ['acr' => 'anything'], true],
-    'non-string values only: any acr, missing' => ['{"id_token":{"acr":{"values":[42]}}}', [], false],
+    'non-string values: nothing is acceptable' => ['{"id_token":{"acr":{"values":[42]}}}', ['acr' => 'anything'], false],
+    'empty values: nothing is acceptable' => ['{"id_token":{"acr":{"values":[]}}}', ['acr' => 'anything'], false],
+    'mixed values: nothing is acceptable' => ['{"id_token":{"acr":{"values":[42,"gold"]}}}', ['acr' => 'gold'], false],
+    'values as an object: nothing is acceptable' => ['{"id_token":{"acr":{"values":{"level":"gold"}}}}', ['acr' => 'gold'], false],
+    'empty acr request: no constraint' => ['{"id_token":{"acr":{}}}', [], true],
+    'malformed values: nothing is acceptable' => ['{"id_token":{"acr":{"essential":true,"values":"gold"}}}', ['acr' => 'gold'], false],
+    'voluntary, without values: no constraint' => ['{"id_token":{"acr":{"essential":false}}}', [], true],
+    'voluntary with values, met' => ['{"id_token":{"acr":{"essential":false,"values":["gold"]}}}', ['acr' => 'gold'], true],
+    'any acr: "0" means level 1 not met' => ['{"id_token":{"acr":{"essential":true}}}', ['acr' => '0'], false],
+    'any acr: empty' => ['{"id_token":{"acr":{"essential":true}}}', ['acr' => ''], false],
     'acr not requested' => ['{"id_token":{"email":null}}', [], true],
     'acr requested as null (voluntary, no constraint)' => ['{"id_token":{"acr":null}}', [], true],
     'not JSON' => ['not-json', [], true],
@@ -166,14 +174,21 @@ it('reads acr_values separated by several spaces', function (): void {
     expect(stepUpLogin($identityProvider, ['acr_values' => '  gold   silver '], ['acr' => 'silver'])->acr())->toBe('silver');
 });
 
-it('takes only a whole, non-negative max_age from the authorization request', function (string $requestedMaxAge, ?string $sentMaxAge): void {
+it('sends a whole, non-negative max_age from the authorization request', function (): void {
     FakeIdentityProvider::fake(configOverrides: ['mfa.max_age' => 120]);
 
-    expect(queryParameters(startLogin(browserSession(), ['max_age' => $requestedMaxAge]))['max_age'] ?? null)->toBe($sentMaxAge);
-})->with([
-    'zero' => ['0', '0'],
-    'negative falls back to config' => ['-1', '120'],
-    'not a number falls back to config' => ['soon', '120'],
+    expect(queryParameters(startLogin(browserSession(), ['max_age' => '0']))['max_age'])->toBe('0');
+});
+
+it('refuses to send a malformed max_age, which would leave auth_time unchecked', function (string $requestedMaxAge, ?int $configuredMaxAge): void {
+    FakeIdentityProvider::fake(configOverrides: ['mfa.max_age' => $configuredMaxAge]);
+
+    startLogin(browserSession(), ['max_age' => $requestedMaxAge]);
+})->throws(InvalidArgumentException::class, 'max_age must be a whole number of seconds, 0 or more.')->with([
+    'decimal, nothing configured' => ['300.0', null],
+    'negative, nothing configured' => ['-1', null],
+    'not a number, nothing configured' => ['soon', null],
+    'decimal, config set' => ['300.0', 120],
 ]);
 
 it('requires a login in the very second the IdP sent when max_age is 0', function (): void {
@@ -212,3 +227,21 @@ it('signs in with an mfa config published before max_age and require_requested_a
     expect($identity->subject)->toBe('fake-subject-1')
         ->and(isMultiFactorProven($identity))->toBeFalse();
 });
+
+it('reads a fractional auth_time in whole seconds, as NumericDate allows, and refuses one in the future', function (float|int $secondsFromNow, bool $isAccepted): void {
+    $identityProvider = FakeIdentityProvider::fake(configOverrides: ['mfa.max_age' => 300, 'id_token.leeway' => 60]);
+    $login = fn () => stepUpLogin($identityProvider, claims: ['auth_time' => Date::now()->getTimestamp() + $secondsFromNow]);
+
+    if ($isAccepted) {
+        expect($login()->subject)->toBe('fake-subject-1');
+
+        return;
+    }
+
+    expect($login)->toThrow(InvalidTokenException::class, $secondsFromNow > 0 ? 'id_token [auth_time] is in the future.' : 'id_token [auth_time] is older than max_age allows.');
+})->with([
+    'fractional, a minute ago' => [-60.5, true],
+    'fractional, just past max_age' => [-360.4, false],
+    'within the leeway ahead' => [60, true],
+    'beyond the leeway ahead' => [61, false],
+]);
