@@ -381,7 +381,7 @@ vendor/bin/pest --group=zitadel
 
 ## Contributing and security
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Report vulnerabilities privately, as described in [SECURITY.md](./SECURITY.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Report vulnerabilities privately, as described in [SECURITY.md](./SECURITY.md). Every security check, with its spec and the tests that refuse a bad value, is listed in [`docs/SECURITY-CHECKLIST.md`](./docs/SECURITY-CHECKLIST.md).
 
 ## License
 
