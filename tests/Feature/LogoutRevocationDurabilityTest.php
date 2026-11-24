@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Auth\GenericUser;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Scope;
@@ -176,7 +177,8 @@ it('treats a failed table read as revoked and never as a negative cache', functi
     try {
         expect(app(SessionRevocationService::class)->isRevoked($identity))->toBeTrue();
         Log::shouldHaveReceived('warning')->withArgs(
-            fn (string $message): bool => str_contains($message, 'logout revocation table read failed'),
+            fn (string $message, array $context): bool => str_contains($message, 'logout revocation table read failed')
+                && $context === ['exception' => RuntimeException::class, 'message' => 'forced table read failure'],
         );
     } finally {
         Model::clearBootedModels();
@@ -289,7 +291,7 @@ it('sets expires_at to the later of revocation lifetime and token exp plus 120 s
     $receivedAt = Date::now()->getTimestamp();
     $tokenId = 'jti-ttl-'.$revocationTtl.'-'.($tokenSecondsFromNow ?? 'null');
 
-    $service = new SessionRevocationService(Cache::store(), $revocationTtl);
+    $service = new SessionRevocationService(Cache::store(), $revocationTtl, app(Dispatcher::class));
     $service->revoke(new LogoutTokenData(
         issuer: 'https://idp.example.com/realms/test',
         subject: null,

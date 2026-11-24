@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace Qiick\Oidc\Services;
 
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Qiick\Oidc\Data\IdentitySessionData;
 use Qiick\Oidc\Data\LogoutTokenData;
+use Qiick\Oidc\Events\OidcLogoutReceivedEvent;
 use Qiick\Oidc\Exceptions\InvalidTokenException;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
 use Throwable;
@@ -29,11 +31,14 @@ final readonly class SessionRevocationService
     public function __construct(
         private CacheRepository $cache,
         private int $revocationSeconds,
+        private Dispatcher $events,
     ) {}
 
     /**
      * Persist the revocation, then warm the cache. A duplicate (issuer, jti)
-     * is a replay and is refused.
+     * is a replay and is refused. Dispatches OidcLogoutReceivedEvent once the
+     * row is committed and cached, so a listener never logs a logout that was
+     * not stored.
      *
      * @throws InvalidTokenException when the logout token jti was already used
      */
@@ -59,26 +64,36 @@ final readonly class SessionRevocationService
             throw new InvalidTokenException('logout_token [jti] was already used.');
         }
 
-        // TTL floor is operational; tests assert revocation, not the exact TTL.
-        $cacheTtl = max(1, $expiresAt - $receivedAt->getTimestamp()); // @pest-mutate-ignore: IncrementInteger,DecrementInteger,MaxToMin,MinusToPlus
-
+        // Accelerator only; the table remains the source of truth.
         if ($logoutToken->sessionId !== null) {
-            // Accelerator only; table remains the source of truth.
-            $this->cache->put( // @pest-mutate-ignore: RemoveMethodCall
-                $this->sessionKey($logoutToken->issuer, $logoutToken->sessionId),
-                true, // @pest-mutate-ignore: TrueToFalse
-                $cacheTtl,
-            );
-
-            return;
+            $this->warmCache($this->cacheKey('sid', $logoutToken->issuer, $logoutToken->sessionId), $receivedAt->getTimestamp(), $expiresAt);
+        } elseif ($logoutToken->subject !== null) {
+            $this->warmCache($this->cacheKey('sub', $logoutToken->issuer, $logoutToken->subject), $receivedAt->getTimestamp(), $expiresAt);
         }
 
-        if ($logoutToken->subject !== null) {
-            $this->cache->put( // @pest-mutate-ignore: RemoveMethodCall
-                $this->subjectKey($logoutToken->issuer, $logoutToken->subject),
-                $receivedAt->getTimestamp(),
-                $cacheTtl,
-            );
+        $this->dispatchLogoutReceived($logoutToken);
+    }
+
+    /**
+     * Tells the app about a stored logout. The logout is already committed
+     * and cached, so an app listener that throws must not turn it into an
+     * error answer: the IdP would retry and hit the `jti` replay check, and
+     * the caller would skip the rest of its work (the remember token). The
+     * failure is logged instead, without the token or the sid.
+     */
+    private function dispatchLogoutReceived(LogoutTokenData $logoutToken): void
+    {
+        try {
+            $this->events->dispatch(new OidcLogoutReceivedEvent(
+                channel: $logoutToken->channel,
+                issuer: $logoutToken->issuer,
+                subject: $logoutToken->subject,
+                sessionIdHash: $logoutToken->sessionId !== null ? hash('sha256', $logoutToken->sessionId) : null,
+            ));
+        } catch (Throwable $throwable) {
+            Log::error('OidcLogoutReceivedEvent listener failed; the logout itself is stored.', [
+                'exception' => $throwable::class,
+            ]);
         }
     }
 
@@ -88,11 +103,11 @@ final readonly class SessionRevocationService
      */
     public function isRevoked(IdentitySessionData $identity): bool
     {
-        if ($identity->sessionId !== null && $this->cache->has($this->sessionKey($identity->issuer, $identity->sessionId))) {
+        if ($identity->sessionId !== null && $this->cache->has($this->cacheKey('sid', $identity->issuer, $identity->sessionId))) {
             return true;
         }
 
-        $subjectRevokedAt = $this->cache->get($this->subjectKey($identity->issuer, $identity->subject));
+        $subjectRevokedAt = $this->cache->get($this->cacheKey('sub', $identity->issuer, $identity->subject));
 
         if (is_int($subjectRevokedAt) && $identity->authenticatedAt <= $subjectRevokedAt) {
             return true;
@@ -102,8 +117,8 @@ final readonly class SessionRevocationService
             return $this->isRevokedInTable($identity);
         } catch (Throwable $throwable) {
             Log::warning('OIDC logout revocation table read failed; treating session as revoked.', [
-                'exception' => $throwable::class, // @pest-mutate-ignore: RemoveArrayItem
-                'message' => $throwable->getMessage(), // @pest-mutate-ignore: RemoveArrayItem
+                'exception' => $throwable::class,
+                'message' => $throwable->getMessage(),
             ]);
 
             return true;
@@ -128,10 +143,10 @@ final readonly class SessionRevocationService
                 ->first();
 
             if ($sessionRevocation !== null) {
-                $this->cache->put( // @pest-mutate-ignore: RemoveMethodCall
-                    $this->sessionKey($identity->issuer, $identity->sessionId),
-                    true, // @pest-mutate-ignore: TrueToFalse
-                    max(1, $sessionRevocation->expires_at->getTimestamp() - $now->getTimestamp()), // @pest-mutate-ignore: IncrementInteger,DecrementInteger,MaxToMin,MinusToPlus
+                $this->warmCache(
+                    $this->cacheKey('sid', $identity->issuer, $identity->sessionId),
+                    $sessionRevocation->received_at->getTimestamp(),
+                    $sessionRevocation->expires_at->getTimestamp(),
                 );
 
                 return true;
@@ -148,10 +163,10 @@ final readonly class SessionRevocationService
             ->first();
 
         if ($subjectRevocation !== null) {
-            $this->cache->put( // @pest-mutate-ignore: RemoveMethodCall
-                $this->subjectKey($identity->issuer, $identity->subject),
+            $this->warmCache(
+                $this->cacheKey('sub', $identity->issuer, $identity->subject),
                 $subjectRevocation->received_at->getTimestamp(),
-                max(1, $subjectRevocation->expires_at->getTimestamp() - $now->getTimestamp()), // @pest-mutate-ignore: IncrementInteger,DecrementInteger,MaxToMin,MinusToPlus
+                $subjectRevocation->expires_at->getTimestamp(),
             );
 
             return true;
@@ -174,13 +189,24 @@ final readonly class SessionRevocationService
         return max($fromRevocationLifetime, $fromToken);
     }
 
-    private function sessionKey(string $issuer, string $sessionId): string
+    /**
+     * Caches a revocation until the row's own expires_at, so the cache never
+     * outlives the table. The value is when the logout was received: the
+     * `sub` cut-off; for a `sid` key only its presence matters.
+     */
+    private function warmCache(string $cacheKey, int $receivedAt, int $expiresAt): void
     {
-        return 'oidc:revoked-sid:'.hash('sha256', $issuer.'|'.$sessionId); // @pest-mutate-ignore: ConcatRemoveLeft,ConcatRemoveRight,ConcatSwitchSides
+        $this->cache->put($cacheKey, $receivedAt, Date::createFromTimestamp($expiresAt));
     }
 
-    private function subjectKey(string $issuer, string $subject): string
+    /**
+     * One key per issuer and `sid` or `sub`; `$kind` keeps a `sid` and a
+     * `sub` with the same value apart.
+     *
+     * @param  'sid'|'sub'  $kind
+     */
+    private function cacheKey(string $kind, string $issuer, string $value): string
     {
-        return 'oidc:revoked-sub:'.hash('sha256', $issuer.'|'.$subject); // @pest-mutate-ignore: ConcatRemoveLeft,ConcatRemoveRight,ConcatSwitchSides
+        return sprintf('oidc:revoked-%s:%s', $kind, hash('sha256', sprintf('%s|%s', $issuer, $value)));
     }
 }

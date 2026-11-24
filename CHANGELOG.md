@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `aud` shaped as a JSON object is refused in `id_token` and `logout_token` (OIDC Core §2: a string or an array of strings), including an object with numeric keys such as `{"0": "client"}`, which decodes to a PHP list: the JSON type is checked before decoding to arrays.
 - The loser of two concurrent first logins of the same (issuer, `sub`) signs in as the user the winner linked, instead of being refused with a wrong reason (`linked_to_another_identity` or `account_not_linked`). An inactive user is still refused.
 - `oidc:import-legacy-subjects` inserts with `insertOrIgnore`, so a login that links the user or the `sub` during the import is reported as already linked or as a conflict instead of failing the command.
+- The logout revocation cache now expires with the row it mirrors (an absolute expiry instead of a computed TTL), and every cache path is covered by tests, so `SessionRevocationService` needs no mutation-testing exemptions.
 
 ### Added
 
@@ -34,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `oidc:configure` lists `frontchannel_logout_uri` among the URIs to register when `oidc.frontchannel_logout.enabled` is on, explains that the IdP client needs `frontchannel_logout_session_required`, and fails when the flag is on but the route is not registered (standards review S3).
 - `phpseclib/phpseclib` (`^3.0.58`) is a dependency, so `PS256` `id_token`s are verified instead of always failing closed: `firebase/php-jwt` needs it for RSASSA-PSS, and the package already listed `PS256` as supported. `firebase/php-jwt` now needs `^7.1.1`, the first release with PS256.
 - The fake IdP signs with P-384 keys (`rotateSigningKey(keyType: 'EC', curve: 'P-384')`) and publishes them for `ES384`; every supported algorithm now has an end-to-end verification test.
+- `OidcLogoutReceivedEvent` (channel, issuer, subject, SHA-256 of `sid`) is dispatched for every stored back-channel and front-channel logout, so products can log it (standards review S8). `SessionRevocationService` takes the event dispatcher as a third constructor argument; the service provider passes it.
+- `OidcLogoutReceivedEvent` (channel, issuer, subject, SHA-256 of `sid`) is dispatched for every stored back-channel and front-channel logout, so products can log it (standards review S8). `SessionRevocationService` takes the event dispatcher as a third constructor argument; the service provider passes it. The event is dispatched after the revocation is stored and cached; a listener that throws is logged and does not fail the logout.
 - `oidc:configure` warns when `app.timezone` is not `UTC`, and the README documents that the package's timestamps are UTC (standards review M7).
 
 ### Fixed
