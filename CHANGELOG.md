@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Concurrency tests with two real processes and database connections (`tests/Concurrency`, run on PostgreSQL, MySQL and MariaDB, skipped on SQLite): a `jti` delivered twice at once is stored once, two first logins of one `sub` provision one user, two subjects racing to auto-link one user link only one, and two logins meeting an unknown `kid` refetch the JWKS once.
 - `DiscoveryDocumentData` carries the IdP's advertised capabilities: front-channel and back-channel logout (with their session flags), `acr_values_supported` and `claims_parameter_supported`. Absent or malformed values take the spec default (`false`, or `null` for the list); a discovery document cached by an older release still loads (standards review S5).
 - `oidc:configure` warns when the IdP does not advertise back-channel logout with `sid`, front-channel logout with `iss` and `sid` while it is on, or a requested `acr` value, and its JSON report lists the capabilities under `identity_provider_capabilities`.
 - `oidc:configure` lists `frontchannel_logout_uri` among the URIs to register when `oidc.frontchannel_logout.enabled` is on, explains that the IdP client needs `frontchannel_logout_session_required`, and fails when the flag is on but the route is not registered (standards review S3).
