@@ -13,6 +13,8 @@ use Qiick\Oidc\Services\SsoOnlyModeService;
  * accounts. `Validated` fires inside Auth::attempt() after the password was
  * checked and before the session is touched, so throwing here leaves the user
  * signed out.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class EnforceSsoOnlyListener
 {

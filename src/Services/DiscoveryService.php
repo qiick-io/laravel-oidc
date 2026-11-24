@@ -28,6 +28,8 @@ use Qiick\Outbound\Ssrf\UrlGuardOptions;
  * issuer when fetching the document, and `server_origin` replaces scheme and
  * host of the server-side endpoints. The issuer itself is never rewritten, so
  * `iss` is still checked against what the browser sees.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class DiscoveryService
 {

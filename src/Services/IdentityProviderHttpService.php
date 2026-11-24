@@ -20,6 +20,8 @@ use Qiick\Outbound\Ssrf\UrlGuardOptions;
  *
  * Errors carry the URL host, the HTTP status and the OAuth `error` code at
  * most; never a request or response body, which may hold codes or tokens.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class IdentityProviderHttpService
 {

@@ -25,6 +25,8 @@ use Throwable;
  * cache is only an accelerator: a miss never means "not revoked", and a
  * failed table read fails closed (treated as revoked). Unique (issuer, jti)
  * is the durable BCL §2.6 replay check.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class SessionRevocationService
 {

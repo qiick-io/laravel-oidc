@@ -20,6 +20,8 @@ use Symfony\Component\HttpFoundation\Response;
  * logs the user out of the default guard (which also cycles the remember
  * token), invalidates the session and lets the request continue as a guest,
  * so the app's own `auth` middleware decides where to send the user.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class EnsureOidcSessionIsActiveMiddleware
 {

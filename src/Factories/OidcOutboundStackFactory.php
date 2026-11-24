@@ -24,6 +24,8 @@ use Qiick\Outbound\Ssrf\UrlGuardOptions;
  * Uses the app's shared {@see HttpFactory} so `Http::fake()` and
  * {@see FakeIdentityProvider} still intercept IdP calls. DNS is swapped through
  * {@see HostResolverBinding} only.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class OidcOutboundStackFactory
 {
