@@ -277,3 +277,33 @@ it('pads EC coordinates that OpenSSL returns without their leading zero byte', f
 
     expect([$hasPaddedX, $hasPaddedY])->toBe([true, true]);
 });
+
+it('publishes a standard discovery document', function (): void {
+    expect($this->identityProvider->discoveryDocument())->toBe([
+        'issuer' => 'https://idp.example.com/realms/test',
+        'authorization_endpoint' => 'https://idp.example.com/realms/test/protocol/openid-connect/auth',
+        'token_endpoint' => 'https://idp.example.com/realms/test/protocol/openid-connect/token',
+        'userinfo_endpoint' => 'https://idp.example.com/realms/test/protocol/openid-connect/userinfo',
+        'jwks_uri' => 'https://idp.example.com/realms/test/protocol/openid-connect/certs',
+        'end_session_endpoint' => 'https://idp.example.com/realms/test/protocol/openid-connect/logout',
+        'response_types_supported' => ['code'],
+        'subject_types_supported' => ['public'],
+        'id_token_signing_alg_values_supported' => ['RS256'],
+        'code_challenge_methods_supported' => ['S256'],
+        'token_endpoint_auth_methods_supported' => ['client_secret_basic', 'client_secret_post'],
+        'backchannel_logout_supported' => true,
+        'backchannel_logout_session_supported' => true,
+    ]);
+});
+
+it('signs with 2048-bit RSA keys under kids of the form fake-key-<8 hex>, each published for signing', function (): void {
+    $this->identityProvider->rotateSigningKey(keyType: 'EC');
+    $this->identityProvider->rotateSigningKey();
+
+    $publishedKeys = $this->identityProvider->jwks()['keys'];
+
+    expect(array_column($publishedKeys, 'use'))->toBe(['sig', 'sig', 'sig'])
+        ->and(array_column($publishedKeys, 'kid'))->each->toMatch('/^fake-key-[0-9a-f]{8}$/')
+        ->and(strlen(JWT::urlsafeB64Decode($publishedKeys[0]['n'])))->toBe(256)
+        ->and(strlen(JWT::urlsafeB64Decode($publishedKeys[2]['n'])))->toBe(256);
+});

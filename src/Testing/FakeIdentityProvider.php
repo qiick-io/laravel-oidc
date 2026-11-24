@@ -249,13 +249,11 @@ final class FakeIdentityProvider
             unset($this->signingKeys[$this->currentKeyId]);
         }
 
-        $privateKey = $keyType === 'EC'
+        // RSA is OpenSSL's default key type; 2048 bits is the minimum the package accepts.
+        $privateKey = ($keyType === 'EC'
             ? openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => $openSslCurveName])
-            : openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
-
-        if ($privateKey === false) {
-            throw new RuntimeException('OpenSSL could not generate a test key.');
-        }
+            : openssl_pkey_new(['private_key_bits' => 2048]))
+            ?: throw new RuntimeException('OpenSSL could not generate a test key.');
 
         $this->currentKeyId = 'fake-key-'.bin2hex(random_bytes(4));
         $this->signingKeys[$this->currentKeyId] = $privateKey;

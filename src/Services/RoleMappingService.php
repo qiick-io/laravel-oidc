@@ -29,8 +29,6 @@ use Qiick\Oidc\Data\AuthenticatedIdentityData;
  */
 final readonly class RoleMappingService
 {
-    public const array ALWAYS_FORBIDDEN_ROLES = ['super-admin'];
-
     /**
      * @param  array<string, list<string>>  $roleMap  IdP role => app roles
      * @param  list<string>  $forbiddenRoles
@@ -81,7 +79,8 @@ final readonly class RoleMappingService
      */
     private function managedRoles(): array
     {
-        $forbiddenRoles = [...self::ALWAYS_FORBIDDEN_ROLES, ...$this->forbiddenRoles];
+        // super-admin is never granted or revoked by the IdP (break-glass stays local).
+        $forbiddenRoles = ['super-admin', ...$this->forbiddenRoles];
         $mappedRoles = array_unique(array_merge(...array_values($this->roleMap)));
 
         return array_values(array_filter($mappedRoles, fn (string $role): bool => ! in_array($role, $forbiddenRoles, true)));
@@ -121,21 +120,20 @@ final readonly class RoleMappingService
     /**
      * Role names from a flat list (`["admin","member"]`) or from a map whose
      * keys are the role names (Zitadel's `urn:zitadel:iam:org:project:roles`
-     * claim: `{"member":{"<orgId>":"<domain>"}}`).
+     * claim: `{"member":{"<orgId>":"<domain>"}}`). A string value under a
+     * string key (`{"display":"admin"}`) is neither, so it is not a role.
      *
      * @param  array<array-key, mixed>  $values
      * @return list<string>
      */
     private function stringList(array $values): array
     {
-        $roleNames = array_values(array_filter($values, is_string(...)));
-
-        if ($roleNames !== []) {
-            return $roleNames;
-        }
+        $roleNames = [];
 
         foreach ($values as $key => $value) {
-            if (is_string($key) && $key !== '' && is_array($value)) {
+            if (is_int($key) && is_string($value)) {
+                $roleNames[] = $value;
+            } elseif (is_string($key) && $key !== '' && is_array($value)) {
                 $roleNames[] = $key;
             }
         }

@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Register `{APP_URL}/auth/oidc/logged-out` at the IdP as a post-logout redirect URI.** It is the new default `oidc.post_logout_redirect_uri`; `oidc:configure` prints it. See `UPGRADING.md`.
 - `IdentitySessionService::PENDING_SECONDS` is removed; the pending SSO identity still waits ten minutes for the app's second factor.
 - **Recreate beta databases (`php artisan migrate:fresh`).** `user_identities` now has a unique `(user_id, issuer)` key instead of a plain index. A database that already holds two identities of one issuer for the same user cannot take the new key; keep one of them before recreating.
+- `RoleMappingService::ALWAYS_FORBIDDEN_ROLES` is removed (the class is internal); `super-admin` is still never granted or revoked by role mapping.
 - `JwtValidatorService::SUPPORTED_ALGORITHMS` is replaced by `JwtValidatorService::supportedAlgorithms()`, with the same list.
 
 ### Security
@@ -55,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The back-channel logout `jti` cache pre-check is removed: the unique `(issuer, jti)` key already refuses a replay with the same answer, so the pre-check only duplicated it. `BackChannelLogoutService` no longer takes a cache store.
+- A role claim that mixes role names and Zitadel-style role keys (`["admin", {"member": {…}}]`) now maps both instead of only the names. A string value under a string key (`{"display": "admin"}`) is no longer read as a role name.
 - `FortifySecondFactorChallengeService` takes the Fortify class and two-factor trait names as trailing optional constructor arguments (defaults unchanged), so the default challenge is tested without Fortify installed.
 
 ### Fixed
