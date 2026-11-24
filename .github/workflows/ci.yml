@@ -126,16 +126,17 @@ jobs:
 
   # Per-class mutation gate over every class with logic in src/ (packages 1.0
   # checklist item 3): one pest --mutate per class, split round-robin across
-  # parallel shards so no job runs near its timeout. Add a shard (and update
-  # MUTATE_SHARDS) before the longest one passes 30 minutes.
+  # parallel shards so no job runs near its timeout. The shard count is the
+  # matrix length only (strategy.job-total): add a leg before the longest
+  # shard passes 30 minutes.
   mutation-shards:
-    name: Mutation (shard ${{ matrix.shard }}/4)
+    name: Mutation (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -157,7 +158,7 @@ jobs:
       - name: Pest mutate per class
         env:
           MUTATE_SHARD: ${{ matrix.shard }}
-          MUTATE_SHARDS: 4
+          MUTATE_SHARDS: ${{ strategy.job-total }}
         run: bash scripts/mutate-per-class.sh
 
   # One stable check name over every shard, for branch protection: it fails

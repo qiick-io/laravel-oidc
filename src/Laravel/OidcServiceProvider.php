@@ -32,6 +32,7 @@ use Qiick\Oidc\Factories\OidcOutboundStackFactory;
 use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
 use Qiick\Oidc\Listeners\EnforceSsoOnlyListener;
 use Qiick\Oidc\Listeners\PromotePendingIdentityListener;
+use Qiick\Oidc\Models\OidcLogoutRevocation;
 use Qiick\Oidc\Repositories\ConfigProviderConfigurationRepository;
 use Qiick\Oidc\Services\AuthorizationCodeFlowService;
 use Qiick\Oidc\Services\BackChannelLogoutService;
@@ -91,9 +92,9 @@ final class OidcServiceProvider extends ServiceProvider
             return new IdentityProviderHttpService(
                 pinnedHttp: $stack->pinnedHttp,
                 urlGuardOptions: $stack->urlGuardOptions,
-                timeoutSeconds: $this->config($app)->integer('oidc.http.timeout', 10),
-                connectTimeoutSeconds: $this->config($app)->integer('oidc.http.connect_timeout', 10),
-                maxResponseBytes: max(1, $this->config($app)->integer('oidc.http.max_response_bytes', 1_048_576)),
+                timeoutSeconds: $this->config($app)->integer('oidc.http.timeout'),
+                connectTimeoutSeconds: $this->config($app)->integer('oidc.http.connect_timeout'),
+                maxResponseBytes: max(1, $this->config($app)->integer('oidc.http.max_response_bytes')),
             );
         });
 
@@ -105,7 +106,7 @@ final class OidcServiceProvider extends ServiceProvider
                 remoteUrlGuard: $stack->remoteUrlGuard,
                 urlGuardOptions: $stack->urlGuardOptions,
                 cache: $this->cacheStore($app),
-                cacheSeconds: $this->config($app)->integer('oidc.cache.discovery_ttl', 21600),
+                cacheSeconds: $this->config($app)->integer('oidc.cache.discovery_ttl'),
                 discoveryBase: $this->optionalString($app, 'oidc.http.discovery_base'),
                 serverOrigin: $this->optionalString($app, 'oidc.http.server_origin'),
             );
@@ -114,14 +115,14 @@ final class OidcServiceProvider extends ServiceProvider
         $this->app->bind(JwksService::class, fn (Application $app): JwksService => new JwksService(
             identityProviderHttp: $app->make(IdentityProviderHttpService::class),
             cache: $this->cacheStore($app),
-            cacheSeconds: $this->config($app)->integer('oidc.cache.jwks_ttl', 3600),
-            refetchCooldownSeconds: $this->config($app)->integer('oidc.cache.jwks_refetch_cooldown', 30),
+            cacheSeconds: $this->config($app)->integer('oidc.cache.jwks_ttl'),
+            refetchCooldownSeconds: $this->config($app)->integer('oidc.cache.jwks_refetch_cooldown'),
         ));
 
         $this->app->bind(JwtValidatorService::class, fn (Application $app): JwtValidatorService => new JwtValidatorService(
             jwks: $app->make(JwksService::class),
             allowedAlgorithms: $this->stringList($app, 'oidc.id_token.algorithms'),
-            leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway', 60),
+            leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway'),
             trustedAudiences: $this->stringList($app, 'oidc.id_token.trusted_audiences'),
         ));
 
@@ -132,7 +133,7 @@ final class OidcServiceProvider extends ServiceProvider
             idTokenValidator: $app->make(IdTokenValidatorService::class),
             userinfo: $app->make(UserinfoService::class),
             shouldFetchUserinfo: $this->config($app)->boolean('oidc.userinfo', true),
-            leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway', 60),
+            leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway'),
             isRequestedAcrRequired: $this->config($app)->boolean('oidc.mfa.require_requested_acr', false),
         ));
 
@@ -198,7 +199,7 @@ final class OidcServiceProvider extends ServiceProvider
 
         $this->app->bind(SessionRevocationService::class, fn (Application $app): SessionRevocationService => new SessionRevocationService(
             cache: $this->cacheStore($app),
-            revocationSeconds: $this->revocationSeconds($app),
+            revocationSeconds: OidcLogoutRevocation::maximumConfiguredLifetimeSeconds(),
             events: $app->make(Dispatcher::class),
         ));
 
@@ -296,22 +297,6 @@ final class OidcServiceProvider extends ServiceProvider
                 __DIR__.'/../../database/migrations' => database_path('migrations'),
             ], 'oidc-migrations');
         }
-    }
-
-    /**
-     * Max of the configured lifetimes so a short `revocation_ttl` cannot
-     * under-cover `session.lifetime`. Null `revocation_ttl` uses session only.
-     */
-    private function revocationSeconds(Application $app): int
-    {
-        $sessionLifetimeSeconds = max(1, $this->config($app)->integer('session.lifetime', 120)) * 60;
-        $configuredSeconds = $this->config($app)->get('oidc.backchannel_logout.revocation_ttl');
-
-        if (is_int($configuredSeconds) && $configuredSeconds > 0) {
-            return max($configuredSeconds, $sessionLifetimeSeconds);
-        }
-
-        return $sessionLifetimeSeconds;
     }
 
     /**

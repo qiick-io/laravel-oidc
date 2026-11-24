@@ -17,30 +17,48 @@ shards="${MUTATE_SHARDS:-1}"
 # Default scope: the feature suite (the integration groups need live IdPs).
 paths="${MUTATE_PATHS:-tests/Feature}"
 
+# A shard outside 1..shards would run no class and pass: refuse it.
+if ! [[ "${shards}" =~ ^[1-9][0-9]*$ && "${shard}" =~ ^[1-9][0-9]*$ ]] || (( shard > shards )); then
+  echo "MUTATE_SHARD=${shard} is not within 1..MUTATE_SHARDS=${shards}" >&2
+  exit 2
+fi
+
 classes=(
   'Qiick\Oidc\Console\ConfigureOidcCommand'
+  'Qiick\Oidc\Console\ImportLegacySubjectsCommand'
   'Qiick\Oidc\Console\PruneLogoutRevocationsCommand'
+  'Qiick\Oidc\Data\AuthenticatedIdentityData'
   'Qiick\Oidc\Data\DiscoveryDocumentData'
+  'Qiick\Oidc\Data\IdentitySessionData'
   'Qiick\Oidc\Data\LoginOptionsData'
   'Qiick\Oidc\Data\PersonNameData'
+  'Qiick\Oidc\Data\ProviderConfigurationData'
+  'Qiick\Oidc\Exceptions\LoginRefusedException'
   'Qiick\Oidc\Factories\OidcOutboundStackFactory'
   'Qiick\Oidc\Http\Controllers\BackChannelLogoutController'
+  'Qiick\Oidc\Http\Controllers\FrontChannelLogoutController'
   'Qiick\Oidc\Http\Controllers\OidcCallbackController'
   'Qiick\Oidc\Http\Controllers\OidcRedirectController'
   'Qiick\Oidc\Http\Controllers\PostLogoutReturnController'
   'Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware'
+  'Qiick\Oidc\Laravel\OidcServiceProvider'
   'Qiick\Oidc\Listeners\EnforceSsoOnlyListener'
   'Qiick\Oidc\Listeners\PromotePendingIdentityListener'
   'Qiick\Oidc\Models\Concerns\GuardsIdByDefaultTrait'
   'Qiick\Oidc\Models\OidcLogoutRevocation'
   'Qiick\Oidc\Models\UserIdentity'
+  'Qiick\Oidc\Repositories\ConfigProviderConfigurationRepository'
+  'Qiick\Oidc\Services\AuthorizationCodeFlowService'
+  'Qiick\Oidc\Services\BackChannelLogoutService'
   'Qiick\Oidc\Services\DiscoveryService'
   'Qiick\Oidc\Services\EloquentUserProvisioningService'
   'Qiick\Oidc\Services\FortifySecondFactorChallengeService'
   'Qiick\Oidc\Services\IdTokenValidatorService'
   'Qiick\Oidc\Services\IdentityProviderHttpService'
+  'Qiick\Oidc\Services\IdentitySessionService'
   'Qiick\Oidc\Services\JwksService'
   'Qiick\Oidc\Services\JwtValidatorService'
+  'Qiick\Oidc\Services\MultiFactorClaimService'
   'Qiick\Oidc\Services\OidcLoginService'
   'Qiick\Oidc\Services\RoleBreakGlassPolicyService'
   'Qiick\Oidc\Services\RoleMappingService'
@@ -48,6 +66,7 @@ classes=(
   'Qiick\Oidc\Services\SessionRevocationService'
   'Qiick\Oidc\Services\SpatieRoleSynchronizationService'
   'Qiick\Oidc\Services\SsoOnlyModeService'
+  'Qiick\Oidc\Services\UserLinkingService'
   'Qiick\Oidc\Services\UserinfoService'
   'Qiick\Oidc\Testing\FakeIdentityProvider'
 )

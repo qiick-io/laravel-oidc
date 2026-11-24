@@ -84,7 +84,7 @@ final readonly class IdTokenValidatorService
         }
 
         if (array_key_exists('at_hash', $claims)) {
-            if ($accessToken === null) {
+            if ($accessToken === null || $accessToken === '') {
                 throw new InvalidTokenException('id_token [at_hash] is present but no access_token was issued.');
             }
 

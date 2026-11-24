@@ -62,3 +62,49 @@ it('names every class in the public API list or marks it internal', function ():
 
     expect($unclassifiedClasses)->toBe([]);
 });
+
+/**
+ * Every class in src/ is either in the per-class mutation gate
+ * (scripts/mutate-per-class.sh) or listed here as having nothing to mutate,
+ * so a new class cannot silently stay out of the gate. Interfaces have no
+ * code and are skipped.
+ */
+it('keeps every class with code in the mutation gate', function (): void {
+    $classesWithoutMutations = [
+        // Only promoted constructor properties or cases: pest --mutate creates no mutant.
+        'Qiick\Oidc\Data\LogoutTokenData',
+        'Qiick\Oidc\Data\OidcOutboundStackData',
+        'Qiick\Oidc\Enums\LoginRefusalReasonEnum',
+        'Qiick\Oidc\Enums\TokenEndpointAuthMethodEnum',
+        'Qiick\Oidc\Events\OidcIdentityLinkedEvent',
+        'Qiick\Oidc\Events\OidcLoginSucceededEvent',
+        'Qiick\Oidc\Events\OidcLogoutReceivedEvent',
+        'Qiick\Oidc\Events\OidcUserProvisionedEvent',
+        'Qiick\Oidc\Exceptions\IdentityProviderRequestException',
+        'Qiick\Oidc\Exceptions\InvalidCallbackException',
+        'Qiick\Oidc\Exceptions\InvalidTokenException',
+        'Qiick\Oidc\Exceptions\OidcException',
+        'Qiick\Oidc\Exceptions\OidcNotConfiguredException',
+        'Qiick\Oidc\Services\NullUserClaimSynchronizationService',
+    ];
+
+    preg_match_all("/^  '(Qiick\\\\Oidc\\\\[^']+)'$/m", (string) file_get_contents(__DIR__.'/../../scripts/mutate-per-class.sh'), $matches);
+    $gatedClasses = $matches[1];
+
+    $sourceDirectory = realpath(__DIR__.'/../../src');
+    $sourceClasses = [];
+
+    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($sourceDirectory, FilesystemIterator::SKIP_DOTS)) as $sourceFile) {
+        $className = 'Qiick\Oidc\\'.str_replace(['/', '.php'], ['\\', ''], substr($sourceFile->getPathname(), strlen($sourceDirectory) + 1));
+
+        if (! interface_exists($className)) {
+            $sourceClasses[] = $className;
+        }
+    }
+
+    sort($sourceClasses);
+    $expectedClasses = [...$gatedClasses, ...$classesWithoutMutations];
+    sort($expectedClasses);
+
+    expect($expectedClasses)->toBe($sourceClasses);
+});
