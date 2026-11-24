@@ -21,6 +21,8 @@ use Illuminate\Support\Facades\Crypt;
  * written before M4) and refuse any other version, or a version 2 id_token
  * that does not decrypt, so the middleware can end the session instead of
  * silently dropping revocability.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class IdentitySessionData
 {

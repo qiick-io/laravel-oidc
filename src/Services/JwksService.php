@@ -22,6 +22,8 @@ use Throwable;
  * (OIDC Core 10.1.1). Refetches are rate limited by a cooldown, so tokens with
  * random `kid` values (for example on the public back-channel logout endpoint)
  * cannot make the app hammer the IdP.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class JwksService
 {

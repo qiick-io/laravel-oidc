@@ -15,6 +15,8 @@ use Qiick\Oidc\Data\AuthenticatedIdentityData;
  * When the login asked for an `acr` and the IdP did not return one of the
  * requested values, MFA is not proven at all, whatever `amr` says: the IdP
  * did not confirm the step-up, so the app's own second factor runs.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class MultiFactorClaimService
 {

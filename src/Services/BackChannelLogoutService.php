@@ -27,6 +27,8 @@ use Qiick\Oidc\Models\UserIdentity;
  * The endpoint is public and unauthenticated by design; the signature is the
  * authentication. The JWKS refetch cooldown keeps forged `kid` values from
  * turning it into an amplifier against the IdP.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class BackChannelLogoutService
 {
