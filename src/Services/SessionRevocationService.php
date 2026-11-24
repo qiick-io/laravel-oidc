@@ -34,6 +34,7 @@ final readonly class SessionRevocationService
         private CacheRepository $cache,
         private int $revocationSeconds,
         private Dispatcher $events,
+        private int $leewaySeconds,
     ) {}
 
     /**
@@ -179,14 +180,16 @@ final readonly class SessionRevocationService
 
     /**
      * Fixed at write time: max(received + configured revocation lifetime,
-     * token exp + 120s). The configured lifetime is already the max of
-     * `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`; prune
-     * deletes by this stored expires_at and never recomputes the TTL.
+     * token exp + max(120 s, clock leeway)). The validator accepts a token
+     * until exp + leeway, so the row, whose unique (issuer, jti) refuses a
+     * replay, must outlive that. The configured lifetime is already the max
+     * of `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`;
+     * prune deletes by this stored expires_at and never recomputes the TTL.
      */
     private function expiresAt(int $receivedAt, ?int $tokenExpiresAt): int
     {
         $fromRevocationLifetime = $receivedAt + $this->revocationSeconds;
-        $fromToken = $tokenExpiresAt !== null ? $tokenExpiresAt + 120 : $fromRevocationLifetime;
+        $fromToken = $tokenExpiresAt !== null ? $tokenExpiresAt + max(120, $this->leewaySeconds) : $fromRevocationLifetime;
 
         return max($fromRevocationLifetime, $fromToken);
     }
