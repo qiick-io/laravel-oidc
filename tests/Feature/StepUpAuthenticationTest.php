@@ -196,3 +196,19 @@ it('counts only string amr values, as RFC 8176 defines them', function (): void 
     expect(isMultiFactorProven(stepUpLogin($identityProvider, claims: ['amr' => [1]])))->toBeFalse()
         ->and(isMultiFactorProven(stepUpLogin($identityProvider, claims: ['amr' => ['1']])))->toBeTrue();
 });
+
+it('signs in with an mfa config published before max_age and require_requested_acr existed', function (): void {
+    // mergeConfigFrom() only fills top-level keys: an app that published
+    // config/oidc.php before S2 has an `mfa` array without the new keys.
+    $identityProvider = FakeIdentityProvider::fake(configOverrides: ['mfa' => [
+        'required' => false,
+        'amr_values' => ['mfa'],
+        'acr_values' => ['urn:qiick:loa:mfa'],
+        'request_acr_values' => 'urn:qiick:loa:mfa',
+    ]]);
+
+    $identity = stepUpLogin($identityProvider, ['acr_values' => 'urn:qiick:loa:mfa'], ['acr' => 'urn:qiick:loa:pwd', 'auth_time' => null]);
+
+    expect($identity->subject)->toBe('fake-subject-1')
+        ->and(isMultiFactorProven($identity))->toBeFalse();
+});
