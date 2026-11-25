@@ -197,6 +197,27 @@ it('keeps the revocation until the logout token itself expires, plus two minutes
     expect(OidcLogoutRevocation::query()->sole()->expires_at->getTimestamp())->toBe($tokenExpiresAt + 120);
 });
 
+it('keeps the revocation for the clock leeway past exp when the leeway is longer than two minutes', function (): void {
+    // The validator accepts the token until exp + leeway; pruning the row
+    // sooner would let a replay through (unique jti only holds while stored).
+    Config::set('oidc.id_token.leeway', 300);
+    Date::setTestNow(Date::now()->startOfSecond());
+    $tokenExpiresAt = Date::now()->addDays(2)->getTimestamp();
+
+    postLogoutToken($this, $this->identityProvider, ['exp' => $tokenExpiresAt])->assertOk();
+
+    expect(OidcLogoutRevocation::query()->sole()->expires_at->getTimestamp())->toBe($tokenExpiresAt + 300);
+});
+
+it('keeps the revocation until a fractional exp, rounded up, plus two minutes', function (): void {
+    Date::setTestNow(Date::now()->startOfSecond());
+    $tokenExpiresAt = Date::now()->addDays(2)->getTimestamp();
+
+    postLogoutToken($this, $this->identityProvider, ['exp' => $tokenExpiresAt + 0.5])->assertOk();
+
+    expect(OidcLogoutRevocation::query()->sole()->expires_at->getTimestamp())->toBe($tokenExpiresAt + 1 + 120);
+});
+
 it('cycles the remember token of the linked user, and only a set one, without touching updated_at', function (?string $rememberToken): void {
     Date::setTestNow('2026-11-24 09:00:00');
     $user = localUser(attributes: ['remember_token' => $rememberToken]);

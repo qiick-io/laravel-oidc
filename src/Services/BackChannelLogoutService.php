@@ -91,7 +91,8 @@ final readonly class BackChannelLogoutService
             subject: $subject,
             sessionId: $sessionId,
             tokenId: $tokenId,
-            expiresAt: is_int($expiresAtClaim) ? $expiresAtClaim : null,
+            // JSON numbers may be fractional (RFC 7519 NumericDate): round up, never shorten.
+            expiresAt: is_int($expiresAtClaim) || is_float($expiresAtClaim) ? (int) ceil($expiresAtClaim) : null,
             channel: 'backchannel',
         );
         $this->sessionRevocation->revoke($logout);
