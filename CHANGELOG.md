@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.7] - 2026-11-25
+
 ### Upgrade notes
 
+- **Read `UPGRADING.md`, "From any beta to 1.0.0-beta.7, in one pass".** In short: recreate the package tables, register `{APP_URL}/auth/oidc/logged-out` at the IdP, point `oidc.cache.store` at a store every app server shares, schedule `oidc:prune-logout-revocations`, run `oidc:configure`.
 - **`qiick/laravel-outbound` `^0.2` is accepted besides `^0.1`** (`^0.1 || ^0.2`), so an app can take outbound 0.2. Outbound 0.2 has its own upgrade notes (its webhook tables, stricter config validation, Guzzle 7.12 or later); the parts this package uses (`RemoteUrlGuard`, `PinnedHttpClient`, `UrlGuardOptions`) behave the same, and CI runs the suite on both lines.
 - **`oidc:import-legacy-subjects` takes the issuer from the bound `ProviderConfigurationRepositoryContract`, not from `oidc.issuer`, and needs `--issuer` while SSO is not configured.** An app with database settings no longer stamps imported identities with a stale config issuer that logins never use (#38). A deploy step that ran the import with SSO still off adds `--issuer`.
 - `SessionRevocationService` takes the clock leeway as a fourth constructor argument (`leewaySeconds`); the service provider passes `oidc.id_token.leeway`. `GET /auth/oidc/logged-out` is throttled to 60 requests a minute.
@@ -211,7 +214,8 @@ First public beta of `qiick/laravel-oidc`: a generic OpenID Connect client for L
 
 - PHP `^8.3`, Laravel 12 and 13 (`illuminate/support`, `illuminate/http`, `illuminate/cache`), `firebase/php-jwt` `^7.0`, `guzzlehttp/guzzle` `^7.8 || ^8.0` (Guzzle 8 allowed since #10; Laravel 13 accepts it, Laravel 12 stays on Guzzle 7).
 
-[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.6...HEAD
+[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.7...HEAD
+[1.0.0-beta.7]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.6...v1.0.0-beta.7
 [1.0.0-beta.6]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.5...v1.0.0-beta.6
 [1.0.0-beta.5]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.4...v1.0.0-beta.5
 [1.0.0-beta.4]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.3...v1.0.0-beta.4
