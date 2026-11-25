@@ -9,6 +9,7 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Qiick\Oidc\Models\Concerns\GuardsIdByDefaultTrait;
 
 /**
  * An SSO identity (issuer, subject) linked to a local user.
@@ -41,18 +42,23 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class UserIdentity extends Model
 {
+    use GuardsIdByDefaultTrait;
     use HasUuids;
 
     protected $table = 'user_identities';
 
-    protected $guarded = ['id'];
-
     /**
-     * @var array<string, mixed>
+     * A new row starts at format_version 1; attributes an app subclass
+     * declares are kept.
+     *
+     * @param  array<string, mixed>  $attributes
      */
-    protected $attributes = [
-        'format_version' => 1,
-    ];
+    public function __construct(array $attributes = [])
+    {
+        $this->attributes += ['format_version' => 1];
+
+        parent::__construct($attributes);
+    }
 
     /**
      * External id only; the auto-increment `id` stays the primary key (M3).

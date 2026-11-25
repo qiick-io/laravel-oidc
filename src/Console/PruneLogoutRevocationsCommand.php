@@ -37,10 +37,6 @@ final class PruneLogoutRevocationsCommand extends Command
                 ->limit($chunkSize)
                 ->pluck('id');
 
-            if ($expiredIds->isEmpty()) {
-                break;
-            }
-
             OidcLogoutRevocation::query()->whereIn('id', $expiredIds)->delete();
             $deletedCount += $expiredIds->count();
         } while ($expiredIds->count() === $chunkSize);

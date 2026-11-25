@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\MassPrunable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Config;
+use Qiick\Oidc\Models\Concerns\GuardsIdByDefaultTrait;
 
 /**
  * One validated OIDC logout revocation (back-channel or front-channel).
@@ -31,11 +32,10 @@ use Illuminate\Support\Facades\Config;
  */
 class OidcLogoutRevocation extends Model
 {
+    use GuardsIdByDefaultTrait;
     use MassPrunable;
 
     protected $table = 'oidc_logout_revocations';
-
-    protected $guarded = ['id'];
 
     /**
      * @return array<string, string>
@@ -70,13 +70,9 @@ class OidcLogoutRevocation extends Model
      */
     public static function maximumConfiguredLifetimeSeconds(): int
     {
-        $sessionLifetimeSeconds = max(1, Config::integer('session.lifetime', 120)) * 60;
+        $sessionLifetimeSeconds = max(1, Config::integer('session.lifetime')) * 60;
         $configuredSeconds = Config::get('oidc.backchannel_logout.revocation_ttl');
 
-        if (is_int($configuredSeconds) && $configuredSeconds > 0) {
-            return max($configuredSeconds, $sessionLifetimeSeconds);
-        }
-
-        return $sessionLifetimeSeconds;
+        return max($sessionLifetimeSeconds, is_int($configuredSeconds) ? $configuredSeconds : $sessionLifetimeSeconds);
     }
 }
