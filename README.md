@@ -266,7 +266,7 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.id_token.algorithms` | `['RS256']` | Accepted signing algorithms; only `RS256`, `RS384`, `RS512`, `PS256`, `ES256` and `ES384` can be enabled. |
 | `oidc.id_token.leeway` | `60` | Clock skew in seconds. |
 | `oidc.id_token.trusted_audiences` | `[]` | Extra `aud` values to accept; `azp` must then be the client id. |
-| `oidc.cache.store` | `null` | Cache store for discovery, JWKS and the single-use login `state`; `null` is the app's default store. With several app servers it must be a store they share (database, redis). The array driver is refused outside the app's tests. |
+| `oidc.cache.store` | `null` | Cache store for discovery, JWKS and the single-use login `state`; `null` is the app's default store. With several app servers it must be a store they share (database, redis). The array driver is refused unless `APP_ENV` is `testing` (`oidc:configure` warns even then, and warns about the per-server file driver). |
 | `oidc.cache.discovery_ttl` / `jwks_ttl` | `21600` / `3600` | Cache lifetimes in seconds. |
 | `oidc.cache.jwks_refetch_cooldown` | `30` | Minimum seconds between JWKS refetches on an unknown `kid`. |
 | `oidc.http.discovery_base` (`OIDC_DISCOVERY_BASE`) | `null` | Docker: fetch discovery from this base instead of the issuer. |
