@@ -88,7 +88,7 @@ it('counts a secret the app casts to an object as a second factor, unless it ren
 
     expect($user->getAttribute('two_factor_secret'))->toBeInstanceOf(Stringable::class)
         ->and((new RoleBreakGlassPolicyService(['owner'], true))->isBreakGlassAccount($user))->toBe($isBreakGlass);
-})->with(['a secret' => ['s', true], 'an empty secret' => ['', false]]);
+})->with(['a secret' => ['s', true], 'an empty secret' => ['', false], 'a whitespace secret' => ['   ', false]]);
 
 it('never treats a user without Eloquent or role methods as break-glass', function (object $user): void {
     expect((new RoleBreakGlassPolicyService(['owner'], false))->isBreakGlassAccount($user))->toBeFalse();

@@ -78,6 +78,8 @@ it('reads a cast secret that renders empty as no second factor, and any other ca
     expect($response !== null)->toBe($isChallenged);
 })->with([
     'empty Stringable' => ['', AsStringable::class, false],
+    'whitespace Stringable' => ['   ', AsStringable::class, false],
+    'empty array' => ['[]', 'array', false],
     'array value' => ['["secret"]', 'array', true],
 ]);
 

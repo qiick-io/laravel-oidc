@@ -128,7 +128,7 @@ it('refuses a replay of a callback that succeeded', function (): void {
 
     callback($callbackUrl, $session);
 
-    expect(fn () => callback($callbackUrl, $session))->toThrow(InvalidCallbackException::class, 'state');
+    expect(fn () => callback($callbackUrl, $session))->toThrow(InvalidCallbackException::class, 'The authorization response has a missing or unknown state.');
 });
 
 it('accepts each state once, even after a callback the IdP answered with an error', function (): void {
