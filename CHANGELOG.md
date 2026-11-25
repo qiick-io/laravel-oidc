@@ -58,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `oidc:import-legacy-subjects --dry-run` works before the package migration: without the `user_identities` table it counts every subject as new and says so. A real import still needs the table and now fails with a clear message instead of a database error (#39).
 - A login whose id_token and userinfo carry no email is refused with the new reason `email_not_released` ("the identity provider did not share an email address") instead of `email_missing`, which now means only an email that is not valid. The userinfo call stays the documented path for IdPs such as Signaculum that release the profile and email claims at userinfo only (OIDC Core 5.4); the `oidc.userinfo` config comment says so (#64).
 - A `config/oidc.php` published before a nested key existed (for example `http.connect_timeout`, `http.max_response_bytes` or a new `mfa.*` key) now gets the package default for that key: the service provider merges the defaults into nested arrays, since Laravel's `mergeConfigFrom()` fills only top-level keys. Lists such as `scopes` stay the app's own.
 - `oidc:configure` treats an `http://[::1]` redirect URI as local instead of warning about plain http on a public host.
