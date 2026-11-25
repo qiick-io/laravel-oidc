@@ -27,9 +27,9 @@ php artisan migrate                    # user_identities
 php artisan oidc:import-legacy-subjects
 ```
 
-`oidc:import-legacy-subjects` copies every `users.oidc_sub` into `user_identities` with the configured issuer. Users then keep signing in with the same IdP account. It is idempotent, `--dry-run` reports without writing, and a `sub` already linked to another user is reported (exit code 1), never moved. Keep `users.oidc_sub` for one release, then drop it in a new forward-only migration. Never edit the old one.
+`oidc:import-legacy-subjects` copies every `users.oidc_sub` into `user_identities` with the issuer of the configured SSO provider. Users then keep signing in with the same IdP account. It is idempotent, `--dry-run` reports without writing (also before `migrate`), and a `sub` already linked to another user is reported (exit code 1), never moved. Keep `users.oidc_sub` for one release, then drop it in a new forward-only migration. Never edit the old one.
 
-Run the import from a migration or a deploy step, after the issuer setting is known. The command reads `oidc.issuer`, so in an app with database settings either pass `--issuer` or run it after the repository binding of step 3.
+Run the import from a migration or a deploy step, after the issuer setting is known. The command takes the issuer from the bound `ProviderConfigurationRepositoryContract` (the repository binding of step 3 in an app with database settings), never from `oidc.issuer` directly. While SSO is not configured yet (the repository's `isEnabled()` is false), pass `--issuer` explicitly; the command refuses to guess.
 
 ## 3. Read the settings from the database
 

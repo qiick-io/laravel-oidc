@@ -8,11 +8,51 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
+use Qiick\Oidc\Data\ProviderConfigurationData;
 use Qiick\Oidc\Models\UserIdentity;
 
 beforeEach(function (): void {
     Schema::table('users', fn (Blueprint $table) => $table->string('oidc_sub')->nullable()->unique());
+    Config::set('oidc.enabled', true);
     Config::set('oidc.issuer', 'https://idp.example.com/realms/externa');
+    Config::set('oidc.client_id', 'externa');
+});
+
+it('takes the issuer from the bound configuration repository, not from config', function (): void {
+    // An app that keeps its SSO settings in the database (Externa, Excubia App).
+    app()->bind(ProviderConfigurationRepositoryContract::class, fn (): ProviderConfigurationRepositoryContract => new class implements ProviderConfigurationRepositoryContract
+    {
+        public function isEnabled(): bool
+        {
+            return true;
+        }
+
+        public function configuration(): ProviderConfigurationData
+        {
+            return new ProviderConfigurationData('https://sso.example.com/realms/from-settings', 'externa', null, 'https://app.example.com/callback', ['openid']);
+        }
+    });
+    localUser('ada@example.com', ['oidc_sub' => 'sub-ada']);
+
+    $this->artisan('oidc:import-legacy-subjects')
+        ->expectsOutputToContain('Imported 1 identity for issuer https://sso.example.com/realms/from-settings')
+        ->assertSuccessful();
+
+    expect(UserIdentity::query()->sole()->issuer)->toBe('https://sso.example.com/realms/from-settings');
+});
+
+it('needs --issuer while SSO is off, instead of trusting a possibly stale config issuer', function (): void {
+    Config::set('oidc.enabled', false);
+    localUser('ada@example.com', ['oidc_sub' => 'sub-ada']);
+
+    $this->artisan('oidc:import-legacy-subjects')
+        ->expectsOutputToContain('No issuer: SSO is not configured yet, so pass --issuer explicitly.')
+        ->assertFailed();
+
+    $this->artisan('oidc:import-legacy-subjects', ['--issuer' => 'https://idp.example.com/realms/externa'])
+        ->expectsOutputToContain('Imported 1 identity for issuer https://idp.example.com/realms/externa')
+        ->assertSuccessful();
 });
 
 it('imports legacy subjects with the configured issuer and is idempotent', function (): void {
