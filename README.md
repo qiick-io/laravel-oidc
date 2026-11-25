@@ -40,6 +40,7 @@ php artisan oidc:configure --issuer=https://idp.example.com/realms/acme --client
 - the capabilities the IdP advertises: back-channel logout with `sid`, front-channel logout with `iss` and `sid` (when it is on), and the requested `acr` values against `acr_values_supported`. These are warnings only; `--json` lists them under `identity_provider_capabilities` (`frontchannel_logout_supported`, `frontchannel_logout_session_supported`, `backchannel_logout_supported`, `backchannel_logout_session_supported`, `acr_values_supported`, `claims_parameter_supported`) for a settings UI;
 - signing algorithms and JWKS keys, client type, redirect URI;
 - that `app.timezone` is `UTC` (a warning otherwise, see "Timestamps are UTC");
+- that the cache store can make each login `state` single-use (a failure for the array driver outside tests);
 - when front-channel logout is on, that its route is registered;
 - in SSO-only mode, that a break-glass account exists.
 
@@ -79,7 +80,7 @@ The package's tables store times without a time zone: `timestamp` columns for pa
 
 What the package implements, from the accepted Signaculum SSO design (2026-11-05):
 
-- **Flow:** authorization code with PKCE `S256` only, also for confidential clients. `state` and `nonce` on every login. No implicit flow, no password grant.
+- **Flow:** authorization code with PKCE `S256` only, also for confidential clients. `state` and `nonce` on every login; each `state` is single-use, consumed with an atomic add on `oidc.cache.store`, so two parallel callbacks on one session cannot both pass (a cache that does not answer refuses the login). No implicit flow, no password grant.
 - **`id_token`:** signed `RS256` by default; `RS384`, `RS512`, `ES256`, `ES384` and `PS256` can be enabled in `oidc.id_token.algorithms`. Validated on every login: signature through the JWKS (cached, refetched on an unknown `kid`; RSA keys of at least 2048 bits, EC keys only on the curve of their algorithm, `key_ops` honoured, a `kid` published twice refused; PS256 with a salt as long as the hash), no `crit` header, `iss`, `aud` (a string or a list of strings), `exp`, `iat`, `nonce`, `azp` when present, and `at_hash` against the access token when present (OIDC Core 3.1.3.8).
 - **Session:** after the callback the app keeps its own Laravel session, regenerated. The session remembers the issuer, `sub`, `sid`, `acr`, `amr`, `auth_time` and the `id_token` (for logout) in a versioned payload; an unknown version ends the session. The `id_token` is stored encrypted with the app key (`Crypt`), so a database session row never holds the raw JWT (a session written by beta.6 is re-encrypted on its first read); a stored token that does not decrypt (a rotated `APP_KEY` without `APP_PREVIOUS_KEYS`, tampering) ends the session. Access and refresh tokens are not stored.
 - **Logout:** RP-initiated logout (`end_session_endpoint`, `id_token_hint`, `post_logout_redirect_uri`), back-channel logout (signed `logout_token`, matched by `sid` / `sub`) and, behind `oidc.frontchannel_logout.enabled` (off by default), front-channel logout (`iss` + `sid` in an IdP iframe). Revocations are stored durably in `oidc_logout_revocations`.
@@ -265,7 +266,7 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.id_token.algorithms` | `['RS256']` | Accepted signing algorithms; only `RS256`, `RS384`, `RS512`, `PS256`, `ES256` and `ES384` can be enabled. |
 | `oidc.id_token.leeway` | `60` | Clock skew in seconds. |
 | `oidc.id_token.trusted_audiences` | `[]` | Extra `aud` values to accept; `azp` must then be the client id. |
-| `oidc.cache.store` | `null` | Cache store for discovery and JWKS. |
+| `oidc.cache.store` | `null` | Cache store for discovery, JWKS and the single-use login `state`; `null` is the app's default store. With several app servers it must be a store they share (database, redis). The array driver is refused outside the app's tests. |
 | `oidc.cache.discovery_ttl` / `jwks_ttl` | `21600` / `3600` | Cache lifetimes in seconds. |
 | `oidc.cache.jwks_refetch_cooldown` | `30` | Minimum seconds between JWKS refetches on an unknown `kid`. |
 | `oidc.http.discovery_base` (`OIDC_DISCOVERY_BASE`) | `null` | Docker: fetch discovery from this base instead of the issuer. |
