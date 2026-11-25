@@ -30,7 +30,7 @@ final readonly class RoleBreakGlassPolicyService implements BreakGlassPolicyCont
             return false;
         }
 
-        $hasBreakGlassRole = array_filter($this->roles, fn (string $role): bool => (bool) $user->hasRole($role)) !== [];
+        $hasBreakGlassRole = array_filter($this->roles, fn (string $role): bool => $user->hasRole($role) === true) !== [];
 
         if (! $hasBreakGlassRole) {
             return false;
@@ -41,7 +41,11 @@ final readonly class RoleBreakGlassPolicyService implements BreakGlassPolicyCont
 
     private function hasConfirmedSecondFactor(Model $user): bool
     {
-        if (in_array($user->getAttribute('two_factor_secret'), [null, ''], true)) {
+        // The same test as the Fortify challenge: an app may cast the secret
+        // to an object, so only null or an empty string means "no second factor".
+        $secret = $user->getAttribute('two_factor_secret');
+
+        if ($secret === null || $secret === '') {
             return false;
         }
 

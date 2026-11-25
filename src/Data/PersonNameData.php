@@ -34,13 +34,13 @@ final readonly class PersonNameData
             return new self($givenName, self::trimmedString($claims['family_name'] ?? null));
         }
 
-        $nameParts = preg_split('/\s+/u', self::trimmedString($claims['name'] ?? null), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $nameParts = preg_split('/\s+/u', self::trimmedString($claims['name'] ?? null), flags: PREG_SPLIT_NO_EMPTY) ?: [];
 
         if ($nameParts === []) {
             return null;
         }
 
-        $familyName = count($nameParts) > 1 ? (string) array_pop($nameParts) : '';
+        $familyName = count($nameParts) > 1 ? array_pop($nameParts) ?? '' : '';
 
         return new self(implode(' ', $nameParts), $familyName);
     }

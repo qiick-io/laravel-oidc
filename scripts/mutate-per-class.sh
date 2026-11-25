@@ -20,7 +20,9 @@ paths="${MUTATE_PATHS:-tests/Feature}"
 classes=(
   'Qiick\Oidc\Console\ConfigureOidcCommand'
   'Qiick\Oidc\Console\PruneLogoutRevocationsCommand'
+  'Qiick\Oidc\Data\DiscoveryDocumentData'
   'Qiick\Oidc\Data\LoginOptionsData'
+  'Qiick\Oidc\Data\PersonNameData'
   'Qiick\Oidc\Factories\OidcOutboundStackFactory'
   'Qiick\Oidc\Http\Controllers\BackChannelLogoutController'
   'Qiick\Oidc\Http\Controllers\OidcCallbackController'
@@ -33,16 +35,21 @@ classes=(
   'Qiick\Oidc\Models\OidcLogoutRevocation'
   'Qiick\Oidc\Models\UserIdentity'
   'Qiick\Oidc\Services\DiscoveryService'
+  'Qiick\Oidc\Services\EloquentUserProvisioningService'
   'Qiick\Oidc\Services\FortifySecondFactorChallengeService'
   'Qiick\Oidc\Services\IdTokenValidatorService'
   'Qiick\Oidc\Services\IdentityProviderHttpService'
   'Qiick\Oidc\Services\JwksService'
   'Qiick\Oidc\Services\JwtValidatorService'
   'Qiick\Oidc\Services\OidcLoginService'
+  'Qiick\Oidc\Services\RoleBreakGlassPolicyService'
+  'Qiick\Oidc\Services\RoleMappingService'
   'Qiick\Oidc\Services\RpInitiatedLogoutService'
   'Qiick\Oidc\Services\SessionRevocationService'
+  'Qiick\Oidc\Services\SpatieRoleSynchronizationService'
   'Qiick\Oidc\Services\SsoOnlyModeService'
   'Qiick\Oidc\Services\UserinfoService'
+  'Qiick\Oidc\Testing\FakeIdentityProvider'
 )
 
 status=0

@@ -2,10 +2,13 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\Log;
 use Qiick\Oidc\Contracts\RoleSynchronizationContract;
+use Qiick\Oidc\Services\RoleMappingService;
 use Qiick\Oidc\Services\SpatieRoleSynchronizationService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
 use Qiick\Oidc\Tests\Support\RecordingRoleSynchronization;
+use Qiick\Oidc\Tests\Support\User;
 use Qiick\Oidc\Tests\Support\UserWithRoles;
 
 const EXTERNA_ROLE_MAP = [
@@ -113,3 +116,99 @@ it('synchronizes Spatie-style roles without touching unmanaged ones', function (
 
     expect($user->roleNames)->toBe(['super-admin', 'auditor', 'admin']);
 });
+
+it('grants each app role once, as a list, however many IdP roles map to it', function (): void {
+    ssoLogin($this, roleMappedProvider(['map' => ['owner' => 'admin', 'admin' => 'admin', 'member' => 'editor']]), ['orgs' => [
+        ['slug' => 'acme', 'roles' => ['owner', 'admin', 'member']],
+    ]]);
+
+    expect($this->roleSynchronization->calls[0])->toBe(['granted' => ['admin', 'editor'], 'managed' => ['admin', 'editor']]);
+});
+
+it('returns the roles it granted', function (): void {
+    $user = localUser('mapped@example.com');
+    $identity = completeLogin(roleMappedProvider(), ['orgs' => [['slug' => 'acme', 'roles' => ['member']]]]);
+
+    expect(app(RoleMappingService::class)->apply($user, $identity))->toBe(['editor']);
+});
+
+it('reads only string keys that hold a map as Zitadel role names', function (): void {
+    ssoLogin($this, roleMappedProvider(['claim' => 'roles', 'organization' => null, 'map' => ['member' => 'editor', 'admin' => 'admin', '' => 'billing-viewer']]), [
+        'roles' => ['member' => ['org' => 'example.org'], 'admin' => 'not-a-map', '' => ['org' => 'example.org'], 7 => ['org' => 'example.org']],
+    ]);
+
+    expect($this->roleSynchronization->calls[0]['granted'])->toBe(['editor']);
+});
+
+it('never reads a string value under a string key as a role name', function (): void {
+    ssoLogin($this, roleMappedProvider(['claim' => 'roles', 'organization' => null, 'map' => ['admin' => 'admin', 'member' => 'editor']]), [
+        'roles' => ['display' => 'admin', 'member' => ['org' => 'example.org']],
+    ]);
+
+    expect($this->roleSynchronization->calls[0]['granted'])->toBe(['editor']);
+});
+
+it('reads both role names and Zitadel role keys from one mixed claim', function (): void {
+    ssoLogin($this, roleMappedProvider(['claim' => 'roles', 'organization' => null, 'map' => ['member' => 'editor', 'admin' => 'admin']]), [
+        'roles' => ['admin', 'member' => ['org' => 'example.org']],
+    ]);
+
+    expect($this->roleSynchronization->calls[0]['granted'])->toBe(['admin', 'editor']);
+});
+
+it('keeps synchronizing the other roles after one that already matches', function (): void {
+    $user = new UserWithRoles;
+    $user->roleNames = ['admin'];
+
+    (new SpatieRoleSynchronizationService)->synchronize($user, ['admin', 'editor'], ['admin', 'editor']);
+
+    expect($user->roleNames)->toBe(['admin', 'editor']);
+});
+
+it('logs the role it had to skip', function (): void {
+    Log::spy();
+    $user = new UserWithRoles;
+
+    (new SpatieRoleSynchronizationService)->synchronize($user, ['ghost'], ['ghost']);
+
+    Log::shouldHaveReceived('warning')->withArgs(
+        fn (string $message): bool => $message === 'OIDC role mapping skipped the role [ghost]: There is no role named `ghost`.',
+    );
+});
+
+it('refuses a user model without the three Spatie role methods', function (object $user): void {
+    (new SpatieRoleSynchronizationService)->synchronize($user, [], ['admin']);
+})->throws(LogicException::class, 'Role mapping needs the Spatie HasRoles trait')->with([
+    'no role methods' => fn () => new User,
+    'only hasRole' => fn () => new class extends User
+    {
+        public function hasRole(string $role): bool
+        {
+            return false;
+        }
+    },
+    'no assignRole' => fn () => new class extends User
+    {
+        public function hasRole(string $role): bool
+        {
+            return false;
+        }
+
+        public function removeRole(string $role): static
+        {
+            return $this;
+        }
+    },
+    'no removeRole' => fn () => new class extends User
+    {
+        public function hasRole(string $role): bool
+        {
+            return false;
+        }
+
+        public function assignRole(string $role): static
+        {
+            return $this;
+        }
+    },
+]);
