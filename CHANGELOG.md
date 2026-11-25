@@ -73,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/PUBLIC-API.md` lists `oidc.mfa.max_age`, `oidc.mfa.require_requested_acr`, `oidc.logout.redirect_to` and the `oidc.logged-out` route; `JwksService`, `JwtValidatorService`, `BackChannelLogoutService`, `IdentitySessionService`, `IdentitySessionData`, `MultiFactorClaimService` and `Models\Concerns\GuardsIdByDefaultTrait` are marked `@internal`; an architecture test fails when a class is neither listed nor internal; the README links the page.
 - `docs/PUBLIC-API.md` lists the public API that 1.0.0 freezes (classes, config keys, env vars, routes, commands, events, tables) and the deprecation policy; internal classes carry `@internal`.
 - README brought up to beta.6: version, the `oidc_logout_revocations` table as the source of truth with the prune schedule, front-channel logout setup, `oidc.routes.except`, and the supported `id_token` algorithms.
+- Dependency register `docs/dependencies.md`: one row per runtime `composer.json` `require` entry with constraint rationale, usage, maintainer, license, known risk and an in-package exit plan.
 
 ## [1.0.0-beta.6] - 2026-11-22
 
