@@ -202,6 +202,7 @@ final class OidcServiceProvider extends ServiceProvider
             cache: $this->cacheStore($app),
             revocationSeconds: $this->revocationSeconds($app),
             events: $app->make(Dispatcher::class),
+            leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway', 60),
         ));
 
         $this->app->bind(BackChannelLogoutService::class, fn (Application $app): BackChannelLogoutService => new BackChannelLogoutService(

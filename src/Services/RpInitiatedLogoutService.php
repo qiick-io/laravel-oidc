@@ -8,7 +8,6 @@ use Firebase\JWT\JWT;
 use Illuminate\Contracts\Cookie\QueueingFactory;
 use Illuminate\Contracts\Session\Session;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Route;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
@@ -132,8 +131,14 @@ final readonly class RpInitiatedLogoutService
         return $state;
     }
 
+    /**
+     * The directory of the return route as the browser sees it, so an app
+     * served under a sub-path (`APP_URL=https://host/app`) still gets the
+     * cookie back. Only reached while the route is registered: without it
+     * no state is sent and the return route never runs.
+     */
     private function cookiePath(): string
     {
-        return '/'.trim(Config::string('oidc.routes.prefix', 'auth/oidc'), '/');
+        return dirname(parse_url(route('oidc.logged-out'), PHP_URL_PATH) ?: '/');
     }
 }

@@ -200,7 +200,7 @@ $request->session()->regenerateToken();
 return $endSessionUrl !== null ? redirect()->away($endSessionUrl) : redirect('/');
 ```
 
-By default the IdP sends the browser back to the package route `GET /auth/oidc/logged-out` (`oidc.logged-out`), which `oidc:configure` prints: register it at the IdP as a post-logout redirect URI. `endSessionUrl()` adds a random `state` (RP-Initiated Logout 1.0 §2) and keeps it for ten minutes in an HttpOnly, SameSite=Lax cookie on `/auth/oidc` (Secure over https), because the app invalidates its session before the browser comes back. The route checks the state, forgets the cookie and redirects to `oidc.logout.redirect_to` (default `/`), which comes from config only. A missing or wrong state is logged as a warning and still redirects: the local logout has already happened. An explicit `oidc.post_logout_redirect_uri` (or an app repository that passes its own `postLogoutRedirectUri`) skips the state check.
+By default the IdP sends the browser back to the package route `GET /auth/oidc/logged-out` (`oidc.logged-out`), which `oidc:configure` prints: register it at the IdP as a post-logout redirect URI. `endSessionUrl()` adds a random `state` (RP-Initiated Logout 1.0 §2) and keeps it for ten minutes in an HttpOnly, SameSite=Lax cookie on `/auth/oidc` (Secure over https), because the app invalidates its session before the browser comes back. The route checks the state, forgets the cookie and redirects to `oidc.logout.redirect_to` (default `/`), which comes from config only. A missing or wrong state is logged as a warning and still redirects: the local logout has already happened. An explicit `oidc.post_logout_redirect_uri` (or an app repository that passes its own `postLogoutRedirectUri`) other than the package route skips the state check; one equal to the route keeps it. The route is rate limited (60 requests a minute), since every unmatched state is logged.
 
 ### Back-channel logout
 
@@ -382,7 +382,7 @@ vendor/bin/pest --group=zitadel
 
 ## Contributing and security
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Report vulnerabilities privately, as described in [SECURITY.md](./SECURITY.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Report vulnerabilities privately, as described in [SECURITY.md](./SECURITY.md). Every security check, with its spec and the tests that refuse a bad value, is listed in [`docs/SECURITY-CHECKLIST.md`](./docs/SECURITY-CHECKLIST.md).
 
 ## License
 
