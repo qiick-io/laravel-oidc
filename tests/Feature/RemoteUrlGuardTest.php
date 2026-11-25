@@ -3,14 +3,14 @@
 declare(strict_types=1);
 
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
-use Qiick\Oidc\Services\RemoteUrlGuardService;
+use Qiick\Oidc\Tests\Support\OidcSsrfTestGuard;
 
 /**
  * @param  list<string>  $resolvedAddresses
  */
-function remoteUrlGuard(bool $isPrivateHostAllowed = false, array $resolvedAddresses = ['93.184.215.14']): RemoteUrlGuardService
+function remoteUrlGuard(bool $isPrivateHostAllowed = false, array $resolvedAddresses = ['93.184.215.14']): OidcSsrfTestGuard
 {
-    return new RemoteUrlGuardService($isPrivateHostAllowed, fn (string $host): array => $resolvedAddresses);
+    return new OidcSsrfTestGuard($isPrivateHostAllowed, $resolvedAddresses);
 }
 
 it('allows a public https endpoint and returns the addresses to pin', function (): void {
@@ -38,11 +38,14 @@ it('refuses unsafe server urls', function (string $url): void {
 
 it('refuses a public host name that resolves to a private address', function (): void {
     remoteUrlGuard(resolvedAddresses: ['93.184.215.14', '192.168.1.10'])->assertServerUrlIsSafe('https://idp.example.com/token');
-})->throws(IdentityProviderRequestException::class, 'not allowed');
+})->throws(IdentityProviderRequestException::class, 'disallowed');
 
-it('refuses a host name that does not resolve', function (): void {
-    remoteUrlGuard(resolvedAddresses: [])->assertServerUrlIsSafe('https://idp.example.com/token');
-})->throws(IdentityProviderRequestException::class, 'does not resolve');
+it('refuses a host name that does not resolve, even when private hosts are allowed', function (bool $isPrivateHostAllowed): void {
+    remoteUrlGuard($isPrivateHostAllowed, [])->assertServerUrlIsSafe('https://idp.example.com/token');
+})->throws(IdentityProviderRequestException::class, 'does not resolve')->with([
+    'setting off' => false,
+    'setting on' => true,
+]);
 
 it('allows private hosts and plain http only when opted in', function (): void {
     $guard = remoteUrlGuard(isPrivateHostAllowed: true, resolvedAddresses: ['172.18.0.5']);
@@ -54,6 +57,12 @@ it('allows private hosts and plain http only when opted in', function (): void {
 it('keeps cloud metadata blocked when private hosts are allowed', function (): void {
     remoteUrlGuard(isPrivateHostAllowed: true)->assertServerUrlIsSafe('http://169.254.169.254/latest/meta-data');
 })->throws(IdentityProviderRequestException::class);
+
+it('pins a public ipv4 literal to itself without resolving it', function (): void {
+    $guard = new OidcSsrfTestGuard(false, null);
+
+    expect($guard->assertServerUrlIsSafe('https://93.184.216.34/token'))->toBe(['93.184.216.34']);
+});
 
 it('checks only scheme and credentials for browser urls', function (): void {
     remoteUrlGuard(resolvedAddresses: [])->assertBrowserUrlIsSafe('https://login.example.com/authorize');

@@ -220,7 +220,13 @@ function absoluteSignaculumUrl(string $location, string $currentUrl): string
 }
 
 /**
- * Follow Signaculum redirects until the app callback or a non-redirect response.
+ * Follow Signaculum redirects until the app callback, the registered
+ * post-logout URI, or a non-redirect response.
+ *
+ * The post-logout URI is `http://localhost/` and nothing listens on :80 in CI,
+ * so following that Location is a ConnectException, not a signal. Stop when the
+ * Location is that URI (with or without a trailing slash), the same way the
+ * Keycloak and Zitadel suites only assert the Location header.
  *
  * @return array{status: int, location: string, body: string, final_url: string}
  */
@@ -245,6 +251,16 @@ function followSignaculumRedirects(Client $browser, string $url, int $maximumHop
         $absoluteLocation = absoluteSignaculumUrl($location, $currentUrl);
 
         if (str_starts_with($absoluteLocation, 'http://localhost/auth/oidc/callback')) {
+            return [
+                'status' => $status,
+                'location' => $absoluteLocation,
+                'body' => (string) $response->getBody(),
+                'final_url' => $currentUrl,
+            ];
+        }
+
+        // Registered post_logout_redirect_uri — do not GET localhost:80.
+        if ($absoluteLocation === 'http://localhost' || $absoluteLocation === 'http://localhost/') {
             return [
                 'status' => $status,
                 'location' => $absoluteLocation,

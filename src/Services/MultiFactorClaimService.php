@@ -11,6 +11,12 @@ use Qiick\Oidc\Data\AuthenticatedIdentityData;
  * (RFC 8176, for example `mfa`, `otp`, `hwk`) in the accepted list, or an `acr`
  * in the accepted list. Both claims come from the signed id_token (userinfo
  * claims never override them).
+ *
+ * When the login asked for an `acr` and the IdP did not return one of the
+ * requested values, MFA is not proven at all, whatever `amr` says: the IdP
+ * did not confirm the step-up, so the app's own second factor runs.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class MultiFactorClaimService
 {
@@ -25,6 +31,10 @@ final readonly class MultiFactorClaimService
 
     public function isSatisfied(AuthenticatedIdentityData $identity): bool
     {
+        if (! $identity->isRequestedAuthenticationContextMet) {
+            return false;
+        }
+
         $authenticationMethods = $identity->claim('amr');
 
         if (is_array($authenticationMethods) && array_intersect($this->acceptedAmrValues, array_filter($authenticationMethods, is_string(...))) !== []) {

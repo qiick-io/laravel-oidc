@@ -8,6 +8,9 @@ use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Qiick\Oidc\Data\DiscoveryDocumentData;
 use Qiick\Oidc\Data\ProviderConfigurationData;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
+use Qiick\Outbound\Ssrf\RemoteUrlGuard;
+use Qiick\Outbound\Ssrf\UnsafeUrl;
+use Qiick\Outbound\Ssrf\UrlGuardOptions;
 
 /**
  * Fetches, validates and caches the OpenID Provider metadata of the issuer
@@ -25,6 +28,8 @@ use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
  * issuer when fetching the document, and `server_origin` replaces scheme and
  * host of the server-side endpoints. The issuer itself is never rewritten, so
  * `iss` is still checked against what the browser sees.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class DiscoveryService
 {
@@ -32,7 +37,8 @@ final readonly class DiscoveryService
 
     public function __construct(
         private IdentityProviderHttpService $identityProviderHttp,
-        private RemoteUrlGuardService $remoteUrlGuard,
+        private RemoteUrlGuard $remoteUrlGuard,
+        private UrlGuardOptions $urlGuardOptions,
         private CacheRepository $cache,
         private int $cacheSeconds,
         private ?string $discoveryBase,
@@ -102,10 +108,10 @@ final readonly class DiscoveryService
         $authorizationEndpoint = $this->requiredUrl($metadata, 'authorization_endpoint');
         $endSessionEndpoint = $this->optionalUrl($metadata, 'end_session_endpoint');
 
-        $this->remoteUrlGuard->assertBrowserUrlIsSafe($authorizationEndpoint);
+        $this->assertBrowserUrlIsSafe($authorizationEndpoint);
 
         if ($endSessionEndpoint !== null) {
-            $this->remoteUrlGuard->assertBrowserUrlIsSafe($endSessionEndpoint);
+            $this->assertBrowserUrlIsSafe($endSessionEndpoint);
         }
 
         $userinfoEndpoint = $this->optionalUrl($metadata, 'userinfo_endpoint');
@@ -118,8 +124,32 @@ final readonly class DiscoveryService
             userinfoEndpoint: $userinfoEndpoint === null ? null : $this->toServerUrl($userinfoEndpoint),
             endSessionEndpoint: $endSessionEndpoint,
             idTokenSigningAlgorithms: $this->stringList($metadata, 'id_token_signing_alg_values_supported') ?? ['RS256'],
-            isAuthorizationResponseIssuerSupported: ($metadata['authorization_response_iss_parameter_supported'] ?? false) === true,
+            isAuthorizationResponseIssuerSupported: $this->flag($metadata, 'authorization_response_iss_parameter_supported'),
+            isFrontChannelLogoutSupported: $this->flag($metadata, 'frontchannel_logout_supported'),
+            isFrontChannelLogoutSessionSupported: $this->flag($metadata, 'frontchannel_logout_session_supported'),
+            isBackChannelLogoutSupported: $this->flag($metadata, 'backchannel_logout_supported'),
+            isBackChannelLogoutSessionSupported: $this->flag($metadata, 'backchannel_logout_session_supported'),
+            acrValuesSupported: $this->stringList($metadata, 'acr_values_supported'),
+            isClaimsParameterSupported: $this->flag($metadata, 'claims_parameter_supported'),
         );
+    }
+
+    /**
+     * @throws IdentityProviderRequestException
+     */
+    private function assertBrowserUrlIsSafe(string $url): void
+    {
+        try {
+            $this->remoteUrlGuard->assertBrowserUrlIsSafe($url, $this->urlGuardOptions);
+        } catch (UnsafeUrl $exception) {
+            throw new IdentityProviderRequestException(
+                IdentityProviderHttpService::messageForUnsafeUrl(
+                    $exception,
+                    (string) parse_url($url, PHP_URL_HOST),
+                ),
+                previous: $exception,
+            );
+        }
     }
 
     private function toServerUrl(string $url): string
@@ -128,12 +158,23 @@ final readonly class DiscoveryService
             return $url;
         }
 
-        return (string) preg_replace('#^https?://[^/]+#i', rtrim($this->serverOrigin, '/'), $url);
+        // preg_replace() returns null only on a regex engine error.
+        return preg_replace('#^https?://[^/]+#i', rtrim($this->serverOrigin, '/'), $url) ?? $url;
     }
 
+    /**
+     * Hash payload is issuer, discovery base and server origin separated by NUL
+     * so a common prefix cannot collide (e.g. `/realms/a` vs `/realms/ab`).
+     */
     private function cacheKey(ProviderConfigurationData $configuration): string
     {
-        return 'oidc:discovery:'.hash('sha256', $configuration->issuer.'|'.$this->discoveryBase.'|'.$this->serverOrigin);
+        $payload = implode("\0", [
+            $configuration->issuer,
+            $this->discoveryBase ?? '',
+            $this->serverOrigin ?? '',
+        ]);
+
+        return 'oidc:discovery:'.hash('sha256', $payload);
     }
 
     /**
@@ -155,6 +196,18 @@ final readonly class DiscoveryService
         $value = $metadata[$key] ?? null;
 
         return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /**
+     * A boolean metadata flag: only a JSON `true` counts, and an absent or
+     * malformed value is the spec default `false` (DISC §3, FCL §3, BCL §2.1,
+     * RFC 9207 §3).
+     *
+     * @param  array<string, mixed>  $metadata
+     */
+    private function flag(array $metadata, string $key): bool
+    {
+        return ($metadata[$key] ?? false) === true;
     }
 
     /**

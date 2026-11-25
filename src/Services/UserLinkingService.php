@@ -7,7 +7,9 @@ namespace Qiick\Oidc\Services;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
 use Qiick\Oidc\Enums\LoginRefusalReasonEnum;
@@ -53,6 +55,29 @@ final readonly class UserLinkingService
      */
     public function resolve(AuthenticatedIdentityData $identity): UserIdentity
     {
+        $linkedIdentity = $this->linkedIdentity($identity);
+
+        if ($linkedIdentity !== null) {
+            return $linkedIdentity;
+        }
+
+        try {
+            return $this->linkOrProvision($identity);
+        } catch (LoginRefusedException|UniqueConstraintViolationException $exception) {
+            // A concurrent first login of the same (issuer, sub) may have
+            // linked it after the lookup above: this login is then that
+            // identity and signs in as its user, like any later login.
+            return $this->linkedIdentity($identity) ?? throw $exception;
+        }
+    }
+
+    /**
+     * The identity already linked to (issuer, sub), checked for an active user.
+     *
+     * @throws LoginRefusedException
+     */
+    private function linkedIdentity(AuthenticatedIdentityData $identity): ?UserIdentity
+    {
         $linkedIdentity = UserIdentity::query()
             ->where('issuer', $identity->issuer)
             ->where('subject', $identity->subject)
@@ -60,10 +85,19 @@ final readonly class UserLinkingService
 
         if ($linkedIdentity !== null) {
             $this->assertActive($linkedIdentity->user ?? throw new LoginRefusedException(LoginRefusalReasonEnum::NoLinkedUser));
-
-            return $linkedIdentity;
         }
 
+        return $linkedIdentity;
+    }
+
+    /**
+     * Steps 2 to 4 of the class docblock, for an (issuer, sub) not linked yet.
+     *
+     * @throws LoginRefusedException
+     * @throws UniqueConstraintViolationException when a concurrent login inserted a conflicting row
+     */
+    private function linkOrProvision(AuthenticatedIdentityData $identity): UserIdentity
+    {
         if (! $this->isAutoLinkEnabled && ! $this->isJitEnabled) {
             throw new LoginRefusedException(LoginRefusalReasonEnum::NoLinkedUser);
         }
@@ -102,7 +136,17 @@ final readonly class UserLinkingService
             throw new LoginRefusedException(LoginRefusalReasonEnum::LinkedToAnotherIdentity);
         }
 
-        $linkedIdentity = $this->createIdentity($user, $identity, $email);
+        // The check above and this insert are two statements: a concurrent
+        // callback can link the user in between. Unique (user_id, issuer)
+        // decides, and the loser is refused like the check would have. The
+        // transaction is a savepoint inside an app transaction, so PostgreSQL
+        // can roll back the failed insert without aborting the outer one.
+        try {
+            $linkedIdentity = DB::transaction(fn (): UserIdentity => $this->createIdentity($user, $identity, $email, 'auto_link_email'));
+        } catch (UniqueConstraintViolationException) {
+            throw new LoginRefusedException(LoginRefusalReasonEnum::LinkedToAnotherIdentity);
+        }
+
         $this->events->dispatch(new OidcIdentityLinkedEvent($user, $identity));
 
         return $linkedIdentity;
@@ -113,7 +157,7 @@ final readonly class UserLinkingService
      */
     private function provisionUser(AuthenticatedIdentityData $identity, string $email): UserIdentity
     {
-        $domain = substr($email, (int) strrpos($email, '@') + 1);
+        $domain = Str::afterLast($email, '@');
 
         if ($this->allowedDomains !== [] && ! in_array($domain, $this->allowedDomains, true)) {
             throw new LoginRefusedException(LoginRefusalReasonEnum::DomainNotAllowed);
@@ -122,7 +166,7 @@ final readonly class UserLinkingService
         [$user, $linkedIdentity] = DB::transaction(function () use ($identity, $email): array {
             $user = $this->userProvisioning->provision($identity, $email);
 
-            return [$user, $this->createIdentity($user, $identity, $email)];
+            return [$user, $this->createIdentity($user, $identity, $email, 'jit')];
         });
 
         $this->assertActive($user);
@@ -131,13 +175,30 @@ final readonly class UserLinkingService
         return $linkedIdentity;
     }
 
-    private function createIdentity(Model&Authenticatable $user, AuthenticatedIdentityData $identity, string $email): UserIdentity
-    {
+    /**
+     * Snapshot link-time profile claims onto the new row (standards review M1/M2).
+     * Trust-sensitive login metadata is written later on every login.
+     */
+    private function createIdentity(
+        Model&Authenticatable $user,
+        AuthenticatedIdentityData $identity,
+        string $email,
+        string $linkMethod,
+    ): UserIdentity {
+        $preferredUsername = $identity->claim('preferred_username');
+        $displayName = $identity->claim('name');
+
         $linkedIdentity = UserIdentity::query()->create([
             'user_id' => $user->getAuthIdentifier(),
             'issuer' => $identity->issuer,
             'subject' => $identity->subject,
+            'link_method' => $linkMethod,
             'email_at_link' => $email,
+            'email_verified_at_link' => $this->emailVerifiedClaim($identity),
+            'preferred_username_at_link' => is_string($preferredUsername) && $preferredUsername !== ''
+                ? $preferredUsername
+                : null,
+            'name_at_link' => is_string($displayName) && $displayName !== '' ? $displayName : null,
         ]);
 
         return $linkedIdentity->setRelation('user', $user);
@@ -145,7 +206,7 @@ final readonly class UserLinkingService
 
     /**
      * The lower-cased email claim, checked against `email_verified` (OIDC Core
-     * 5.1). Some IdPs send the flag as the string "true".
+     * 5.1).
      *
      * @throws LoginRefusedException
      */
@@ -153,18 +214,34 @@ final readonly class UserLinkingService
     {
         $email = $identity->claim('email');
 
-        if (! is_string($email) || filter_var(trim($email), FILTER_VALIDATE_EMAIL) === false) {
+        // OIDC Core 5.4 lets an IdP release the email at userinfo only (as
+        // Signaculum does), so a missing claim usually means userinfo is off.
+        if (! is_string($email) || trim($email) === '') {
+            throw new LoginRefusedException(LoginRefusalReasonEnum::EmailNotReleased);
+        }
+
+        if (filter_var(trim($email), FILTER_VALIDATE_EMAIL) === false) {
             throw new LoginRefusedException(LoginRefusalReasonEnum::EmailMissing);
         }
 
-        $emailVerified = $identity->claim('email_verified');
-        $isEmailVerified = $emailVerified === true || $emailVerified === 'true';
-
-        if ($this->isVerifiedEmailRequired && ! $isEmailVerified) {
+        if ($this->isVerifiedEmailRequired && $this->emailVerifiedClaim($identity) !== true) {
             throw new LoginRefusedException(LoginRefusalReasonEnum::EmailNotVerified);
         }
 
         return mb_strtolower(trim($email));
+    }
+
+    /**
+     * The `email_verified` claim (OIDC Core 5.1) as a boolean, or null when
+     * the IdP did not send one. Some IdPs send it as the string "true".
+     */
+    private function emailVerifiedClaim(AuthenticatedIdentityData $identity): ?bool
+    {
+        return match ($identity->claim('email_verified')) {
+            true, 'true' => true,
+            false, 'false' => false,
+            default => null,
+        };
     }
 
     /**
@@ -187,7 +264,7 @@ final readonly class UserLinkingService
      */
     private function assertActive(Model $user): void
     {
-        if ($this->activeColumn !== null && ! (bool) $user->getAttribute($this->activeColumn)) {
+        if ($this->activeColumn !== null && ! $user->getAttribute($this->activeColumn)) {
             throw new LoginRefusedException(LoginRefusalReasonEnum::InactiveUser);
         }
     }

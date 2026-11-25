@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Qiick\Oidc\Services;
 
-use Illuminate\Contracts\Cache\Repository as CacheRepository;
-use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Str;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Data\LogoutTokenData;
@@ -29,6 +27,8 @@ use Qiick\Oidc\Models\UserIdentity;
  * The endpoint is public and unauthenticated by design; the signature is the
  * authentication. The JWKS refetch cooldown keeps forged `kid` values from
  * turning it into an amplifier against the IdP.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class BackChannelLogoutService
 {
@@ -39,7 +39,6 @@ final readonly class BackChannelLogoutService
         private DiscoveryService $discovery,
         private JwtValidatorService $jwtValidator,
         private SessionRevocationService $sessionRevocation,
-        private CacheRepository $cache,
     ) {}
 
     /**
@@ -76,9 +75,26 @@ final readonly class BackChannelLogoutService
             throw new InvalidTokenException('logout_token [sub] has leading or trailing whitespace.');
         }
 
-        $this->assertFirstUse($claims, $discovery->issuer);
+        $tokenId = $this->optionalString($claims, 'jti');
 
-        $logout = new LogoutTokenData($discovery->issuer, $subject, $sessionId);
+        if ($tokenId === null) {
+            throw new InvalidTokenException('logout_token has no [jti].');
+        }
+
+        // Replay (BCL §2.6 step 8) is refused by the unique (issuer, jti) key
+        // when the revocation is stored (M10); no cache pre-check could add
+        // anything to that answer.
+        $expiresAtClaim = $claims['exp'] ?? null;
+
+        $logout = new LogoutTokenData(
+            issuer: $discovery->issuer,
+            subject: $subject,
+            sessionId: $sessionId,
+            tokenId: $tokenId,
+            // JSON numbers may be fractional (RFC 7519 NumericDate): round up, never shorten.
+            expiresAt: is_int($expiresAtClaim) || is_float($expiresAtClaim) ? (int) ceil($expiresAtClaim) : null,
+            channel: 'backchannel',
+        );
         $this->sessionRevocation->revoke($logout);
 
         if ($subject !== null) {
@@ -103,7 +119,8 @@ final readonly class BackChannelLogoutService
             ->first()
             ?->user;
 
-        if ($user === null || in_array($user->getRememberToken(), [null, ''], true)) {
+        // Eloquent returns '' for a missing token; other user models may return null.
+        if ($user === null || (string) $user->getRememberToken() === '') {
             return;
         }
 
@@ -114,33 +131,22 @@ final readonly class BackChannelLogoutService
 
     /**
      * @param  array<string, mixed>  $claims
-     *
-     * @throws InvalidTokenException
-     */
-    private function assertFirstUse(array $claims, string $issuer): void
-    {
-        $tokenId = $this->optionalString($claims, 'jti');
-
-        if ($tokenId === null) {
-            throw new InvalidTokenException('logout_token has no [jti].');
-        }
-
-        $expiresAt = $claims['exp'] ?? 0;
-        $secondsUntilExpiry = (int) (is_int($expiresAt) || is_float($expiresAt) ? $expiresAt : 0) - Date::now()->getTimestamp();
-        $isFirstUse = $this->cache->add('oidc:logout-jti:'.hash('sha256', $issuer.'|'.$tokenId), true, max(60, $secondsUntilExpiry + 120));
-
-        if (! $isFirstUse) {
-            throw new InvalidTokenException('logout_token [jti] was already used.');
-        }
-    }
-
-    /**
-     * @param  array<string, mixed>  $claims
      */
     private function optionalString(array $claims, string $name): ?string
     {
         $value = $claims[$name] ?? null;
 
-        return is_string($value) && $value !== '' ? $value : null;
+        if (! is_string($value) || $value === '') {
+            return null;
+        }
+
+        // The revocation table keeps `sub`, `sid` and `jti` in 255-character
+        // columns (OIDC Core 2 caps `sub` there too); MySQL would truncate a
+        // longer value or refuse the row.
+        if (strlen($value) > 255) {
+            throw new InvalidTokenException("logout_token [{$name}] is longer than 255 characters.");
+        }
+
+        return $value;
     }
 }

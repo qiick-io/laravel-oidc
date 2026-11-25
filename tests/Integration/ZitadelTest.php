@@ -13,7 +13,6 @@ use Psr\Http\Message\ResponseInterface;
 use Qiick\Oidc\Contracts\RoleSynchronizationContract;
 use Qiick\Oidc\Models\UserIdentity;
 use Qiick\Oidc\Services\IdentitySessionService;
-use Qiick\Oidc\Services\RemoteUrlGuardService;
 use Qiick\Oidc\Services\RpInitiatedLogoutService;
 use Qiick\Oidc\Tests\Support\RecordingRoleSynchronization;
 use Qiick\Oidc\Tests\Support\User;
@@ -219,9 +218,6 @@ beforeEach(function (): void {
         'map' => ['admin' => 'admin', 'member' => 'editor'],
         'forbidden' => [],
     ]);
-
-    // Singleton captures allow_private_hosts at first resolve; rebuild after Config::set.
-    app()->forgetInstance(RemoteUrlGuardService::class);
 
     $this->roleSynchronization = new RecordingRoleSynchronization;
     app()->instance(RoleSynchronizationContract::class, $this->roleSynchronization);

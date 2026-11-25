@@ -29,7 +29,7 @@ it('builds the end session url with id_token_hint, client_id and the post-logout
     expect($endSessionUrl)->toStartWith($identityProvider->issuer.'/protocol/openid-connect/logout?')
         ->and($parameters['id_token_hint'])->toBe(app(IdentitySessionService::class)->current($session)?->idToken)
         ->and($parameters['client_id'])->toBe('laravel-app')
-        ->and($parameters['post_logout_redirect_uri'])->toBe('http://localhost');
+        ->and($parameters['post_logout_redirect_uri'])->toBe('http://localhost/auth/oidc/logged-out');
 });
 
 it('uses the configured post-logout redirect uri', function (): void {

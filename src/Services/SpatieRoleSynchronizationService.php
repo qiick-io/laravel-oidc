@@ -28,7 +28,7 @@ final readonly class SpatieRoleSynchronizationService implements RoleSynchroniza
         foreach ($managedRoles as $role) {
             $shouldHaveRole = in_array($role, $grantedRoles, true);
 
-            if ($shouldHaveRole === (bool) $user->hasRole($role)) {
+            if ($shouldHaveRole === ($user->hasRole($role) === true)) {
                 continue;
             }
 

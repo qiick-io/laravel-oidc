@@ -2,9 +2,12 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
 use Qiick\Oidc\Enums\LoginRefusalReasonEnum;
@@ -99,15 +102,103 @@ it('links without email_verified when require_verified_email is off (Entra ID)',
     expect(auth()->id())->toBe($user->id);
 });
 
-it('refuses a login without a usable email when linking is needed', function (mixed $email): void {
-    assertRefused(ssoLogin($this, fakeProvider(['auto_link' => true, 'jit' => true]), ['email' => $email]), LoginRefusalReasonEnum::EmailMissing);
-})->with([null, '', 'not-an-email']);
+it('refuses a login without a usable email when linking is needed', function (mixed $email, LoginRefusalReasonEnum $reason): void {
+    assertRefused(ssoLogin($this, fakeProvider(['auto_link' => true, 'jit' => true]), ['email' => $email]), $reason);
+})->with([
+    'not released' => [null, LoginRefusalReasonEnum::EmailNotReleased],
+    'empty' => ['', LoginRefusalReasonEnum::EmailNotReleased],
+    'blank' => ['   ', LoginRefusalReasonEnum::EmailNotReleased],
+    'not an email' => ['not-an-email', LoginRefusalReasonEnum::EmailMissing],
+]);
 
 it('does not auto-link a user already linked to another identity of the same issuer', function (): void {
     $user = localUser('sso.user@example.com');
     linkIdentity($user, 'the-original-subject');
 
     assertRefused(ssoLogin($this, fakeProvider(['auto_link' => true]), ['sub' => 'an-attacker-subject']), LoginRefusalReasonEnum::LinkedToAnotherIdentity);
+});
+
+it('refuses an auto-link that loses the race to a concurrent link of the same user', function (): void {
+    $user = localUser('sso.user@example.com');
+
+    // A concurrent callback with another subject links the user right after
+    // this login checked for an existing link, before it inserts its own row.
+    $hasConcurrentLink = false;
+    DB::listen(function (QueryExecuted $query) use ($user, &$hasConcurrentLink): void {
+        if ($hasConcurrentLink || ! str_starts_with($query->sql, 'select exists') || ! str_contains($query->sql, 'user_identities')) {
+            return;
+        }
+
+        $hasConcurrentLink = true;
+        DB::table('user_identities')->insert([
+            'public_id' => (string) Str::uuid7(),
+            'user_id' => $user->id,
+            'issuer' => 'https://idp.example.com/realms/test',
+            'subject' => 'the-concurrent-subject',
+        ]);
+    });
+
+    assertRefused(ssoLogin($this, fakeProvider(['auto_link' => true]), ['sub' => 'an-attacker-subject']), LoginRefusalReasonEnum::LinkedToAnotherIdentity);
+
+    expect(UserIdentity::query()->sole()->subject)->toBe('the-concurrent-subject');
+    Event::assertNotDispatched(OidcIdentityLinkedEvent::class);
+});
+
+/**
+ * Runs $concurrentLogin once, right after this login looked its (issuer, sub)
+ * up and found nothing: the window in which a concurrent login of the same
+ * IdP account can finish first.
+ */
+function afterIdentityLookup(Closure $concurrentLogin): void
+{
+    $hasRun = false;
+    DB::listen(function (QueryExecuted $query) use ($concurrentLogin, &$hasRun): void {
+        if ($hasRun || ! str_starts_with($query->sql, 'select *') || ! str_contains($query->sql, 'user_identities') || ! str_contains($query->sql, 'subject')) {
+            return;
+        }
+
+        $hasRun = true;
+        $concurrentLogin();
+    });
+}
+
+it('signs in the loser of two concurrent first logins of the same sub as the linked user', function (array $configOverrides, bool $hasLocalUser): void {
+    $user = $hasLocalUser ? localUser('sso.user@example.com') : null;
+
+    afterIdentityLookup(function () use (&$user): void {
+        $user ??= localUser('sso.user@example.com');
+        DB::table('user_identities')->insert([
+            'public_id' => (string) Str::uuid7(),
+            'user_id' => $user->id,
+            'issuer' => 'https://idp.example.com/realms/test',
+            'subject' => 'fake-subject-1',
+        ]);
+    });
+
+    ssoLogin($this, fakeProvider($configOverrides))->assertRedirect('/');
+
+    expect(auth()->id())->toBe($user->id)
+        ->and(UserIdentity::query()->sole()->user_id)->toBe($user->id);
+    Event::assertNotDispatched(OidcIdentityLinkedEvent::class);
+    Event::assertNotDispatched(OidcUserProvisionedEvent::class);
+})->with([
+    'auto-link' => [['auto_link' => true], true],
+    'JIT' => [['jit' => true], false],
+    'JIT and auto-link' => [['jit' => true, 'auto_link' => true], false],
+]);
+
+it('still refuses an inactive user who won the race', function (): void {
+    Schema::table('users', fn (Blueprint $table) => $table->boolean('is_active')->default(true));
+    $user = localUser('sso.user@example.com', ['is_active' => false]);
+
+    afterIdentityLookup(fn () => DB::table('user_identities')->insert([
+        'public_id' => (string) Str::uuid7(),
+        'user_id' => $user->id,
+        'issuer' => 'https://idp.example.com/realms/test',
+        'subject' => 'fake-subject-1',
+    ]));
+
+    assertRefused(ssoLogin($this, fakeProvider(['auto_link' => true, 'users.active_column' => 'is_active'])), LoginRefusalReasonEnum::InactiveUser);
 });
 
 it('auto-links a user linked only at another issuer', function (): void {
@@ -205,6 +296,13 @@ it('refuses inactive users', function (array $configOverrides, Closure $prepareU
 })->with([
     'linked' => [[], fn () => linkIdentity(localUser(attributes: ['is_active' => false]))],
     'auto-linked' => [['auto_link' => true], fn () => localUser('sso.user@example.com', ['is_active' => false])],
+    'provisioned inactive by the app' => [['jit' => true], fn () => app()->bind(UserProvisioningContract::class, fn () => new class implements UserProvisioningContract
+    {
+        public function provision(AuthenticatedIdentityData $identity, string $email): User
+        {
+            return localUser($email, ['is_active' => false]);
+        }
+    })],
 ]);
 
 it('sends protocol failures back to the login page with a generic message', function (): void {

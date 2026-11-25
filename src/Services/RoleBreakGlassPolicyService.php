@@ -7,6 +7,7 @@ namespace Qiick\Oidc\Services;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
+use Qiick\Oidc\Services\Concerns\ChecksTwoFactorSecretTrait;
 
 /**
  * Default break-glass policy: one of the configured roles (Spatie `hasRole`)
@@ -16,6 +17,8 @@ use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
  */
 final readonly class RoleBreakGlassPolicyService implements BreakGlassPolicyContract
 {
+    use ChecksTwoFactorSecretTrait;
+
     /**
      * @param  list<string>  $roles
      */
@@ -30,7 +33,7 @@ final readonly class RoleBreakGlassPolicyService implements BreakGlassPolicyCont
             return false;
         }
 
-        $hasBreakGlassRole = array_filter($this->roles, fn (string $role): bool => (bool) $user->hasRole($role)) !== [];
+        $hasBreakGlassRole = array_filter($this->roles, fn (string $role): bool => $user->hasRole($role) === true) !== [];
 
         if (! $hasBreakGlassRole) {
             return false;
@@ -41,7 +44,7 @@ final readonly class RoleBreakGlassPolicyService implements BreakGlassPolicyCont
 
     private function hasConfirmedSecondFactor(Model $user): bool
     {
-        if (in_array($user->getAttribute('two_factor_secret'), [null, ''], true)) {
+        if (! $this->hasTwoFactorSecret($user)) {
             return false;
         }
 

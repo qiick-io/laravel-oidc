@@ -9,8 +9,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Date;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
+use Qiick\Oidc\Services\BackChannelLogoutService;
 use Qiick\Oidc\Services\FortifySecondFactorChallengeService;
 use Qiick\Oidc\Services\IdentitySessionService;
+use Qiick\Oidc\Services\SessionRevocationService;
 use Qiick\Oidc\Tests\Support\User;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -109,7 +111,7 @@ it('drops the pending identity when another user signs in or it expired', functi
     ssoLogin($this, fakeProvider());
 
     if ($case === 'expired') {
-        Date::setTestNow(Date::now()->addSeconds(IdentitySessionService::PENDING_SECONDS + 1));
+        Date::setTestNow(Date::now()->addSeconds(601));
         Auth::login($this->user);
     } else {
         Auth::login(localUser('someone.else@example.com'));
@@ -143,3 +145,75 @@ it('has nothing to challenge without Fortify', function (): void {
         ->and($service->challenge($request, $this->user, false))->toBeNull()
         ->and((new FortifySecondFactorChallengeService(false))->isRequired($this->user))->toBeFalse();
 });
+
+it('keeps a sub-only logout received during the app challenge effective after the challenge', function (): void {
+    bindAppSecondFactor();
+    $identityProvider = fakeProvider();
+    Date::setTestNow(Date::now()->startOfSecond());
+
+    ssoLogin($this, $identityProvider, ['amr' => ['pwd']])->assertRedirect('/two-factor-challenge');
+
+    // BCL §2.6: a logout naming only `sub` ends every session of that user
+    // authenticated at or before it, including one still in the app's 2FA.
+    Date::setTestNow(Date::now()->addSeconds(10));
+    app(BackChannelLogoutService::class)->handle(
+        $identityProvider->sign($identityProvider->logoutTokenClaims(['sid' => null]), ['typ' => 'logout+jwt']),
+    );
+
+    Date::setTestNow(Date::now()->addSeconds(20));
+    Auth::login($this->user);
+
+    $identity = app(IdentitySessionService::class)->current(session()->driver());
+
+    expect($identity)->not->toBeNull()
+        ->and(app(SessionRevocationService::class)->isRevoked($identity))->toBeTrue();
+});
+
+it('keeps the callback time as the session authentication time after the challenge', function (): void {
+    bindAppSecondFactor();
+    Date::setTestNow(Date::now()->startOfSecond());
+    $callbackTime = Date::now()->getTimestamp();
+
+    ssoLogin($this, fakeProvider(), ['amr' => ['pwd']]);
+    Date::setTestNow(Date::now()->addSeconds(30));
+    Auth::login($this->user);
+
+    expect(app(IdentitySessionService::class)->current(session()->driver())?->authenticatedAt)->toBe($callbackTime);
+});
+
+it('waits ten minutes for the app challenge, to the second', function (int $secondsLater, bool $isPromoted): void {
+    bindAppSecondFactor();
+    Date::setTestNow(Date::now()->startOfSecond());
+    ssoLogin($this, fakeProvider());
+
+    Date::setTestNow(Date::now()->addSeconds($secondsLater));
+    Auth::login($this->user);
+
+    expect(app(IdentitySessionService::class)->current(session()->driver()) !== null)->toBe($isPromoted);
+})->with([
+    'at 600 seconds' => [600, true],
+    'at 601 seconds' => [601, false],
+]);
+
+it('promotes a pending identity for a string user key and ignores a malformed one', function (mixed $pendingUserId, bool $isPromoted): void {
+    $session = session()->driver();
+    $session->put(IdentitySessionService::PENDING_SESSION_KEY, [
+        'user_id' => $pendingUserId,
+        'expires_at' => Date::now()->getTimestamp() + 60,
+        'identity' => [
+            'issuer' => 'https://idp.example.com/realms/test',
+            'subject' => 'user-42',
+            'id_token' => 'header.payload.signature',
+            'authenticated_at' => Date::now()->getTimestamp(),
+        ],
+    ]);
+
+    app(IdentitySessionService::class)->promotePending($session, 'user-uuid-1');
+
+    expect(app(IdentitySessionService::class)->current($session) !== null)->toBe($isPromoted)
+        ->and($session->has(IdentitySessionService::PENDING_SESSION_KEY))->toBeFalse();
+})->with([
+    'same string key' => ['user-uuid-1', true],
+    'not a scalar' => [['user-uuid-1'], false],
+    'missing' => [null, false],
+]);

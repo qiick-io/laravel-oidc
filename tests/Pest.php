@@ -8,14 +8,18 @@ use Illuminate\Session\ArraySessionHandler;
 use Illuminate\Session\Store;
 use Illuminate\Testing\TestResponse;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
+use Qiick\Oidc\Data\IdentitySessionData;
 use Qiick\Oidc\Enums\LoginRefusalReasonEnum;
 use Qiick\Oidc\Models\UserIdentity;
 use Qiick\Oidc\Services\AuthorizationCodeFlowService;
+use Qiick\Oidc\Services\IdentitySessionService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
+use Qiick\Oidc\Tests\Support\ConcurrencyTestCase;
 use Qiick\Oidc\Tests\Support\PackageTestCase;
 use Qiick\Oidc\Tests\Support\User;
 
 pest()->extend(PackageTestCase::class)->in('Feature', 'Unit', 'Integration');
+pest()->extend(ConcurrencyTestCase::class)->in('Concurrency');
 
 /**
  * A request on the app with the given session, as the browser would send it.
@@ -109,4 +113,15 @@ function assertRefused(TestResponse $response, LoginRefusalReasonEnum $reason): 
 {
     $response->assertRedirect('/login')->assertSessionHasErrors(['email' => $reason->message()]);
     expect(auth()->check())->toBeFalse();
+}
+
+/**
+ * Session data holding $identity as IdentitySessionService stores it, for
+ * tests that start from an SSO session without going through the login.
+ *
+ * @return array<string, mixed>
+ */
+function storedSsoSession(IdentitySessionData $identity): array
+{
+    return [IdentitySessionService::SESSION_KEY => $identity->toArray()];
 }

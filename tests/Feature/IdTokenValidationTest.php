@@ -75,6 +75,16 @@ it('refuses alg none, HMAC and algorithms not configured', function (string $alg
     validateIdToken(unsignedToken(['alg' => $algorithm, 'typ' => 'JWT'], $claims, $algorithm === 'none' ? '' : 'c2lnbmF0dXJl'));
 })->throws(InvalidTokenException::class, 'algorithm is not allowed')->with(['none', 'None', 'HS256', 'RS384', 'ES256']);
 
+it('accepts every supported RSA algorithm once configured', function (string $algorithm): void {
+    Config::set('oidc.id_token.algorithms', [$algorithm]);
+    $this->identityProvider->withDiscovery(['id_token_signing_alg_values_supported' => [$algorithm]]);
+    cache()->flush();
+
+    $idToken = $this->identityProvider->sign($this->identityProvider->idTokenClaims(['nonce' => EXPECTED_NONCE]), algorithm: $algorithm);
+
+    expect(validateIdToken($idToken)['sub'])->toBe('fake-subject-1');
+})->with(['RS256', 'RS384', 'RS512']);
+
 it('refuses an HS256 token signed with the client secret even when HS256 is configured', function (): void {
     Config::set('oidc.id_token.algorithms', ['RS256', 'HS256']);
     $token = JWT::encode($this->identityProvider->idTokenClaims(['nonce' => EXPECTED_NONCE]), str_repeat('client-secret-', 4), 'HS256');
@@ -102,6 +112,10 @@ it('refuses a token for another client', function (mixed $audience): void {
     'missing' => null,
     'list without us' => [['other-app', 'account']],
     'not strings' => [[42]],
+    // OIDC Core §2: a string or a JSON array; a JSON object is neither.
+    'object holding the client id' => [['client' => 'laravel-app']],
+    // {"0":"laravel-app"} decodes to a PHP list, so the JSON type is checked first.
+    'object with a numeric key' => [(object) ['0' => 'laravel-app']],
 ]);
 
 it('refuses an untrusted extra audience', function (): void {
@@ -155,6 +169,12 @@ it('refuses a missing, empty or oversized sub', function (mixed $subject): void 
     validateIdToken(signedIdToken($this->identityProvider, ['sub' => $subject]));
 })->throws(InvalidTokenException::class, '[sub]')->with([null, '', 42, str_repeat('a', 256)]);
 
+it('accepts a sub of exactly 255 ASCII characters', function (): void {
+    $subject = str_repeat('a', 255);
+
+    expect(validateIdToken(signedIdToken($this->identityProvider, ['sub' => $subject]))['sub'])->toBe($subject);
+});
+
 it('refuses a sub with leading or trailing whitespace', function (string $subject): void {
     validateIdToken(signedIdToken($this->identityProvider, ['sub' => $subject]));
 })->throws(InvalidTokenException::class, '[sub] has leading or trailing whitespace')->with([' AbcSubject', 'AbcSubject ', "AbcSubject\t", "\nAbcSubject", ' ']);
@@ -203,3 +223,184 @@ it('does not leak its clock or leeway into php-jwt', function (): void {
 
     JWT::$leeway = 0;
 });
+
+/*
+ * S1: at_hash is OPTIONAL in the code flow; when present it must match
+ * (OIDC Core 3.1.3.8 / 3.2.2.9).
+ */
+
+function accessTokenHash(string $accessToken, string $hashAlgorithm = 'sha256'): string
+{
+    $digest = hash($hashAlgorithm, $accessToken, true);
+
+    return JWT::urlsafeB64Encode(substr($digest, 0, (int) (strlen($digest) / 2)));
+}
+
+it('accepts an id_token whose at_hash matches the access_token', function (): void {
+    $accessToken = 'access-token-for-at-hash';
+    $idToken = signedIdToken($this->identityProvider, ['at_hash' => accessTokenHash($accessToken)]);
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    $discovery = app(DiscoveryService::class)->discover($configuration);
+
+    $claims = app(IdTokenValidatorService::class)->validate(
+        $idToken,
+        $discovery,
+        $configuration,
+        EXPECTED_NONCE,
+        $accessToken,
+    );
+
+    expect($claims['at_hash'])->toBe(accessTokenHash($accessToken));
+});
+
+it('refuses a mismatched or malformed at_hash', function (mixed $accessTokenHash, string $accessToken): void {
+    $idToken = signedIdToken($this->identityProvider, ['at_hash' => $accessTokenHash]);
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    $discovery = app(DiscoveryService::class)->discover($configuration);
+
+    app(IdTokenValidatorService::class)->validate(
+        $idToken,
+        $discovery,
+        $configuration,
+        EXPECTED_NONCE,
+        $accessToken,
+    );
+})->throws(InvalidTokenException::class, 'at_hash')->with([
+    'wrong hash' => [accessTokenHash('other-token'), 'access-token-for-at-hash'],
+    'not a string' => [42, 'access-token-for-at-hash'],
+]);
+
+it('refuses an empty at_hash as malformed', function (): void {
+    $idToken = signedIdToken($this->identityProvider, ['at_hash' => '']);
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    $discovery = app(DiscoveryService::class)->discover($configuration);
+
+    app(IdTokenValidatorService::class)->validate(
+        $idToken,
+        $discovery,
+        $configuration,
+        EXPECTED_NONCE,
+        'access-token-for-at-hash',
+    );
+})->throws(InvalidTokenException::class, 'at_hash] is malformed');
+
+it('refuses at_hash when no access_token was issued', function (array $accessTokenArgument): void {
+    // Even an IdP that signed the hash of the empty string gets no further.
+    $idToken = signedIdToken($this->identityProvider, ['at_hash' => accessTokenHash('')]);
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    $discovery = app(DiscoveryService::class)->discover($configuration);
+
+    app(IdTokenValidatorService::class)->validate($idToken, $discovery, $configuration, EXPECTED_NONCE, ...$accessTokenArgument);
+})->throws(InvalidTokenException::class, 'at_hash] is present but no access_token')->with([
+    'omitted' => [[]],
+    'empty' => [['']],
+]);
+
+it('accepts an id_token that omits at_hash in the code flow', function (): void {
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    $discovery = app(DiscoveryService::class)->discover($configuration);
+
+    $claims = app(IdTokenValidatorService::class)->validate(
+        signedIdToken($this->identityProvider),
+        $discovery,
+        $configuration,
+        EXPECTED_NONCE,
+        'access-token-present-but-unused',
+    );
+
+    expect($claims)->not->toHaveKey('at_hash');
+});
+
+it('selects the at_hash digest algorithm from the JWS alg', function (string $algorithm, string $hashAlgorithm, string $keyType): void {
+    Config::set('oidc.id_token.algorithms', ['RS256', 'RS384', 'ES256']);
+    cache()->flush();
+
+    if ($keyType === 'EC') {
+        $this->identityProvider->rotateSigningKey(isPreviousKeyRetired: true, keyType: 'EC');
+    }
+
+    $this->identityProvider->withDiscovery([
+        'id_token_signing_alg_values_supported' => ['RS256', 'RS384', 'ES256'],
+    ]);
+
+    $accessToken = 'access-token-for-alg-'.$algorithm;
+    $matchingHash = accessTokenHash($accessToken, $hashAlgorithm);
+    $wrongHash = accessTokenHash($accessToken, $hashAlgorithm === 'sha384' ? 'sha256' : 'sha384');
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    $discovery = app(DiscoveryService::class)->discover($configuration);
+
+    $acceptedClaims = app(IdTokenValidatorService::class)->validate(
+        $this->identityProvider->sign(
+            $this->identityProvider->idTokenClaims(['nonce' => EXPECTED_NONCE, 'at_hash' => $matchingHash]),
+            algorithm: $algorithm,
+        ),
+        $discovery,
+        $configuration,
+        EXPECTED_NONCE,
+        $accessToken,
+    );
+
+    expect($acceptedClaims['at_hash'])->toBe($matchingHash);
+
+    expect(fn () => app(IdTokenValidatorService::class)->validate(
+        $this->identityProvider->sign(
+            $this->identityProvider->idTokenClaims(['nonce' => EXPECTED_NONCE, 'at_hash' => $wrongHash]),
+            algorithm: $algorithm,
+        ),
+        $discovery,
+        $configuration,
+        EXPECTED_NONCE,
+        $accessToken,
+    ))->toThrow(InvalidTokenException::class, 'at_hash');
+})->with([
+    'RS384 uses sha384' => ['RS384', 'sha384', 'RSA'],
+    'ES256 uses sha256' => ['ES256', 'sha256', 'EC'],
+]);
+
+it('refuses at_hash when the JWS alg is missing or has no hash mapping', function (array $header): void {
+    $accessToken = 'access-token-for-missing-alg';
+    $accessTokenHash = accessTokenHash($accessToken);
+    $idToken = unsignedToken($header, ['at_hash' => $accessTokenHash], 'sig');
+
+    // JwtValidatorService is final; reach the at_hash alg map after shared JWT checks.
+    $assertAccessTokenHash = new ReflectionMethod(IdTokenValidatorService::class, 'assertAccessTokenHash');
+
+    expect(fn () => $assertAccessTokenHash->invoke(
+        app(IdTokenValidatorService::class),
+        $idToken,
+        $accessToken,
+        $accessTokenHash,
+    ))->toThrow(InvalidTokenException::class, 'cannot be checked for this signing algorithm');
+})->with([
+    'alg absent' => [['typ' => 'JWT']],
+    'alg unsupported' => [['alg' => 'HS256', 'typ' => 'JWT']],
+]);
+
+it('accepts an iat exactly at the leeway edge and refuses one second past it', function (): void {
+    Date::setTestNow(Date::now()->startOfSecond());
+    $now = Date::now()->getTimestamp();
+
+    expect(validateIdToken(signedIdToken($this->identityProvider, ['iat' => $now + 60, 'exp' => $now + 600]))['sub'])->toBe('fake-subject-1')
+        ->and(fn () => validateIdToken(signedIdToken($this->identityProvider, ['iat' => $now + 61, 'exp' => $now + 600])))
+        ->toThrow(InvalidTokenException::class, 'not valid yet');
+});
+
+it('refuses an aud list with a non-string member, even beside the client id', function (): void {
+    validateIdToken(signedIdToken($this->identityProvider, ['aud' => ['laravel-app', 42]]));
+})->throws(InvalidTokenException::class, 'not a list of strings');
+
+it('reads a JOSE header up to the JSON depth limit of 16 and refuses a deeper one', function (int $nestedLevels, string $message): void {
+    // json_decode() counts the header object and the innermost scalar too:
+    // $nestedLevels - 1 arrays make a document of depth $nestedLevels + 1.
+    $nestedValue = 'leaf';
+
+    for ($level = 1; $level < $nestedLevels; $level++) {
+        $nestedValue = [$nestedValue];
+    }
+
+    expect(fn () => validateIdToken(unsignedToken(['typ' => 'JWT', 'x-nested' => $nestedValue], ['sub' => 'fake-subject-1'], 'c2ln')))
+        ->toThrow(InvalidTokenException::class, $message);
+})->with([
+    'depth 16: read, then refused for its missing alg' => [15, 'algorithm is not allowed'],
+    'depth 17: not valid JSON' => [16, 'not valid JSON'],
+]);

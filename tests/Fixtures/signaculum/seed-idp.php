@@ -61,7 +61,7 @@ $ada->fill([
 $ada->forceFill([
     'email_verified_at' => now(),
     'is_active' => true,
-    'is_instance_admin' => false,
+    // Signaculum dropped users.is_instance_admin for Spatie roles (#206).
     'two_factor_secret' => null,
     'two_factor_recovery_codes' => null,
     'two_factor_confirmed_at' => null,
@@ -76,7 +76,6 @@ $mfaUser->fill([
 $mfaUser->forceFill([
     'email_verified_at' => now(),
     'is_active' => true,
-    'is_instance_admin' => false,
     'two_factor_secret' => encrypt($totpSecret),
     'two_factor_recovery_codes' => encrypt(json_encode(['recovery-code-ci-only'])),
     'two_factor_confirmed_at' => now(),
@@ -124,7 +123,8 @@ $plainSecret = $client->plainSecret;
 $client->forceFill([
     'is_first_party' => true,
     'grant_types' => ['authorization_code', 'refresh_token'],
-    'post_logout_redirect_uris' => [$postLogoutRedirectUri],
+    // The package's own return route (the default since S7) and the explicit URI the tests use.
+    'post_logout_redirect_uris' => array_values(array_unique([$postLogoutRedirectUri, 'http://localhost/auth/oidc/logged-out'])),
     'backchannel_logout_uri' => $backchannelUri,
     'is_backchannel_logout_session_required' => true,
 ])->save();
