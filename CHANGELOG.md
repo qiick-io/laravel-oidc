@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
+- **`qiick/laravel-outbound` `^0.2` is accepted besides `^0.1`** (`^0.1 || ^0.2`), so an app can take outbound 0.2. Outbound 0.2 has its own upgrade notes (its webhook tables, stricter config validation, Guzzle 7.12 or later); the parts this package uses (`RemoteUrlGuard`, `PinnedHttpClient`, `UrlGuardOptions`) behave the same, and CI runs the suite on both lines.
 - **`oidc:import-legacy-subjects` takes the issuer from the bound `ProviderConfigurationRepositoryContract`, not from `oidc.issuer`, and needs `--issuer` while SSO is not configured.** An app with database settings no longer stamps imported identities with a stale config issuer that logins never use (#38). A deploy step that ran the import with SSO still off adds `--issuer`.
 - `SessionRevocationService` takes the clock leeway as a fourth constructor argument (`leewaySeconds`); the service provider passes `oidc.id_token.leeway`. `GET /auth/oidc/logged-out` is throttled to 60 requests a minute.
 - **Each login `state` is now consumed on `oidc.cache.store` (the app's default store when null).** With several app servers that store must be shared (database, redis); the array driver makes every SSO callback fail outside the app's tests, and `oidc:configure` reports it as a failure. `AuthorizationCodeFlowService` takes two more constructor arguments (`cache`, `isArrayCacheAllowed`); the service provider passes them.
