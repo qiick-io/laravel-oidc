@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Qiick\Oidc\Console;
 
+use Illuminate\Cache\ArrayStore;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Route;
 use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
@@ -26,7 +28,8 @@ use Qiick\Oidc\Services\JwtValidatorService;
  * It reads the current settings, overridden by the options, then checks the
  * discovery document and the capabilities it advertises, the JWKS, the
  * signing algorithms, the redirect and logout URIs, that `app.timezone` is
- * UTC, the front-channel logout setup when it is on and, in SSO-only mode,
+ * UTC, that the cache store can make each login state single-use, the
+ * front-channel logout setup when it is on and, in SSO-only mode,
  * that a break-glass account exists. It
  * prints the URIs to register at the IdP. With `--write-env` it writes the
  * settings to `.env`, only when no check failed. `--json` prints a machine
@@ -78,6 +81,7 @@ final class ConfigureOidcCommand extends Command
             $this->checkClient($configuration);
             $this->checkRedirectUri($configuration->redirectUri);
             $this->checkTimezone();
+            $this->checkCacheStore();
             $this->checkFrontChannelLogout();
             $this->checkBreakGlass($breakGlassPolicy);
         }
@@ -284,6 +288,26 @@ final class ConfigureOidcCommand extends Command
         }
 
         $this->record('timezone', 'warning', "app.timezone is {$timezone}; the package expects UTC in its timestamp columns, so set it to UTC.");
+    }
+
+    /**
+     * Each callback consumes its `state` with an atomic add on the OIDC cache
+     * store. The array store forgets it after every request, so outside the
+     * app's tests the callback refuses every login with it; several app
+     * servers need a store they share.
+     */
+    private function checkCacheStore(): void
+    {
+        $configuredStore = Config::get('oidc.cache.store');
+        $storeName = is_string($configuredStore) && $configuredStore !== '' ? $configuredStore : Config::string('cache.default');
+
+        if (Cache::store($storeName)->getStore() instanceof ArrayStore && ! app()->runningUnitTests()) {
+            $this->record('cache store', 'failure', "Cache store [{$storeName}] uses the array driver, which forgets each login state at once: every SSO callback is refused. Set oidc.cache.store to a shared store (database, redis).");
+
+            return;
+        }
+
+        $this->record('cache store', 'ok', "Cache store [{$storeName}]: each login state is consumed there once. With several app servers, use a store they share (database, redis).");
     }
 
     /**
