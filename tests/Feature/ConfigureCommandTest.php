@@ -64,7 +64,7 @@ it('passes for a working IdP and lists the URIs to register', function (): void 
             'client' => 'ok',
             'redirect uri' => 'ok',
             'timezone' => 'ok',
-            'cache store' => 'ok',
+            'cache store' => 'warning',
         ])
         ->and($report['register_at_identity_provider'])->toBe([
             'redirect_uri' => 'http://localhost/auth/oidc/callback',
@@ -148,6 +148,20 @@ it('checks the app default cache store when oidc.cache.store is empty, and accep
 
     expect($exitCode)->toBe(0)
         ->and(collect($report['checks'])->firstWhere('check', 'cache store')['detail'])->toStartWith('Cache store [database]:');
+});
+
+it('warns that a file cache store is per server', function (): void {
+    FakeIdentityProvider::fake();
+    Config::set('oidc.cache.store', 'file');
+    // The file store outlives the test process: drop what an earlier run cached.
+    Cache::store('file')->flush();
+
+    [$exitCode, $report] = configureOidc();
+    $cacheCheck = collect($report['checks'])->firstWhere('check', 'cache store');
+
+    expect($exitCode)->toBe(0)
+        ->and($cacheCheck['status'])->toBe('warning')
+        ->and($cacheCheck['detail'])->toContain('file driver');
 });
 
 it('warns when app.timezone is not UTC', function (): void {
@@ -263,7 +277,7 @@ it('reports the detail of every check for a working IdP', function (): void {
         ['check' => 'client', 'status' => 'ok', 'detail' => 'Confidential client (client_secret_basic).'],
         ['check' => 'redirect uri', 'status' => 'ok', 'detail' => 'http://localhost/auth/oidc/callback'],
         ['check' => 'timezone', 'status' => 'ok', 'detail' => 'app.timezone is UTC.'],
-        ['check' => 'cache store', 'status' => 'ok', 'detail' => 'Cache store [array]: each login state is consumed there once. With several app servers, use a store they share (database, redis).'],
+        ['check' => 'cache store', 'status' => 'warning', 'detail' => 'Cache store [array] uses the array driver, accepted only because APP_ENV is testing. Any deployed app needs a shared store (database, redis).'],
     ]);
 });
 
@@ -417,7 +431,7 @@ it('prints every check and the URIs to register in the table', function (): void
             ['client', 'WARNING', 'No client secret: the IdP client must be public (PKCE only).'],
             ['redirect uri', 'OK', 'http://localhost/auth/oidc/callback'],
             ['timezone', 'OK', 'app.timezone is UTC.'],
-            ['cache store', 'OK', 'Cache store [array]: each login state is consumed there once. With several app servers, use a store they share (database, redis).'],
+            ['cache store', 'WARNING', 'Cache store [array] uses the array driver, accepted only because APP_ENV is testing. Any deployed app needs a shared store (database, redis).'],
         ])
         ->expectsOutput('Register at the IdP:')
         ->expectsOutput('  redirect_uri: http://localhost/auth/oidc/callback')

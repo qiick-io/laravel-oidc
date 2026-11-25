@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- A two-factor secret that an app casts to an object rendering as an empty string (`AsStringable`) no longer counts as a second factor: break-glass detection could otherwise treat a user without TOTP as protected. The Fortify challenge and the break-glass policy now share one check, which still counts any other cast value as a secret (fail closed).
 - The authorization response `state` is single-use across requests and servers (RFC 6749 §10.12, RFC 9700 §4.7): the callback consumes it with an atomic add on the OIDC cache store before the code exchange. Removing it from the session alone let two parallel callbacks that loaded the session before either saved it both pass the check, leaving only the IdP's single-use code to stop the second. A cache that does not answer refuses the login (fail closed).
 - RP-initiated logout sends a random `state` and the new return route `GET /auth/oidc/logged-out` (`oidc.logged-out`) checks it against a ten-minute HttpOnly, SameSite=Lax cookie (Secure over https) before redirecting to `oidc.logout.redirect_to`, taken from config only (standards review S7). A missing or wrong state is logged and still redirects. An explicit post-logout URI skips the check.
 - A signed token whose payload holds a number JSON cannot carry back (`exp: 1e999`) is refused as an invalid token instead of failing with a 500.
@@ -58,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `oidc:configure` warns on the array cache store when `APP_ENV` is `testing` (the only case the callback accepts it) and on the file store, which each app server keeps to itself.
 - The back-channel logout `jti` cache pre-check is removed: the unique `(issuer, jti)` key already refuses a replay with the same answer, so the pre-check only duplicated it. `BackChannelLogoutService` no longer takes a cache store.
 - A role claim that mixes role names and Zitadel-style role keys (`["admin", {"member": {…}}]`) now maps both instead of only the names. A string value under a string key (`{"display": "admin"}`) is no longer read as a role name.
 - `FortifySecondFactorChallengeService` takes the Fortify class and two-factor trait names as trailing optional constructor arguments (defaults unchanged), so the default challenge is tested without Fortify installed.

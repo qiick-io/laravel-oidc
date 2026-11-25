@@ -80,15 +80,15 @@ it('treats a secret without a confirmation column as confirmed', function (): vo
     expect((new RoleBreakGlassPolicyService(['owner'], true))->isBreakGlassAccount($user))->toBeTrue();
 });
 
-it('counts a secret the app casts to an object as a second factor', function (): void {
+it('counts a secret the app casts to an object as a second factor, unless it renders empty', function (string $storedSecret, bool $isBreakGlass): void {
     Schema::table('users', fn (Blueprint $table) => $table->text('two_factor_secret')->nullable());
-    $user = UserWithRoles::query()->forceCreate(['name' => 'Owner', 'email' => 'owner@example.com', 'password' => 'x', 'two_factor_secret' => 's'])->fresh()
+    $user = UserWithRoles::query()->forceCreate(['name' => 'Owner', 'email' => 'owner@example.com', 'password' => 'x', 'two_factor_secret' => $storedSecret])->fresh()
         ?->mergeCasts(['two_factor_secret' => AsStringable::class]);
     $user->roleNames = ['owner'];
 
     expect($user->getAttribute('two_factor_secret'))->toBeInstanceOf(Stringable::class)
-        ->and((new RoleBreakGlassPolicyService(['owner'], true))->isBreakGlassAccount($user))->toBeTrue();
-});
+        ->and((new RoleBreakGlassPolicyService(['owner'], true))->isBreakGlassAccount($user))->toBe($isBreakGlass);
+})->with(['a secret' => ['s', true], 'an empty secret' => ['', false]]);
 
 it('never treats a user without Eloquent or role methods as break-glass', function (object $user): void {
     expect((new RoleBreakGlassPolicyService(['owner'], false))->isBreakGlassAccount($user))->toBeFalse();

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Qiick\Oidc\Console;
 
 use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\FileStore;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\Cache;
@@ -301,8 +302,19 @@ final class ConfigureOidcCommand extends Command
         $configuredStore = Config::get('oidc.cache.store');
         $storeName = is_string($configuredStore) && $configuredStore !== '' ? $configuredStore : Config::string('cache.default');
 
-        if (Cache::store($storeName)->getStore() instanceof ArrayStore && ! app()->runningUnitTests()) {
-            $this->record('cache store', 'failure', "Cache store [{$storeName}] uses the array driver, which forgets each login state at once: every SSO callback is refused. Set oidc.cache.store to a shared store (database, redis).");
+        $store = Cache::store($storeName)->getStore();
+
+        if ($store instanceof ArrayStore) {
+            // runningUnitTests() is APP_ENV=testing: a staging app with that env would pass the callback check too.
+            app()->runningUnitTests()
+                ? $this->record('cache store', 'warning', "Cache store [{$storeName}] uses the array driver, accepted only because APP_ENV is testing. Any deployed app needs a shared store (database, redis).")
+                : $this->record('cache store', 'failure', "Cache store [{$storeName}] uses the array driver, which forgets each login state at once: every SSO callback is refused. Set oidc.cache.store to a shared store (database, redis).");
+
+            return;
+        }
+
+        if ($store instanceof FileStore) {
+            $this->record('cache store', 'warning', "Cache store [{$storeName}] uses the file driver, which each app server keeps on its own disk: with several servers a login state could be used once per server. Use a shared store (database, redis) there.");
 
             return;
         }

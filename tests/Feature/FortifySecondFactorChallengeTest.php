@@ -69,6 +69,18 @@ it('challenges a secret the app casts to an object, failing closed', function ()
         ->and(fortifyChallengeService()->challenge(browserRequest('http://localhost/auth/oidc/callback', browserSession()), $user, false))->not->toBeNull();
 });
 
+it('reads a cast secret that renders empty as no second factor, and any other cast value as one', function (string $storedSecret, string $cast, bool $isChallenged): void {
+    $user = userWithTwoFactor(['two_factor_secret' => $storedSecret, 'two_factor_confirmed_at' => Date::now()])
+        ->mergeCasts(['two_factor_secret' => $cast]);
+
+    $response = fortifyChallengeService()->challenge(browserRequest('http://localhost/auth/oidc/callback', browserSession()), $user, false);
+
+    expect($response !== null)->toBe($isChallenged);
+})->with([
+    'empty Stringable' => ['', AsStringable::class, false],
+    'array value' => ['["secret"]', 'array', true],
+]);
+
 it('challenges an unconfirmed secret only when Fortify does not require confirmation', function (bool $isConfirmationRequired, bool $isChallenged): void {
     FakeFortify::$isConfirmationRequired = $isConfirmationRequired;
     $user = userWithTwoFactor(['two_factor_secret' => 'secret']);

@@ -34,6 +34,7 @@ classes=(
   'Qiick\Oidc\Models\Concerns\GuardsIdByDefaultTrait'
   'Qiick\Oidc\Models\OidcLogoutRevocation'
   'Qiick\Oidc\Models\UserIdentity'
+  'Qiick\Oidc\Services\Concerns\ChecksTwoFactorSecretTrait'
   'Qiick\Oidc\Services\DiscoveryService'
   'Qiick\Oidc\Services\EloquentUserProvisioningService'
   'Qiick\Oidc\Services\FortifySecondFactorChallengeService'

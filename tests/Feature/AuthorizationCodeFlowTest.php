@@ -121,7 +121,7 @@ it('refuses a callback without state, with an unknown state, or from another bro
         ->and($identityProvider->tokenRequestCount)->toBe(0);
 });
 
-it('accepts each state once, even after a failed callback', function (): void {
+it('refuses a replay of a callback that succeeded', function (): void {
     $identityProvider = FakeIdentityProvider::fake();
     $session = browserSession();
     $callbackUrl = $identityProvider->authorize(startLogin($session));
@@ -129,6 +129,19 @@ it('accepts each state once, even after a failed callback', function (): void {
     callback($callbackUrl, $session);
 
     expect(fn () => callback($callbackUrl, $session))->toThrow(InvalidCallbackException::class, 'state');
+});
+
+it('accepts each state once, even after a callback the IdP answered with an error', function (): void {
+    // The parallel session copy still holds the pending login, so only the
+    // used-state marker can refuse the replay.
+    FakeIdentityProvider::fake();
+    $session = browserSession();
+    $state = queryParameters(startLogin($session))['state'];
+    $parallelSession = clone $session;
+    $deniedCallbackUrl = 'http://localhost/auth/oidc/callback?error=access_denied&state='.$state;
+
+    expect(fn () => callback($deniedCallbackUrl, $session))->toThrow(InvalidCallbackException::class, 'access_denied')
+        ->and(fn () => callback($deniedCallbackUrl, $parallelSession))->toThrow(InvalidCallbackException::class, 'state was already used');
 });
 
 it('accepts each state once across requests that read the session before either wrote it', function (): void {
