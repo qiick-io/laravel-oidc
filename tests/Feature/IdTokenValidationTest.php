@@ -284,14 +284,17 @@ it('refuses an empty at_hash as malformed', function (): void {
     );
 })->throws(InvalidTokenException::class, 'at_hash] is malformed');
 
-it('refuses at_hash when no access_token was issued', function (): void {
-    $idToken = signedIdToken($this->identityProvider, ['at_hash' => accessTokenHash('token')]);
+it('refuses at_hash when no access_token was issued', function (array $accessTokenArgument): void {
+    // Even an IdP that signed the hash of the empty string gets no further.
+    $idToken = signedIdToken($this->identityProvider, ['at_hash' => accessTokenHash('')]);
     $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
     $discovery = app(DiscoveryService::class)->discover($configuration);
 
-    // Omit the access token so the default empty string is what the check sees.
-    app(IdTokenValidatorService::class)->validate($idToken, $discovery, $configuration, EXPECTED_NONCE);
-})->throws(InvalidTokenException::class, 'at_hash] is present but no access_token');
+    app(IdTokenValidatorService::class)->validate($idToken, $discovery, $configuration, EXPECTED_NONCE, ...$accessTokenArgument);
+})->throws(InvalidTokenException::class, 'at_hash] is present but no access_token')->with([
+    'omitted' => [[]],
+    'empty' => [['']],
+]);
 
 it('accepts an id_token that omits at_hash in the code flow', function (): void {
     $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();

@@ -100,16 +100,12 @@ final readonly class AuthenticatedIdentityData
         }
 
         try {
-            $header = json_decode(JWT::urlsafeB64Decode($segments[0]), true, 16, JSON_THROW_ON_ERROR);
+            $header = json_decode(JWT::urlsafeB64Decode($segments[0]), true, flags: JSON_THROW_ON_ERROR);
         } catch (Throwable) {
             return null;
         }
 
-        if (! is_array($header)) {
-            return null;
-        }
-
-        $algorithm = $header['alg'] ?? null;
+        $algorithm = is_array($header) ? $header['alg'] ?? null : null;
 
         return is_string($algorithm) && $algorithm !== '' ? $algorithm : null;
     }
