@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- README: a threat model section (what the package defends against and what it leaves to the app and the IdP) and the list of fields for an app's settings UI, basic and advanced, with where each one is read (standards review S10).
 - `docs/PUBLIC-API.md` lists the public API that 1.0.0 freezes (classes, config keys, env vars, routes, commands, events, tables) and the deprecation policy; internal classes carry `@internal`.
 - README brought up to beta.6: version, the `oidc_logout_revocations` table as the source of truth with the prune schedule, front-channel logout setup, `oidc.routes.except`, and the supported `id_token` algorithms.
 

@@ -275,6 +275,36 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.http.connect_timeout` (`OIDC_HTTP_CONNECT_TIMEOUT`) | `10` | TCP connect timeout in seconds; `0` means no practical limit. |
 | `oidc.http.max_response_bytes` (`OIDC_MAX_RESPONSE_BYTES`) | `1048576` | Cap on IdP response bodies (discovery, JWKS, token, userinfo). |
 
+### Fields for an app's settings UI
+
+The package ships no UI. An app that edits SSO in an admin page (Externa and Excubia App keep it in a settings table, see "Settings from the database") shows the basic fields always and the advanced ones in a collapsible section, closed by default. Every advanced field is optional, defaults to the package default and validates on save, so settings stored before a field existed still boot. The first four are read from `ProviderConfigurationData`; the others are config keys the app sets at runtime from its settings.
+
+**Basic:** enabled (`oidc.enabled`), issuer, client id, client secret (write-only: show only whether one is stored), button label, JIT (`oidc.jit`), auto-link (`oidc.auto_link`, with a warning that it lets the IdP take over a local account with the same verified email), SSO-only (`oidc.only`), and the URIs to register at the IdP with copy buttons: redirect, post-logout redirect and back-channel logout (`oidc:configure --json` prints them).
+
+**Advanced:**
+
+| Field | Where | Validation |
+| --- | --- | --- |
+| Scopes | `ProviderConfigurationData::$scopes` (`oidc.scopes`) | non-empty strings; `openid` is always sent |
+| Token endpoint auth method | `ProviderConfigurationData::$tokenEndpointAuthMethod` | `client_secret_basic` or `client_secret_post` |
+| Post-logout redirect URI | `ProviderConfigurationData::$postLogoutRedirectUri` | absolute URL or empty (the package return route) |
+| Recent login (`max_age`) | `ProviderConfigurationData::$maxAge` (`oidc.mfa.max_age`) | whole seconds, 0 or more, or empty |
+| Require verified email | `oidc.require_verified_email` | boolean |
+| Allowed email domains | `oidc.allowed_domains` | list of domains; empty allows all |
+| MFA required | `oidc.mfa.required` | boolean |
+| Accepted `amr` / `acr` values | `oidc.mfa.amr_values` / `acr_values` | lists of strings |
+| Requested `acr_values` | `oidc.mfa.request_acr_values` | space-separated string or empty |
+| Refuse a login without a requested `acr` | `oidc.mfa.require_requested_acr` | boolean |
+| Role mapping | `oidc.roles.enabled` / `claim` / `organization` / `map` / `forbidden` | see "Role mapping" |
+| ID token algorithms | `oidc.id_token.algorithms` | subset of `RS256`, `RS384`, `RS512`, `PS256`, `ES256`, `ES384` |
+| Trusted audiences | `oidc.id_token.trusted_audiences` | list of strings |
+| Clock leeway | `oidc.id_token.leeway` | seconds, 0 or more |
+| Fetch userinfo | `oidc.userinfo` | boolean |
+| Remember-me for SSO | `oidc.remember` | boolean; warn that the cookie outlives a logout |
+| Front-channel logout | `oidc.frontchannel_logout.enabled` | boolean; show the front-channel URI to copy when on |
+
+Next to a field, the UI can say "not supported by this IdP" from the capabilities `oidc:configure --json` reports under `identity_provider_capabilities` (for example `acr_values_supported` for the `acr` fields, `frontchannel_logout_session_supported` for front-channel logout). These hints never block saving.
+
 ### Testing your app
 
 The package ships an in-memory IdP, so app tests need no network:
@@ -289,6 +319,35 @@ $this->get($callbackUrl);
 ```
 
 It checks the PKCE verifier, the code, the redirect URI and the client secret like a strict IdP, and signs `id_token`s with a key generated per test. `authorize()` also takes userinfo claims, and `logoutTokenClaims()` + `sign()` build back-channel logout tokens. `withDiscovery()`, `rotateSigningKey()`, `sign()` and `modifyTokenResponseUsing()` cover the failure cases. `rotateSigningKey(keyType: 'EC', curve: 'P-384')` and `sign(..., algorithm: 'ES384')` cover EC keys; RSA keys sign every `RS*` algorithm and `PS256`.
+
+## Threat model
+
+What the package defends against, and what it leaves to the app and the IdP. Decided with the standards review (S10, 2026-11-22); this section is kept in step with the code.
+
+**Trusted:** the IdP's signing keys published at its `jwks_uri`, the issuer configured by the app, the app key (`APP_KEY`), the app's database and its config. **Not trusted:** the browser and every query parameter it carries, the userinfo response (unsigned), the IdP's network responses until validated, and any URL in the discovery document.
+
+| Threat | Defence |
+| --- | --- |
+| Forged or replayed login response | `state` checked and single-use per pending login (at most five per session, ten minutes each); PKCE `S256` on every login (RFC 7636); `nonce` bound to the `id_token` (OIDC Core 3.1.3.7); RFC 9207 `iss` checked whenever present, and required when the IdP advertises it. |
+| Forged or substituted `id_token` | Signature through the IdP's JWKS with an allowlist of algorithms (never `none` or HMAC), RSA keys of 2048 bits or more, EC keys on their own curve; `iss`, `aud`, `azp`, `exp`, `iat`, `at_hash`, `auth_time` against `max_age`; a `crit` header is refused. |
+| Substituted userinfo | Its `sub` must equal the `id_token` `sub` (OIDC Core 5.3.4). A claim in the `id_token` always wins over userinfo, and `amr`, `acr`, `auth_time`, `sid`, `azp` and `nbf` are never taken from userinfo. |
+| Account takeover through email | Auto-link is off by default and needs `email_verified: true`; one user links to at most one identity per issuer (unique key), and concurrent first logins cannot link twice. |
+| MFA bypass | Only a signed `amr` / `acr` counts as MFA; a login that asked for an `acr` and got another one runs the app's second factor (or is refused). |
+| A logout that is lost | Back-channel and front-channel logouts are stored in `oidc_logout_revocations` before the endpoint answers. **The table is the source of truth; the cache is only an accelerator**, so `cache:clear`, eviction or one cache per server never loses a logout. A failed table read ends the session (fail closed). |
+| Replayed `logout_token` | Unique `(issuer, jti)`: a second use is refused. |
+| Session theft from storage | The `id_token` kept for logout is encrypted with the app key; access and refresh tokens are not stored. An unknown session payload version ends the session. |
+| SSRF through discovery | Every server-side call (discovery, JWKS, token, userinfo) goes through `qiick/laravel-outbound`: https only, private, loopback and metadata addresses refused (unless `oidc.http.allow_private_hosts`, which still blocks metadata), the resolved address pinned, response size and time capped. |
+| Open redirect after logout | The post-logout return route redirects only to `oidc.logout.redirect_to` from config, and checks the logout `state` cookie. |
+| Lock-out by a broken IdP | SSO-only mode always keeps break-glass accounts (role plus confirmed second factor), and turning SSO off restores local login. |
+| Secrets in logs | Tokens, codes, secrets and full claim sets are never logged; the client secret is never printed by `oidc:configure`. |
+
+**Out of scope, left to the app or the IdP:**
+
+- A compromised IdP or a stolen IdP signing key: the package trusts what the IdP signs.
+- The app's own login, second factor and session hardening (cookie flags, session lifetime, `APP_KEY` rotation with `APP_PREVIOUS_KEYS`).
+- Rate limiting of the redirect, callback and back-channel routes (the front-channel route has its own limit): add `throttle` to `oidc.routes.middleware` or the app's route group if needed. A forged `logout_token` costs one signature check and at most one JWKS refetch per cooldown.
+- Pruning: schedule `oidc:prune-logout-revocations` daily; a missed run only leaves extra rows.
+- Clock drift beyond `oidc.id_token.leeway` and an `app.timezone` other than `UTC`.
 
 ## Migrating Externa and Excubia App
 
