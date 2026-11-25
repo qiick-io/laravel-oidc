@@ -10,6 +10,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
+use Qiick\Oidc\Services\Concerns\ChecksTwoFactorSecretTrait;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -21,6 +22,8 @@ use Symfony\Component\HttpFoundation\Response;
  */
 final readonly class FortifySecondFactorChallengeService implements SecondFactorChallengeContract
 {
+    use ChecksTwoFactorSecretTrait;
+
     /**
      * The two class names are internal test hooks, so the default challenge
      * is tested without Fortify installed; apps never pass them.
@@ -59,11 +62,7 @@ final readonly class FortifySecondFactorChallengeService implements SecondFactor
             return false;
         }
 
-        // Fail closed: an app may cast the secret to an object (encrypted,
-        // AsStringable), so only null or an empty string means "no second factor".
-        $secret = $user->getAttribute('two_factor_secret');
-
-        if ($secret === null || $secret === '') {
+        if (! $this->hasTwoFactorSecret($user)) {
             return false;
         }
 

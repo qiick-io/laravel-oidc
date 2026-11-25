@@ -290,7 +290,7 @@ it('sets expires_at to the later of revocation lifetime and token exp plus 120 s
     $receivedAt = Date::now()->getTimestamp();
     $tokenId = 'jti-ttl-'.$revocationTtl.'-'.($tokenSecondsFromNow ?? 'null');
 
-    $service = new SessionRevocationService(Cache::store(), $revocationTtl, app(Dispatcher::class));
+    $service = new SessionRevocationService(Cache::store(), $revocationTtl, app(Dispatcher::class), leewaySeconds: 60);
     $service->revoke(new LogoutTokenData(
         issuer: 'https://idp.example.com/realms/test',
         subject: null,

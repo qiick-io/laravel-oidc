@@ -135,6 +135,8 @@ final class OidcServiceProvider extends ServiceProvider
             shouldFetchUserinfo: $this->config($app)->boolean('oidc.userinfo', true),
             leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway'),
             isRequestedAcrRequired: $this->config($app)->boolean('oidc.mfa.require_requested_acr', false),
+            cache: $this->cacheStore($app),
+            isArrayCacheAllowed: $app->runningUnitTests(),
         ));
 
         $this->app->bind(UserProvisioningContract::class, EloquentUserProvisioningService::class);
@@ -201,6 +203,7 @@ final class OidcServiceProvider extends ServiceProvider
             cache: $this->cacheStore($app),
             revocationSeconds: OidcLogoutRevocation::maximumConfiguredLifetimeSeconds(),
             events: $app->make(Dispatcher::class),
+            leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway', 60),
         ));
 
         $this->app->bind(BackChannelLogoutService::class, fn (Application $app): BackChannelLogoutService => new BackChannelLogoutService(

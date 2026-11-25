@@ -6,7 +6,10 @@ use Illuminate\Auth\GenericUser;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
+use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Data\IdentitySessionData;
+use Qiick\Oidc\Data\ProviderConfigurationData;
+use Qiick\Oidc\Exceptions\OidcNotConfiguredException;
 use Qiick\Oidc\Http\Controllers\FrontChannelLogoutController;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
@@ -121,3 +124,25 @@ it('lets only the issuer origin frame the endpoint', function (string $issuer, s
     'with a port' => ['https://idp.example.com:8443/realms/test', 'https://idp.example.com:8443'],
     'not a URL' => ['urn:example:idp', "'none'"],
 ]);
+
+it('answers 400, not 500, when the app repository is enabled but cannot build its configuration', function (): void {
+    Config::set('oidc.frontchannel_logout.enabled', true);
+    app()->bind(ProviderConfigurationRepositoryContract::class, fn (): ProviderConfigurationRepositoryContract => new class implements ProviderConfigurationRepositoryContract
+    {
+        public function isEnabled(): bool
+        {
+            return true;
+        }
+
+        public function configuration(): ProviderConfigurationData
+        {
+            throw new OidcNotConfiguredException('The settings row is incomplete.');
+        }
+    });
+
+    $this->get('/auth/oidc/frontchannel-logout?iss='.urlencode($this->identityProvider->issuer).'&sid=front-sid-1')
+        ->assertStatus(400)
+        ->assertContent('Front-channel logout is not configured.');
+
+    expect(OidcLogoutRevocation::query()->count())->toBe(0);
+});

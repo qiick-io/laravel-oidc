@@ -50,6 +50,7 @@ classes=(
   'Qiick\Oidc\Repositories\ConfigProviderConfigurationRepository'
   'Qiick\Oidc\Services\AuthorizationCodeFlowService'
   'Qiick\Oidc\Services\BackChannelLogoutService'
+  'Qiick\Oidc\Services\Concerns\ChecksTwoFactorSecretTrait'
   'Qiick\Oidc\Services\DiscoveryService'
   'Qiick\Oidc\Services\EloquentUserProvisioningService'
   'Qiick\Oidc\Services\FortifySecondFactorChallengeService'

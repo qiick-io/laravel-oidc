@@ -58,6 +58,25 @@ it('marks the state cookie Secure when the return route is https', function (): 
         ->and($stateCookie?->isSecure())->toBeTrue();
 });
 
+it('scopes the state cookie to the return route of an app served under a sub-path', function (): void {
+    URL::forceRootUrl('http://localhost/app');
+
+    $endSessionUrl = (string) app(RpInitiatedLogoutService::class)->endSessionUrl(sessionAfterSsoLogin(FakeIdentityProvider::fake()));
+
+    expect(queryParameters($endSessionUrl)['post_logout_redirect_uri'])->toBe('http://localhost/app/auth/oidc/logged-out')
+        ->and(Cookie::queued(LOGOUT_STATE_COOKIE, null, '/app/auth/oidc'))->not->toBeNull();
+});
+
+it('throttles the post-logout return route, which logs every unmatched state', function (): void {
+    FakeIdentityProvider::fake();
+
+    foreach (range(1, 60) as $attempt) {
+        $this->get('/auth/oidc/logged-out')->assertRedirect();
+    }
+
+    $this->get('/auth/oidc/logged-out')->assertTooManyRequests();
+});
+
 it('sends no state and sets no cookie when the app configures its own post-logout uri', function (): void {
     [$parameters, $stateCookie] = endSessionParametersAndCookie(FakeIdentityProvider::fake(configOverrides: ['post_logout_redirect_uri' => 'https://app.example.com/login']));
 

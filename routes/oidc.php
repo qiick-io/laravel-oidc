@@ -41,7 +41,8 @@ if ($shouldRegister('oidc.backchannel-logout')) {
 }
 
 if ($shouldRegister('oidc.logged-out')) {
-    Route::middleware('web')->get('logged-out', PostLogoutReturnController::class)->name('oidc.logged-out');
+    // Throttled like front-channel logout: every unmatched state logs a warning.
+    Route::middleware(['web', 'throttle:60,1'])->get('logged-out', PostLogoutReturnController::class)->name('oidc.logged-out');
 }
 
 if ($shouldRegister('oidc.frontchannel-logout')) {

@@ -9,6 +9,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Config;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Data\LogoutTokenData;
+use Qiick\Oidc\Exceptions\OidcException;
 use Qiick\Oidc\Services\SessionRevocationService;
 
 /**
@@ -47,8 +48,14 @@ final class FrontChannelLogoutController
             return $this->error(400, 'Front-channel logout [sid] has leading or trailing whitespace.');
         }
 
-        // isEnabled() above guarantees the configuration can be built.
-        if ($issuer !== $configurationRepository->configuration()->issuer) {
+        // An app repository can say enabled yet fail to build its settings.
+        try {
+            $configuredIssuer = $configurationRepository->configuration()->issuer;
+        } catch (OidcException) {
+            return $this->error(400, 'Front-channel logout is not configured.');
+        }
+
+        if ($issuer !== $configuredIssuer) {
             return $this->error(400, 'Front-channel logout [iss] does not match the configured issuer.');
         }
 

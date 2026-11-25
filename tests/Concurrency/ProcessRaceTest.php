@@ -9,10 +9,12 @@ use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
 use Qiick\Oidc\Data\LogoutTokenData;
 use Qiick\Oidc\Enums\LoginRefusalReasonEnum;
+use Qiick\Oidc\Exceptions\InvalidCallbackException;
 use Qiick\Oidc\Exceptions\InvalidTokenException;
 use Qiick\Oidc\Exceptions\LoginRefusedException;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
 use Qiick\Oidc\Models\UserIdentity;
+use Qiick\Oidc\Services\AuthorizationCodeFlowService;
 use Qiick\Oidc\Services\DiscoveryService;
 use Qiick\Oidc\Services\JwksService;
 use Qiick\Oidc\Services\SessionRevocationService;
@@ -135,4 +137,25 @@ it('refetches the JWKS once when two logins meet an unknown kid at the same time
     expect($results['parent']['fetches'] + $results['child']['fetches'])->toBe(1)
         ->and($results['child'])->toBe(['isFound' => true, 'fetches' => 1])
         ->and($results['parent'])->toBe(['isFound' => false, 'fetches' => 0]);
+});
+
+it('accepts a state once when two callbacks carrying it race on one session', function (): void {
+    config()->set('oidc.cache.store', 'database');
+    $identityProvider = FakeIdentityProvider::fake();
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+    // Each process holds its own copy of the session, as two parallel
+    // requests that loaded it before either saved it.
+    $handleCallback = fn (): string => app(AuthorizationCodeFlowService::class)->handleCallback(browserRequest($callbackUrl, clone $session))->subject;
+
+    // The parent has read "state not used yet" and not written its marker.
+    $results = ProcessRace::run(
+        fn (QueryExecuted $query): bool => str_starts_with($query->sql, 'select')
+            && array_filter($query->bindings, fn (mixed $binding): bool => is_string($binding) && str_contains($binding, 'oidc:state:')) !== [],
+        $handleCallback,
+        $handleCallback,
+    );
+
+    expect([$results['parent'], $results['child']])->toContain('fake-subject-1')
+        ->toContain(['exception' => InvalidCallbackException::class, 'message' => 'The authorization response state was already used.']);
 });

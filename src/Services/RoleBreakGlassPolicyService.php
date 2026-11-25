@@ -7,6 +7,7 @@ namespace Qiick\Oidc\Services;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
+use Qiick\Oidc\Services\Concerns\ChecksTwoFactorSecretTrait;
 
 /**
  * Default break-glass policy: one of the configured roles (Spatie `hasRole`)
@@ -16,6 +17,8 @@ use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
  */
 final readonly class RoleBreakGlassPolicyService implements BreakGlassPolicyContract
 {
+    use ChecksTwoFactorSecretTrait;
+
     /**
      * @param  list<string>  $roles
      */
@@ -41,11 +44,7 @@ final readonly class RoleBreakGlassPolicyService implements BreakGlassPolicyCont
 
     private function hasConfirmedSecondFactor(Model $user): bool
     {
-        // The same test as the Fortify challenge: an app may cast the secret
-        // to an object, so only null or an empty string means "no second factor".
-        $secret = $user->getAttribute('two_factor_secret');
-
-        if ($secret === null || $secret === '') {
+        if (! $this->hasTwoFactorSecret($user)) {
             return false;
         }
 

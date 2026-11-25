@@ -1,0 +1,66 @@
+# Security checklist
+
+Every security check the package makes, with the spec behind it and the tests that prove a bad value is refused (repo rule: "every security check has a test that proves a bad value is refused"). A change to one of these checks updates its row in the same pull request. Test names are `file › test`; all files are under `tests/Feature/` unless the path says otherwise.
+
+The IDs are stable: a removed check keeps its number, marked "withdrawn", and a new one takes the next free number.
+
+## Authorization request and callback
+
+| ID | Check | Spec | Tests |
+| --- | --- | --- | --- |
+| SEC-01 | PKCE `S256` on every login, also for confidential clients; the verifier sent matches the challenge | RFC 7636 §4 | `AuthorizationCodeFlowTest › redirects with PKCE S256, state, nonce and the configured scopes`; `› sends the PKCE verifier that matches the challenge` |
+| SEC-02 | `state` is required, bound to the browser session, single-use and expires after ten minutes | RFC 6749 §10.12, RFC 9700 §4.7 | `AuthorizationCodeFlowTest › refuses a callback without state, with an unknown state, or from another browser session`; `› accepts each state once, even after a failed callback`; `› expires a pending login after ten minutes`; `› refuses a pending login exactly when it expires`; `› keeps only the five newest pending logins` |
+| SEC-03 | Protocol parameters cannot be overridden by the app's extra parameters | OIDC Core §3.1.2.1 | `AuthorizationCodeFlowTest › passes optional parameters but never lets them override the protocol ones` |
+| SEC-04 | RFC 9207 `iss` in the authorization response: checked when present, required when advertised | RFC 9207 §2.4 | `AuthorizationCodeFlowTest › checks the RFC 9207 iss parameter`; `› requires the iss parameter when the IdP advertises it` |
+| SEC-05 | A callback is refused when the settings changed during the login, without a code, or with an IdP error (only a sanitised code is reported) | RFC 6749 §4.1.2.1 | `AuthorizationCodeFlowTest › refuses a callback when the settings changed during the login`; `› refuses a callback without a code`; `› refuses a callback with an empty code`; `› reports a malformed IdP error code as unknown` |
+| SEC-06 | The IdP discovery document must name the configured issuer exactly and offer the code flow with PKCE `S256` | OIDC Discovery §4.3 | `DiscoveryTest › refuses a document whose issuer differs from the configured one`; `› refuses an IdP without the code flow or without PKCE S256`; `› refuses a document without a required endpoint` |
+
+## `id_token`
+
+| ID | Check | Spec | Tests |
+| --- | --- | --- | --- |
+| SEC-10 | Signature through the IdP's JWKS; a changed payload or a foreign key with a published `kid` is refused | OIDC Core §3.1.3.7 step 6, RFC 7515 | `IdTokenValidationTest › refuses a token signed with another key that reuses the published kid`; `› refuses a token whose payload was changed after signing`; `› refuses malformed tokens` |
+| SEC-11 | Algorithm allowlist: asymmetric only, never `none` or HMAC, even when configured | RFC 8725 §3.1, OIDC Core §3.1.3.7 step 7 | `IdTokenValidationTest › refuses alg none, HMAC and algorithms not configured`; `› refuses an HS256 token signed with the client secret even when HS256 is configured` |
+| SEC-12 | RSA keys of 2048 bits or more; `PS256` salt as long as the hash; EC key on its algorithm's curve | RFC 7518 §3.3, §3.4, §3.5 | `JwksKeyPolicyTest › refuses an RSA key shorter than 2048 bits for every RSA algorithm`; `› refuses a PS256 signature whose salt is not as long as the hash`; `› refuses an EC key whose curve does not belong to the token algorithm` |
+| SEC-13 | No `crit` header; a JWKS that publishes the `kid` twice, an encryption key or `key_ops` without `verify` is not used | RFC 7515 §4.1.11, RFC 7517 §4.2–4.3 | `JwksKeyPolicyTest › refuses a token with a crit header, since the package understands no JWS extension`; `› refuses a JWKS that publishes the token kid twice`; `› refuses an encryption key that carries the token kid`; `› honours key_ops when the JWKS sets it` |
+| SEC-14 | `iss` equals the configured issuer exactly | OIDC Core §3.1.3.7 step 2 | `IdTokenValidationTest › refuses a wrong issuer` |
+| SEC-15 | `aud` contains the client (a string or a list of strings); extra audiences only when trusted, and then `azp` is the client | OIDC Core §3.1.3.7 steps 3–5 | `IdTokenValidationTest › refuses a token for another client`; `› refuses an untrusted extra audience`; `› accepts a trusted extra audience only with azp set to the client id`; `› refuses an azp that is not the client id`; `› refuses an aud list with a non-string member, even beside the client id` |
+| SEC-16 | `exp` and `iat` required; expired or future tokens refused within the leeway; an overflowing `exp` refused without a 500 | OIDC Core §3.1.3.7 steps 9–10 | `IdTokenValidationTest › refuses an expired token, with the configured leeway`; `› refuses a token issued in the future`; `› refuses a token without exp or iat`; `› accepts an iat exactly at the leeway edge and refuses one second past it`; `JwksKeyPolicyTest › refuses a signed token whose exp overflows to infinity, instead of failing with a 500` |
+| SEC-17 | `nonce` equals the one of this login | OIDC Core §3.1.3.7 step 11 | `IdTokenValidationTest › refuses a wrong or missing nonce` |
+| SEC-18 | `at_hash`, when present, matches the access token with the digest of the JWS `alg` | OIDC Core §3.1.3.8, §3.2.2.9 | `IdTokenValidationTest › refuses a mismatched or malformed at_hash`; `› refuses an empty at_hash as malformed`; `› refuses at_hash when no access_token was issued`; `› refuses at_hash when the JWS alg is missing or has no hash mapping` |
+| SEC-19 | `sub` present, at most 255 characters, no surrounding whitespace, compared byte for byte | OIDC Core §2 | `IdTokenValidationTest › refuses a missing, empty or oversized sub`; `› refuses a sub with leading or trailing whitespace`; `IdentityKeyCaseSensitivityTest › does not sign in the user of a subject that differs only in case` |
+| SEC-20 | `auth_time` checked against `max_age` (sent only when well formed); a future `auth_time` refused | OIDC Core §3.1.2.1, §3.1.3.7 step 13 | `StepUpAuthenticationTest › refuses an id_token without auth_time when max_age was sent`; `› refuses an authentication older than max_age plus the leeway, and accepts one within`; `› refuses to send a malformed max_age, which would leave auth_time unchecked`; `› reads a fractional auth_time in whole seconds, as NumericDate allows, and refuses one in the future` |
+| SEC-21 | JWKS refetch on an unknown `kid` is rate limited | OIDC Core §10.1.1 | `IdTokenValidationTest › rate limits JWKS refetches triggered by unknown kids` |
+
+## Userinfo, linking and MFA
+
+| ID | Check | Spec | Tests |
+| --- | --- | --- | --- |
+| SEC-30 | Userinfo `sub` must equal the `id_token` `sub`; `id_token` claims win, and `amr`, `acr`, `auth_time`, `sid`, `azp`, `nbf` are never taken from userinfo | OIDC Core §5.3.4, §2 | `UserinfoTest › refuses a userinfo response for another subject`; `› never takes a trust-sensitive claim from userinfo, even when the id_token lacks it`; `MultiFactorTest › never trusts amr from the unsigned userinfo response` |
+| SEC-31 | The identity key is (issuer, `sub`); the email never signs anyone in | design §4 | `SsoLoginTest › signs in the user linked to (issuer, sub), whatever the email says`; `› refuses an unknown identity when auto-link and JIT are off, even with a matching email` |
+| SEC-32 | Auto-link and JIT need a verified email; one identity per user and issuer, also under concurrent logins | OIDC Core §5.1, standards review | `SsoLoginTest › never auto-links or provisions from an unverified email`; `› does not auto-link a user already linked to another identity of the same issuer`; `› refuses an auto-link that loses the race to a concurrent link of the same user`; `› does not treat LIKE wildcards in an email as a match` |
+| SEC-33 | MFA counts only from a signed `amr` / `acr`; a requested `acr` not returned does not count (or refuses) | RFC 8176, OIDC Core §2 | `MultiFactorTest › runs the app second factor when the IdP did not prove MFA`; `StepUpAuthenticationTest › proves MFA through the requested acr only when the IdP returns it`; `› refuses a missing or lower acr when require_requested_acr is on` |
+| SEC-34 | Inactive users are refused; SSO-only mode keeps local login for break-glass accounts only | design §4 | `SsoLoginTest › refuses inactive users`; `SsoOnlyModeTest › keeps local login only for break-glass accounts`; `› refuses password logins through Auth::attempt() for everyone but break-glass accounts` |
+
+## Session and logout
+
+| ID | Check | Spec | Tests |
+| --- | --- | --- | --- |
+| SEC-40 | The session is regenerated at login and gets no remember cookie by default | OWASP session fixation | `SsoLoginTest › regenerates the session and sets no remember cookie by default` |
+| SEC-41 | The stored `id_token` is encrypted; an unreadable one or an unknown payload version ends the session | standards review S6 | `IdentitySessionEncryptionTest › stores the id_token encrypted and reads it back in clear`; `› ends a session whose stored id_token cannot be decrypted`; `› ends the session when the pending identity no longer reads at promotion` |
+| SEC-42 | Back-channel `logout_token`: signed, `iss`, `aud`, `iat`, `exp`, the logout event, no `nonce`, `sub` or `sid`, `jti`; an `id_token` is not a logout token | OIDC Back-Channel Logout §2.6 | `BackChannelLogoutTest › refuses invalid logout tokens with 400`; `› refuses an id_token posted as a logout_token`; `› refuses a forged signature and a missing token` |
+| SEC-43 | Each `jti` is accepted once (unique `(issuer, jti)`), and the row outlives the token | OIDC Back-Channel Logout §2.6 step 8 | `BackChannelLogoutTest › accepts each jti once`; `LogoutRevocationDurabilityTest › refuses a replayed logout_token via the unique (issuer, jti) key`; `› sets expires_at to the later of revocation lifetime and token exp plus 120 seconds` |
+| SEC-44 | The table is the source of truth: a cache miss or flush never reads as "not revoked", and a failed table read means revoked | standards review M10 | `LogoutRevocationDurabilityTest › still revokes after a cache flush because only the table answers not-revoked`; `› treats a failed table read as revoked and never as a negative cache` |
+| SEC-45 | The revocation check runs after the session starts and before `auth` | OIDC Back-Channel Logout §2.7 | `BackChannelLogoutTest › does not let a revoked session reach a route behind auth`; `› orders its session check after the session starts and before auth` |
+| SEC-46 | Front-channel logout: off by default; needs both `iss` and `sid`; `iss` is the configured issuer; only the issuer origin may frame it | OIDC Front-Channel Logout §2–3 | `FrontChannelLogoutTest › answers 404 for front-channel logout while the flag is off`; `› refuses front-channel logout without both iss and sid`; `› refuses a front-channel iss that is not the configured issuer`; `› lets only the issuer origin frame the endpoint` |
+| SEC-47 | RP-initiated logout return: a random `state` in an HttpOnly, SameSite=Lax cookie; the landing page comes from config only | RP-Initiated Logout §2–3 | `PostLogoutReturnTest › sends a random state and returns to the package route by default`; `› redirects to the configured landing page when the state matches, and drops the cookie`; `› still redirects, with a warning, when the state does not check out` |
+
+## Server-side requests (SSRF)
+
+| ID | Check | Spec | Tests |
+| --- | --- | --- | --- |
+| SEC-50 | IdP calls are https only, never to private, loopback or metadata addresses (metadata stays blocked even with the private-host opt-in) | OWASP SSRF | `RemoteUrlGuardTest › refuses unsafe server urls`; `› refuses a public host name that resolves to a private address`; `› keeps cloud metadata blocked when private hosts are allowed`; `DiscoveryTest › refuses a discovery url on a private network without the opt-in` |
+| SEC-51 | Every IdP call is pinned to the checked address and follows no redirect | DNS rebinding | `RemoteUrlGuardTest › pins a public ipv4 literal to itself without resolving it`; `RemoteUrlGuardPinTest.php`; `DiscoveryTest › does not follow redirects`; `IdentityProviderHttpOutboundTest › does not follow redirects from the IdP` |
+| SEC-52 | Response bodies are size-capped; IdP errors never echo a body | resource exhaustion, information leak | `IdentityProviderHttpOutboundTest › refuses an oversized JSON response through the size limit`; `DiscoveryTest › surfaces an HTTP error without the response body` |
+| SEC-53 | Browser endpoints from discovery use https and carry no credentials | OIDC Discovery §3 | `DiscoveryTest › refuses browser endpoints with an unsafe scheme`; `OidcOutboundIsolationTest › refuses browser endpoints with credentials through DiscoveryService from the container` |
+| SEC-54 | Installing `qiick/laravel-outbound` cannot loosen the package's SSRF guard or timeouts | standards review | `OidcOutboundIsolationTest › refuses a loopback IdP when OutboundServiceProvider registers after OIDC with private hosts open` |
