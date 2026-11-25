@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Routing\RouteCollection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Http;
@@ -123,27 +124,30 @@ it('fails on the per-request array cache outside tests, where no login could com
 
 it('names the cache store that makes each login state single-use', function (): void {
     FakeIdentityProvider::fake();
-    Config::set('oidc.cache.store', 'file');
+    Config::set('oidc.cache.store', 'database');
+    // Touch the database first: its lazy migration would reset the Artisan output buffer mid-command.
+    Cache::store('database')->get('warm-up');
 
     [, $report] = configureOidc();
 
     expect(collect($report['checks'])->firstWhere('check', 'cache store'))->toBe([
         'check' => 'cache store',
         'status' => 'ok',
-        'detail' => 'Cache store [file]: each login state is consumed there once. With several app servers, use a store they share (database, redis).',
+        'detail' => 'Cache store [database]: each login state is consumed there once. With several app servers, use a store they share (database, redis).',
     ]);
 });
 
 it('checks the app default cache store when oidc.cache.store is empty, and accepts a shared one outside tests', function (): void {
     FakeIdentityProvider::fake();
     Config::set('oidc.cache.store', '');
-    Config::set('cache.default', 'file');
+    Config::set('cache.default', 'database');
+    Cache::store('database')->get('warm-up');
     app()->detectEnvironment(fn (): string => 'production');
 
     [$exitCode, $report] = configureOidc();
 
     expect($exitCode)->toBe(0)
-        ->and(collect($report['checks'])->firstWhere('check', 'cache store')['detail'])->toStartWith('Cache store [file]:');
+        ->and(collect($report['checks'])->firstWhere('check', 'cache store')['detail'])->toStartWith('Cache store [database]:');
 });
 
 it('warns when app.timezone is not UTC', function (): void {

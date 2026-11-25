@@ -186,7 +186,7 @@ it('records the used state per issuer for as long as a pending login lives', fun
 
 it('accepts a shared cache store outside tests', function (): void {
     $identityProvider = FakeIdentityProvider::fake();
-    config()->set('oidc.cache.store', 'file');
+    config()->set('oidc.cache.store', 'database');
     $session = browserSession();
     $callbackUrl = $identityProvider->authorize(startLogin($session));
     app()->detectEnvironment(fn (): string => 'production');
