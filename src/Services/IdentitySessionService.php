@@ -15,6 +15,8 @@ use Qiick\Oidc\Data\IdentitySessionData;
  * Call remember() right after Auth::login() and the session regeneration, so
  * the identity lives in the new session id. Laravel copies session data on
  * regenerate() and drops it on invalidate(), which is the lifecycle wanted.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class IdentitySessionService
 {
