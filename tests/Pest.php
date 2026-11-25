@@ -14,10 +14,12 @@ use Qiick\Oidc\Models\UserIdentity;
 use Qiick\Oidc\Services\AuthorizationCodeFlowService;
 use Qiick\Oidc\Services\IdentitySessionService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
+use Qiick\Oidc\Tests\Support\ConcurrencyTestCase;
 use Qiick\Oidc\Tests\Support\PackageTestCase;
 use Qiick\Oidc\Tests\Support\User;
 
 pest()->extend(PackageTestCase::class)->in('Feature', 'Unit', 'Integration');
+pest()->extend(ConcurrencyTestCase::class)->in('Concurrency');
 
 /**
  * A request on the app with the given session, as the browser would send it.
