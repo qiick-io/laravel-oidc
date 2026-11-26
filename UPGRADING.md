@@ -2,6 +2,12 @@
 
 What an app has to do for each pre-release, newest first. The [CHANGELOG](./CHANGELOG.md) lists every change; this page says what to act on. The public API that `1.0.0` freezes is in [`docs/PUBLIC-API.md`](./docs/PUBLIC-API.md).
 
+## Unreleased
+
+- Recreate the beta package tables using the procedure below. The identity owner key becomes nullable for anonymised rows, and logout revocations add a replay fingerprint. Preserve linked identities from a backup and expire sessions when replacing the logout revocation table.
+- The app continues to control OIDC session duration. The new `oidc.backchannel_logout.max_retention_seconds` defaults to 30 days. Before deploying, make sure it covers `session.lifetime` (minutes) and the IdP's logout token lifetime plus its replay allowance. Schedule `oidc:prune-logout-revocations` hourly.
+- Call `OidcEraser` from the product erasure orchestrator before deleting the user. The identity foreign key still cascades as a safety net.
+
 ## From any beta to 1.0.0-beta.7, in one pass
 
 The betas edit the `create_…` migrations instead of adding forward ones (package migrations freeze only at the first stable tag), so the shortest safe path from any beta is:
@@ -12,7 +18,7 @@ The betas edit the `create_…` migrations instead of adding forward ones (packa
 4. Keep your published `config/oidc.php`: nested keys it lacks now get the package default (the service provider merges them), and every key you set keeps your value.
 5. Register `{APP_URL}/auth/oidc/logged-out` at the IdP as a post-logout redirect URI and set `oidc.logout.redirect_to` (see "Post-logout return route" below).
 6. Point `oidc.cache.store` at a store every app server shares (database, redis): each login `state` is consumed there.
-7. Schedule `php artisan oidc:prune-logout-revocations` daily.
+7. Schedule `php artisan oidc:prune-logout-revocations` hourly.
 8. Run `php artisan oidc:configure` and fix every failure and warning it reports.
 
 Then read the sections of the versions you skip: they list the behaviour changes to announce and the code an app may have to change.
@@ -43,7 +49,7 @@ RP-initiated logout now sends a `state` and, by default, asks the IdP to return 
 ## 1.0.0-beta.6 (from 1.0.0-beta.5)
 
 - **Database:** recreate the package tables. The `user_identities` create migration gained the link snapshots, the last-login columns, `format_version` and `metadata`, and `oidc_logout_revocations` is a new table.
-- Schedule `php artisan oidc:prune-logout-revocations` daily.
+- Schedule `php artisan oidc:prune-logout-revocations` hourly.
 - **Outbound:** see below.
 
 ### Adopting `qiick/laravel-outbound`

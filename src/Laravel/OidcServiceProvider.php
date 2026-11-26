@@ -19,6 +19,7 @@ use Illuminate\Foundation\Http\Kernel as HttpKernel;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
+use InvalidArgumentException;
 use Qiick\Oidc\Console\ConfigureOidcCommand;
 use Qiick\Oidc\Console\ImportLegacySubjectsCommand;
 use Qiick\Oidc\Console\PruneLogoutRevocationsCommand;
@@ -28,6 +29,7 @@ use Qiick\Oidc\Contracts\RoleSynchronizationContract;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
 use Qiick\Oidc\Contracts\UserClaimSynchronizationContract;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
+use Qiick\Oidc\Erasure\OidcEraser;
 use Qiick\Oidc\Factories\OidcOutboundStackFactory;
 use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
 use Qiick\Oidc\Listeners\EnforceSsoOnlyListener;
@@ -206,6 +208,12 @@ final class OidcServiceProvider extends ServiceProvider
             leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway'),
         ));
 
+        $this->app->bind(OidcEraser::class, fn (Application $app): OidcEraser => new OidcEraser(
+            cache: $this->cacheStore($app),
+            events: $app->make(Dispatcher::class),
+            cacheStoreName: $this->optionalString($app, 'oidc.cache.store') ?? $app->make(CacheManager::class)->getDefaultDriver(),
+        ));
+
         $this->app->bind(BackChannelLogoutService::class, fn (Application $app): BackChannelLogoutService => new BackChannelLogoutService(
             configurationRepository: $app->make(ProviderConfigurationRepositoryContract::class),
             discovery: $app->make(DiscoveryService::class),
@@ -257,6 +265,17 @@ final class OidcServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $sessionLifetimeMinutes = max(1, $this->config($this->app)->integer('session.lifetime'));
+        $maximumRetentionSeconds = OidcLogoutRevocation::maximumRetentionSeconds();
+
+        if ($sessionLifetimeMinutes > intdiv($maximumRetentionSeconds, 60)) {
+            throw new InvalidArgumentException(sprintf(
+                'session.lifetime exceeds oidc.backchannel_logout.max_retention_seconds (%d minutes versus %d seconds). Lower session.lifetime or raise the revocation retention ceiling.',
+                $sessionLifetimeMinutes,
+                $maximumRetentionSeconds,
+            ));
+        }
+
         $this->app->make(Dispatcher::class)->listen(Login::class, PromotePendingIdentityListener::class);
         $this->app->make(Dispatcher::class)->listen(Validated::class, EnforceSsoOnlyListener::class);
 

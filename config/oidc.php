@@ -273,9 +273,15 @@ return [
 
         /*
          * How long a back-channel logout is remembered, in seconds. It must
-         * cover the longest local session. Null uses `session.lifetime`.
+         * cover the longest OIDC session. Null uses `session.lifetime`.
          */
         'revocation_ttl' => null,
+
+        /*
+         * Ceiling for durable logout records in seconds (30 days by default).
+         * The application must be able to revoke a session for its configured lifetime.
+         */
+        'max_retention_seconds' => 2_592_000,
 
     ],
 

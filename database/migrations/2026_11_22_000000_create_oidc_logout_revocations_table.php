@@ -30,6 +30,8 @@ return new class extends Migration
             $sessionId = $table->string('sid')->nullable();
             $subject = $table->string('sub')->nullable();
             $tokenId = $table->string('jti')->nullable();
+            // The digest survives scrubbing the raw token ID, preserving replay protection.
+            $table->char('replay_key', 64)->nullable();
 
             if ($isMysqlFamily) {
                 $issuer->charset('utf8mb4')->collation('utf8mb4_bin');
@@ -47,6 +49,7 @@ return new class extends Migration
             $table->index(['issuer', 'sid']);
             $table->index(['issuer', 'sub']);
             $table->unique(['issuer', 'jti']);
+            $table->unique(['issuer', 'replay_key']);
             $table->index(['expires_at']);
         });
     }

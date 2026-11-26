@@ -211,10 +211,10 @@ The package registers `POST /auth/oidc/backchannel-logout` (route `oidc.backchan
 
 **The table is the source of truth; the cache is only an accelerator.** A cache hit ends the session at once, but a cache miss is never read as "not revoked": only the table answers that, so `cache:clear`, eviction or a cache per server never loses a logout. If the table cannot be read, the session is treated as revoked (fail closed) and the error is logged.
 
-A row is kept until `max(received + revocation lifetime, logout token exp + 120 s)`. The revocation lifetime is the larger of `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`, so it covers every session the logout targets. Expired rows are deleted by `oidc:prune-logout-revocations`, which the app schedules daily (the package registers no schedule):
+A logout row, including one with only a session ID, stays active for at least the Laravel `session.lifetime` in effect when it is written. The row can live longer to satisfy `oidc.backchannel_logout.revocation_ttl` or to cover the logout token's expiry plus the greater of 120 seconds and the JWT clock leeway. `oidc.backchannel_logout.max_retention_seconds` caps database retention at 30 days by default. The package refuses to boot if the configured session lifetime exceeds that ceiling, and the logout endpoint refuses tokens whose replay window exceeds it. The host application controls when OIDC sessions expire. Each cache entry expires within 24 hours, and the database can still revoke a session after its cache entry expires. Schedule the prune command hourly to remove rows after their retention window:
 
 ```php
-Schedule::command('oidc:prune-logout-revocations')->daily();
+Schedule::command('oidc:prune-logout-revocations')->hourly();
 ```
 
 The model is also `MassPrunable`, so `model:prune` has the same effect. A missed run only leaves extra rows.
@@ -230,6 +230,29 @@ Off by default. Back-channel logout already ends server sessions; front-channel 
 3. Let the response be framed by the IdP. The endpoint sends `Content-Security-Policy: frame-ancestors <issuer origin>` and `Cache-Control: no-store`; an app middleware that forces `X-Frame-Options: DENY` or `frame-ancestors 'none'` on every response must skip this route.
 
 The endpoint needs both `iss` and `sid`, requires `iss` to equal the configured issuer exactly, and records the logout in the same table with `channel = frontchannel`, so the middleware ends the session as for back-channel logout. It uses no session cookie (a cross-site iframe does not send a `SameSite=lax` cookie) and is rate limited.
+
+### Erasing a user's OIDC data
+
+Call the eraser from the product's erasure orchestrator after it has blocked sign-in and invalidated the user's sessions. Pass the local user key as a decimal string and the user public ID as a UUID. The optional `publicIds` list can also match a package identity by its public UUID.
+
+```php
+use Qiick\Oidc\Erasure\OidcEraser;
+
+$report = app(OidcEraser::class)->erase(
+    userId: (string) $user->getKey(),
+    userPublicId: $user->public_id,
+    mode: OidcEraser::DELETE,
+    dryRun: true,
+);
+```
+
+Set `dryRun: false` to apply the preview. `DELETE` deletes the identity rows. `ANONYMISE` leaves unlinkable rows and clears their profile and sign-in history. The eraser keeps the app's user row and explicitly processes the identity links before any foreign-key cascade. Passing an organisation ID throws `OrganisationScopeUnsupportedException`, since an OIDC identity is shared across organisations.
+
+Both modes remove the personal fields and cache entries of revocations identified by issuer and subject, including session-only rows when that issuer has a single corroborating subject for the session ID. Signed logout rows keep a token fingerprint until expiry to preserve replay protection. Rows with an uncorroborated or ambiguous session ID follow the same retention window as other logout records. The report lists them as an aggregate count for the issuers found during the run. Each cache entry expires within 24 hours. Raw app session data and logout events stored by app listeners remain under the product's erasure and retention policy.
+
+The report uses the fleet's `security_log` reason for retained logout evidence. The configured logout retention ceiling applies to those entries.
+
+Each real run dispatches `SubjectErasedEvent` after commit with an aggregate `ErasureReport`. Repeating a completed run yields `changed() === 0`.
 
 ### Settings from the database
 
@@ -258,7 +281,8 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.userinfo` | `true` | Merge the userinfo claims into the identity. |
 | `oidc.routes.enabled` / `prefix` / `middleware` | `true` / `auth/oidc` / `['web', 'guest']` | The package routes; `middleware` applies to redirect and callback. |
 | `oidc.routes.except` | `[]` | Names of package routes the app registers itself (for example `['oidc.callback']`); every other package route is still registered. |
-| `oidc.backchannel_logout.revocation_ttl` | `null` | Minimum seconds a logout is kept; the lifetime is never shorter than `session.lifetime`. |
+| `oidc.backchannel_logout.revocation_ttl` | `null` | Optional minimum retention in seconds. Null uses the app's session lifetime. |
+| `oidc.backchannel_logout.max_retention_seconds` | `2592000` | Maximum database retention in seconds (30 days). It must cover `session.lifetime` converted from minutes. |
 | `oidc.frontchannel_logout.enabled` (`OIDC_FRONTCHANNEL_LOGOUT`) | `false` | Turns on the front-channel logout endpoint, see above. |
 | `oidc.redirect_uri` | `null` | `null` means `{APP_URL}/auth/oidc/callback`, the URI Externa and Excubia App already register. |
 | `oidc.scopes` | `openid profile email` | `openid` is always sent. Add `qiick.orgs` for Signaculum's organisation claims. |
@@ -347,7 +371,7 @@ What the package defends against, and what it leaves to the app and the IdP. Dec
 - A compromised IdP or a stolen IdP signing key: the package trusts what the IdP signs.
 - The app's own login, second factor and session hardening (cookie flags, session lifetime, `APP_KEY` rotation with `APP_PREVIOUS_KEYS`).
 - Rate limiting of the redirect, callback and back-channel routes (the front-channel route has its own limit): add `throttle` to `oidc.routes.middleware` or the app's route group if needed. A forged `logout_token` costs one signature check and at most one JWKS refetch per cooldown.
-- Pruning: schedule `oidc:prune-logout-revocations` daily; a missed run only leaves extra rows.
+- Schedule `oidc:prune-logout-revocations` hourly so expired rows can be removed on the next successful run.
 - Clock drift beyond `oidc.id_token.leeway` and an `app.timezone` other than `UTC`.
 
 ## Migrating Externa and Excubia App
