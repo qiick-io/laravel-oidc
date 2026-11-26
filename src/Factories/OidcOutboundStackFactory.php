@@ -55,9 +55,10 @@ final readonly class OidcOutboundStackFactory
         $timeoutSeconds = IdentityProviderHttpService::resolveTimeoutSeconds($this->config->integer('oidc.http.timeout'));
         $connectTimeoutSeconds = IdentityProviderHttpService::resolveTimeoutSeconds($this->config->integer('oidc.http.connect_timeout'));
 
+        // Outbound 0.2 lets request options narrow the guard's private-host policy.
         $remoteUrlGuard = new RemoteUrlGuard(
             hostResolver: $this->hostResolver,
-            allowPrivateHosts: false,
+            allowPrivateHosts: $isPrivateHostAllowed,
             httpsOnly: false,
         );
         $urlGuardOptions = new UrlGuardOptions(

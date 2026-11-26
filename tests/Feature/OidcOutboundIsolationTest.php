@@ -11,6 +11,7 @@ use Qiick\Oidc\Services\DiscoveryService;
 use Qiick\Oidc\Services\IdentityProviderHttpService;
 use Qiick\Oidc\Tests\Support\OidcSsrfTestGuard;
 use Qiick\Outbound\Laravel\OutboundServiceProvider;
+use Qiick\Outbound\Testing\FakeHostResolver;
 
 /**
  * Production-container wiring: Outbound must not override OIDC's SSRF / timeouts,
@@ -34,11 +35,11 @@ it('refuses a loopback IdP when OutboundServiceProvider registers after OIDC wit
     Http::assertNothingSent();
 });
 
-it('refuses a hostname that resolves to loopback when Outbound opens private hosts after OIDC', function (): void {
+it('refuses a hostname that resolves to loopback by default when Outbound opens private hosts', function (): void {
     Config::set('outbound.ssrf.allow_private_hosts', true);
-    Config::set('oidc.http.allow_private_hosts', false);
-    Config::set('oidc.http.timeout', 10);
-    OidcSsrfTestGuard::bindInContainer(false, ['127.0.0.1']);
+    app()->instance(OidcOutboundStackFactory::HostResolverBinding, new FakeHostResolver(
+        answers: ['loopback.idp.test' => ['127.0.0.1']],
+    ));
     Http::fake(['*' => Http::response(['ok' => true])]);
 
     expect(fn () => app(IdentityProviderHttpService::class)->getJson('https://loopback.idp.test/token'))
@@ -78,13 +79,18 @@ it('refuses plain http from the real provider when private hosts are off', funct
     Http::assertNothingSent();
 });
 
-it('allows plain http from the real provider when private hosts are on', function (): void {
+it('reaches a private IdP over http when OIDC opts in and shared Outbound stays locked', function (): void {
+    Config::set('outbound.ssrf.allow_private_hosts', false);
     Config::set('oidc.http.allow_private_hosts', true);
-    OidcSsrfTestGuard::bindInContainer(true, ['172.18.0.5']);
-    Http::fake(['*' => Http::response(['ok' => true])]);
+    app()->instance(OidcOutboundStackFactory::HostResolverBinding, new FakeHostResolver(
+        answers: ['keycloak' => ['172.18.0.5']],
+    ));
+    Http::preventStrayRequests()->fake(['http://keycloak:8080/token' => Http::response(['ok' => true])]);
 
     expect(app(IdentityProviderHttpService::class)->getJson('http://keycloak:8080/token'))
         ->toBe(['ok' => true]);
+
+    Http::assertSentCount(1);
 });
 
 it('refuses browser endpoints with credentials through DiscoveryService from the container', function (): void {
