@@ -84,4 +84,10 @@ class OidcLogoutRevocation extends Model
     {
         return Config::integer('oidc.backchannel_logout.max_retention_seconds', 2_592_000);
     }
+
+    /** Compare in minutes so even an oversized session lifetime cannot overflow. */
+    public static function isSessionLifetimeCovered(): bool
+    {
+        return max(1, Config::integer('session.lifetime')) <= intdiv(self::maximumRetentionSeconds(), 60);
+    }
 }

@@ -265,14 +265,11 @@ final class OidcServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        $sessionLifetimeMinutes = max(1, $this->config($this->app)->integer('session.lifetime'));
-        $maximumRetentionSeconds = OidcLogoutRevocation::maximumRetentionSeconds();
-
-        if ($sessionLifetimeMinutes > intdiv($maximumRetentionSeconds, 60)) {
+        if ($this->config($this->app)->boolean('oidc.enabled') && ! OidcLogoutRevocation::isSessionLifetimeCovered()) {
             throw new InvalidArgumentException(sprintf(
                 'session.lifetime exceeds oidc.backchannel_logout.max_retention_seconds (%d minutes versus %d seconds). Lower session.lifetime or raise the revocation retention ceiling.',
-                $sessionLifetimeMinutes,
-                $maximumRetentionSeconds,
+                $this->config($this->app)->integer('session.lifetime'),
+                OidcLogoutRevocation::maximumRetentionSeconds(),
             ));
         }
 

@@ -107,6 +107,11 @@ final readonly class SessionRevocationService
      */
     public function isRevoked(IdentitySessionData $identity): bool
     {
+        // App repositories can enable SSO at runtime without the boot-time config flag.
+        if (! OidcLogoutRevocation::isSessionLifetimeCovered()) {
+            return true;
+        }
+
         if ($identity->sessionId !== null && $this->cache->has(self::cacheKey('sid', $identity->issuer, $identity->sessionId))) {
             return true;
         }
