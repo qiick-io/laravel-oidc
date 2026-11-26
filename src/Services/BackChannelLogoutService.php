@@ -81,9 +81,8 @@ final readonly class BackChannelLogoutService
             throw new InvalidTokenException('logout_token has no [jti].');
         }
 
-        // Replay (BCL §2.6 step 8) is refused by the unique (issuer, jti) key
-        // when the revocation is stored (M10); no cache pre-check could add
-        // anything to that answer.
+        // Replay (BCL §2.6 step 8) is refused by a unique key on the revocation
+        // ledger. Keep the NumericDate intact until the retention bound is checked.
         $expiresAtClaim = $claims['exp'] ?? null;
 
         $logout = new LogoutTokenData(
@@ -91,8 +90,7 @@ final readonly class BackChannelLogoutService
             subject: $subject,
             sessionId: $sessionId,
             tokenId: $tokenId,
-            // JSON numbers may be fractional (RFC 7519 NumericDate): round up, never shorten.
-            expiresAt: is_int($expiresAtClaim) || is_float($expiresAtClaim) ? (int) ceil($expiresAtClaim) : null,
+            expiresAt: is_int($expiresAtClaim) || is_float($expiresAtClaim) ? $expiresAtClaim : null,
             channel: 'backchannel',
         );
         $this->sessionRevocation->revoke($logout);

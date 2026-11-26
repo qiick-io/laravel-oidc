@@ -18,7 +18,7 @@ use Qiick\Oidc\Tests\Support\ConcurrencyTestCase;
 use Qiick\Oidc\Tests\Support\PackageTestCase;
 use Qiick\Oidc\Tests\Support\User;
 
-pest()->extend(PackageTestCase::class)->in('Feature', 'Unit', 'Integration');
+pest()->extend(PackageTestCase::class)->in('Feature', 'Unit', 'Integration', 'Erasure');
 pest()->extend(ConcurrencyTestCase::class)->in('Concurrency');
 
 /**

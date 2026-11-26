@@ -70,6 +70,8 @@ classes=(
   'Qiick\Oidc\Services\UserLinkingService'
   'Qiick\Oidc\Services\UserinfoService'
   'Qiick\Oidc\Testing\FakeIdentityProvider'
+  'Qiick\Oidc\Erasure\ErasureReport'
+  'Qiick\Oidc\Erasure\OidcEraser'
 )
 
 status=0
@@ -80,9 +82,13 @@ for index in "${!classes[@]}"; do
   fi
 
   class="${classes[$index]}"
+  class_paths="$paths"
+  if [[ -z "${MUTATE_PATHS:-}" && "$class" == Qiick\\Oidc\\Erasure\\* ]]; then
+    class_paths="tests/Feature/OidcEraserTest.php tests/Erasure"
+  fi
   echo "==> mutate ${class} (min=${min}, shard ${shard}/${shards})"
   # shellcheck disable=SC2086
-  if ! vendor/bin/pest --mutate --class="${class}" --min="${min}" ${paths} "$@"; then
+  if ! vendor/bin/pest --mutate --class="${class}" --min="${min}" ${class_paths} "$@"; then
     status=1
   fi
 done

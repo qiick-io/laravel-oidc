@@ -2,6 +2,12 @@
 
 What an app has to do for each pre-release, newest first. The [CHANGELOG](./CHANGELOG.md) lists every change; this page says what to act on. The public API that `1.0.0` freezes is in [`docs/PUBLIC-API.md`](./docs/PUBLIC-API.md).
 
+## Unreleased
+
+- Recreate the beta package tables using the procedure below. The identity owner key becomes nullable for anonymised rows, and logout revocations add a replay fingerprint. Preserve linked identities from a backup and expire sessions when replacing the logout revocation table.
+- Set `session.lifetime` to at most 1,440 minutes and any custom `oidc.backchannel_logout.revocation_ttl` to at most 86,400 seconds. Ensure the IdP's logout token lifetime plus clock leeway fits the same limit. Schedule `oidc:prune-logout-revocations` hourly.
+- Call `OidcEraser` from the product erasure orchestrator before deleting the user. The identity foreign key still cascades as a safety net.
+
 ## From any beta to 1.0.0-beta.7, in one pass
 
 The betas edit the `create_…` migrations instead of adding forward ones (package migrations freeze only at the first stable tag), so the shortest safe path from any beta is:

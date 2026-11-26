@@ -57,6 +57,7 @@ final readonly class SessionRevocationService
                     'sid' => $logoutToken->sessionId,
                     'sub' => $logoutToken->subject,
                     'jti' => $logoutToken->tokenId,
+                    'replay_key' => $logoutToken->tokenId === null ? null : hash('sha256', $logoutToken->tokenId),
                     // Callers set backchannel or frontchannel; the DB default is backchannel.
                     'channel' => $logoutToken->channel,
                     'received_at' => $receivedAt,
@@ -69,9 +70,9 @@ final readonly class SessionRevocationService
 
         // Accelerator only; the table remains the source of truth.
         if ($logoutToken->sessionId !== null) {
-            $this->warmCache($this->cacheKey('sid', $logoutToken->issuer, $logoutToken->sessionId), $receivedAt->getTimestamp(), $expiresAt);
+            $this->warmCache(self::cacheKey('sid', $logoutToken->issuer, $logoutToken->sessionId), $receivedAt->getTimestamp(), $expiresAt);
         } elseif ($logoutToken->subject !== null) {
-            $this->warmCache($this->cacheKey('sub', $logoutToken->issuer, $logoutToken->subject), $receivedAt->getTimestamp(), $expiresAt);
+            $this->warmCache(self::cacheKey('sub', $logoutToken->issuer, $logoutToken->subject), $receivedAt->getTimestamp(), $expiresAt);
         }
 
         $this->dispatchLogoutReceived($logoutToken);
@@ -106,11 +107,11 @@ final readonly class SessionRevocationService
      */
     public function isRevoked(IdentitySessionData $identity): bool
     {
-        if ($identity->sessionId !== null && $this->cache->has($this->cacheKey('sid', $identity->issuer, $identity->sessionId))) {
+        if ($identity->sessionId !== null && $this->cache->has(self::cacheKey('sid', $identity->issuer, $identity->sessionId))) {
             return true;
         }
 
-        $subjectRevokedAt = $this->cache->get($this->cacheKey('sub', $identity->issuer, $identity->subject));
+        $subjectRevokedAt = $this->cache->get(self::cacheKey('sub', $identity->issuer, $identity->subject));
 
         if (is_int($subjectRevokedAt) && $identity->authenticatedAt <= $subjectRevokedAt) {
             return true;
@@ -147,7 +148,7 @@ final readonly class SessionRevocationService
 
             if ($sessionRevocation !== null) {
                 $this->warmCache(
-                    $this->cacheKey('sid', $identity->issuer, $identity->sessionId),
+                    self::cacheKey('sid', $identity->issuer, $identity->sessionId),
                     $sessionRevocation->received_at->getTimestamp(),
                     $sessionRevocation->expires_at->getTimestamp(),
                 );
@@ -167,7 +168,7 @@ final readonly class SessionRevocationService
 
         if ($subjectRevocation !== null) {
             $this->warmCache(
-                $this->cacheKey('sub', $identity->issuer, $identity->subject),
+                self::cacheKey('sub', $identity->issuer, $identity->subject),
                 $subjectRevocation->received_at->getTimestamp(),
                 $subjectRevocation->expires_at->getTimestamp(),
             );
@@ -186,10 +187,21 @@ final readonly class SessionRevocationService
      * of `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`;
      * prune deletes by this stored expires_at and never recomputes the TTL.
      */
-    private function expiresAt(int $receivedAt, ?int $tokenExpiresAt): int
+    private function expiresAt(int $receivedAt, int|float|null $tokenExpiresAt): int
     {
+        $latestExpiry = $receivedAt + OidcLogoutRevocation::maximumRetentionSeconds();
+        $replayWindowSeconds = max(120, $this->leewaySeconds);
+
+        // BCL §2.6 requires replay protection for as long as a token is accepted.
+        // Refuse the token if its window cannot fit in the retention bound.
+        if ($tokenExpiresAt !== null && $tokenExpiresAt > $latestExpiry - $replayWindowSeconds) {
+            throw new InvalidTokenException('logout_token expiry exceeds the 24-hour revocation retention limit.');
+        }
+
         $fromRevocationLifetime = $receivedAt + $this->revocationSeconds;
-        $fromToken = $tokenExpiresAt !== null ? $tokenExpiresAt + max(120, $this->leewaySeconds) : $fromRevocationLifetime;
+        // JSON NumericDate values can be fractional (RFC 7519). Round up after
+        // enforcing the upper bound so an oversized value cannot wrap as an int.
+        $fromToken = $tokenExpiresAt !== null ? (int) ceil($tokenExpiresAt + $replayWindowSeconds) : $fromRevocationLifetime;
 
         return max($fromRevocationLifetime, $fromToken);
     }
@@ -210,7 +222,7 @@ final readonly class SessionRevocationService
      *
      * @param  'sid'|'sub'  $kind
      */
-    private function cacheKey(string $kind, string $issuer, string $value): string
+    public static function cacheKey(string $kind, string $issuer, string $value): string
     {
         return sprintf('oidc:revoked-%s:%s', $kind, hash('sha256', sprintf('%s|%s', $issuer, $value)));
     }

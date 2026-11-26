@@ -32,6 +32,10 @@ An app may use these classes as described in the README. "Construct" means the a
 | `Data\LoginOptionsData` | returned by `SsoOnlyModeService::loginOptions()` |
 | `Enums\LoginRefusalReasonEnum` | cases and `message()` |
 | `Enums\TokenEndpointAuthMethodEnum` | cases |
+| `Erasure\OidcEraser` | resolved from the container; `erase()`, `DELETE`, `ANONYMISE` |
+| `Erasure\ErasureReport` | read by apps; `changed()`, `toArray()` |
+| `Erasure\OrganisationScopeUnsupportedException` | caught when an app requests organisation-scoped OIDC erasure |
+| `Events\SubjectErasedEvent` | listened to by apps; carries the erasure report |
 | `Events\OidcIdentityLinkedEvent`, `OidcLoginSucceededEvent`, `OidcUserProvisionedEvent`, `OidcLogoutReceivedEvent` | listened to by apps |
 | `Exceptions\OidcException` and its subclasses (`IdentityProviderRequestException`, `InvalidCallbackException`, `InvalidTokenException`, `LoginRefusedException`, `OidcNotConfiguredException`) | caught by apps |
 | `Models\UserIdentity`, `Models\OidcLogoutRevocation` | queried by apps; their tables are listed below |
@@ -53,7 +57,7 @@ A key added in a minor release always has a default, and a config file published
 
 - Route names under `oidc.routes.prefix` (`auth/oidc`): `oidc.redirect`, `oidc.callback`, `oidc.backchannel-logout`, `oidc.frontchannel-logout`, `oidc.logged-out`, with their paths and HTTP methods.
 - Commands: `oidc:configure` (`--issuer`, `--client-id`, `--client-secret`, `--write-env`, `--json`, and the JSON report keys), `oidc:import-legacy-subjects` (`--column`, `--issuer`, `--dry-run`), `oidc:prune-logout-revocations` (`--chunk`).
-- Events: the four event classes above, with their public properties.
+- Events: the five event classes above, with their public properties.
 - Tables: `user_identities` and `oidc_logout_revocations`, as created by the package migrations. After `1.0.0` the migrations are forward-only and additive.
 - Session keys (`oidc.identity`, `oidc.pending_identity`, `oidc.pending_logins`) and cache keys are internal.
 

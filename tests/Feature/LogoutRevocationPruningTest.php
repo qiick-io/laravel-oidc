@@ -75,6 +75,18 @@ it('takes the longest of the revocation ttl and the session lifetime as the life
     'ttl as a string' => ['10000', 120, 7200],
     'session lifetime 0' => [null, 0, 60],
     'session lifetime 1' => [null, 1, 60],
+    'maximum revocation lifetime' => [86_400, 120, 86_400],
+    'maximum session lifetime' => [null, 1440, 86_400],
+]);
+
+it('refuses a revocation or session lifetime above 24 hours', function (string $key, int $value): void {
+    Config::set($key, $value);
+
+    expect(fn () => OidcLogoutRevocation::maximumConfiguredLifetimeSeconds())
+        ->toThrow(InvalidArgumentException::class, 'OIDC logout revocation retention cannot exceed 24 hours.');
+})->with([
+    'revocation lifetime' => ['oidc.backchannel_logout.revocation_ttl', 86_401],
+    'session lifetime' => ['session.lifetime', 1441],
 ]);
 
 it('lets model:prune find the same rows', function (): void {

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The fleet-standard `OidcEraser` explicitly deletes or anonymises OIDC identity and attributable logout data and reports aggregate counts after commit (#84).
+
+### Upgrade notes
+
+- Recreate the package tables to pick up nullable identity ownership and the logout replay fingerprint. Check that the app's session lifetime and configured revocation TTL are at most 24 hours, and schedule logout pruning hourly. See [UPGRADING.md](./UPGRADING.md#unreleased).
+
 ## [1.0.0-beta.7] - 2026-11-25
 
 ### Upgrade notes

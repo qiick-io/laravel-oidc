@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\MassPrunable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Config;
+use InvalidArgumentException;
 use Qiick\Oidc\Models\Concerns\GuardsIdByDefaultTrait;
 
 /**
@@ -23,6 +24,7 @@ use Qiick\Oidc\Models\Concerns\GuardsIdByDefaultTrait;
  * @property string|null $sid
  * @property string|null $sub
  * @property string|null $jti
+ * @property string|null $replay_key
  * @property string $channel
  * @property CarbonImmutable $received_at
  * @property CarbonImmutable $expires_at
@@ -70,9 +72,23 @@ class OidcLogoutRevocation extends Model
      */
     public static function maximumConfiguredLifetimeSeconds(): int
     {
-        $sessionLifetimeSeconds = max(1, Config::integer('session.lifetime')) * 60;
+        $sessionLifetimeMinutes = Config::integer('session.lifetime');
         $configuredSeconds = Config::get('oidc.backchannel_logout.revocation_ttl');
+        $maximumRetentionSeconds = self::maximumRetentionSeconds();
+
+        if ($sessionLifetimeMinutes > intdiv($maximumRetentionSeconds, 60)
+            || (is_int($configuredSeconds) && $configuredSeconds > $maximumRetentionSeconds)) {
+            throw new InvalidArgumentException('OIDC logout revocation retention cannot exceed 24 hours. Check session.lifetime and oidc.backchannel_logout.revocation_ttl.');
+        }
+
+        $sessionLifetimeSeconds = max(1, $sessionLifetimeMinutes) * 60;
 
         return max($sessionLifetimeSeconds, is_int($configuredSeconds) ? $configuredSeconds : $sessionLifetimeSeconds);
+    }
+
+    /** The durable ledger and its cache are both bounded to one day. */
+    public static function maximumRetentionSeconds(): int
+    {
+        return 86_400;
     }
 }

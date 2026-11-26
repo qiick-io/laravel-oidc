@@ -274,6 +274,7 @@ return [
         /*
          * How long a back-channel logout is remembered, in seconds. It must
          * cover the longest local session. Null uses `session.lifetime`.
+         * Both must fit in the 24-hour revocation retention limit.
          */
         'revocation_ttl' => null,
 

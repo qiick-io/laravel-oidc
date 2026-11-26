@@ -28,6 +28,7 @@ use Qiick\Oidc\Contracts\RoleSynchronizationContract;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
 use Qiick\Oidc\Contracts\UserClaimSynchronizationContract;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
+use Qiick\Oidc\Erasure\OidcEraser;
 use Qiick\Oidc\Factories\OidcOutboundStackFactory;
 use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
 use Qiick\Oidc\Listeners\EnforceSsoOnlyListener;
@@ -204,6 +205,12 @@ final class OidcServiceProvider extends ServiceProvider
             revocationSeconds: OidcLogoutRevocation::maximumConfiguredLifetimeSeconds(),
             events: $app->make(Dispatcher::class),
             leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway'),
+        ));
+
+        $this->app->bind(OidcEraser::class, fn (Application $app): OidcEraser => new OidcEraser(
+            cache: $this->cacheStore($app),
+            events: $app->make(Dispatcher::class),
+            cacheStoreName: $this->optionalString($app, 'oidc.cache.store') ?? $app->make(CacheManager::class)->getDefaultDriver(),
         ));
 
         $this->app->bind(BackChannelLogoutService::class, fn (Application $app): BackChannelLogoutService => new BackChannelLogoutService(
