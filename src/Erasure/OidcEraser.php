@@ -80,7 +80,12 @@ final readonly class OidcEraser
                 // Capture unresolved SID-only rows before scrubbing the subject
                 // that corroborates any attributable SID in this issuer.
                 $issuers = $identities->map(fn (UserIdentity $identity): string => $identity->issuer)->unique();
-                $unlinkedCount = $this->unlinkedCount($issuers->all());
+                $unlinkedRevocations = $this->unlinkedRevocations($issuers->all());
+                $unlinkedCount = (clone $unlinkedRevocations)->whereNull('sub')->count();
+                $unlinkedCacheCount = $unlinkedRevocations->select(['issuer', 'sid'])->distinct()->cursor()
+                    ->filter(fn (OidcLogoutRevocation $revocation): bool => $revocation->sid !== null
+                        && $this->cache->has(SessionRevocationService::cacheKey('sid', $revocation->issuer, $revocation->sid)))
+                    ->count();
 
                 foreach ($identities as $identity) {
                     $this->eraseRevocations($identity, $mode, $dryRun, $cacheKeys, $revocations);
@@ -103,7 +108,7 @@ final readonly class OidcEraser
                     'oidc_logout_revocations' => $revocations,
                     'cleartext:oidc_logout_revocations.sid' => $this->counts(kept: $unlinkedCount),
                     'cleartext:oidc_logout_revocations.replay_key' => $this->counts(kept: $revocations['kept']),
-                    'cache:'.$this->cacheStoreName => $this->counts(deleted: count($cachedKeys)),
+                    'cache:'.$this->cacheStoreName => $this->counts(deleted: count($cachedKeys), kept: $unlinkedCacheCount, keptReason: 'cache_ttl'),
                 ]);
 
                 if (! $dryRun) {
@@ -183,24 +188,23 @@ final readonly class OidcEraser
     }
 
     /**
-     * Unresolved SIDs are counted at issuer level because they have no local
-     * owner. This count is aggregate security retention, with no user attribution.
+     * Find SIDs without exactly one corroborating subject. They remain in the
+     * issuer's ledger and cache until expiry because the eraser cannot assign them.
      *
      * @param  array<int, string>  $issuers
+     * @return Builder<OidcLogoutRevocation>
      */
-    private function unlinkedCount(array $issuers): int
+    private function unlinkedRevocations(array $issuers): Builder
     {
         return OidcLogoutRevocation::query()
             ->whereIn('issuer', $issuers)
-            ->whereNull('sub')
             ->whereNotNull('sid')
             ->whereNotExists(DB::table('oidc_logout_revocations as evidence')
                 ->whereColumn('evidence.issuer', 'oidc_logout_revocations.issuer')
                 ->whereColumn('evidence.sid', 'oidc_logout_revocations.sid')
                 ->groupBy('evidence.issuer', 'evidence.sid')
                 ->havingRaw('count(distinct evidence.sub) = 1')
-                ->selectRaw('1'))
-            ->count();
+                ->selectRaw('1'));
     }
 
     private function eraseIdentity(UserIdentity $identity, string $mode): void
@@ -268,8 +272,8 @@ final readonly class OidcEraser
     }
 
     /** @return StoreCounts */
-    private function counts(int $deleted = 0, int $anonymised = 0, int $kept = 0): array
+    private function counts(int $deleted = 0, int $anonymised = 0, int $kept = 0, string $keptReason = 'security_log'): array
     {
-        return ['deleted' => $deleted, 'anonymised' => $anonymised, 'kept' => $kept, 'reason' => $kept > 0 ? 'security_log' : null];
+        return ['deleted' => $deleted, 'anonymised' => $anonymised, 'kept' => $kept, 'reason' => $kept > 0 ? $keptReason : null];
     }
 }

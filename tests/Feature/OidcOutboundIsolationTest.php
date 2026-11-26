@@ -93,6 +93,19 @@ it('reaches a private IdP over http when OIDC opts in and shared Outbound stays 
     Http::assertSentCount(1);
 });
 
+it('blocks a hostname resolving to cloud metadata even when OIDC opts in to private hosts', function (): void {
+    Config::set('oidc.http.allow_private_hosts', true);
+    app()->instance(OidcOutboundStackFactory::HostResolverBinding, new FakeHostResolver(
+        answers: ['idp.example.test' => ['169.254.169.254']],
+    ));
+    Http::fake();
+
+    expect(fn () => app(IdentityProviderHttpService::class)->getJson('http://idp.example.test/token'))
+        ->toThrow(IdentityProviderRequestException::class, 'disallowed address');
+
+    Http::assertNothingSent();
+});
+
 it('refuses browser endpoints with credentials through DiscoveryService from the container', function (): void {
     Config::set('oidc.enabled', true);
     Config::set('oidc.issuer', 'https://idp.example.com/realms/test');

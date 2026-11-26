@@ -97,6 +97,14 @@ it('keeps the sub cut-off in the cache: later sessions of the user stay signed i
         ->and(isCachedSessionRevoked(cachedSession(null, authenticatedAt: Date::now()->addSecond()->getTimestamp())))->toBeFalse();
 });
 
+it('ends an OIDC session when the configured ledger cannot cover its lifetime', function (): void {
+    Config::set('oidc.enabled', false);
+    Config::set('oidc.backchannel_logout.max_retention_seconds', 10_800);
+    Config::set('session.lifetime', 181);
+
+    expect(isCachedSessionRevoked(cachedSession('session-outside-retention')))->toBeTrue();
+});
+
 it('limits SID cache writes to one day and still revokes from the database for the app session lifetime', function (): void {
     Config::set('session.lifetime', 10_080);
     $receivedAt = Date::now()->toImmutable();

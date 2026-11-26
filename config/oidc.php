@@ -278,8 +278,8 @@ return [
         'revocation_ttl' => null,
 
         /*
-         * Ceiling for durable logout records in seconds (30 days by default).
-         * The application must be able to revoke a session for its configured lifetime.
+         * App-selected ceiling for durable logout records in seconds (default 30 days).
+         * Choose it to cover the session lifetime and the longest accepted logout replay window.
          */
         'max_retention_seconds' => 2_592_000,
 

@@ -37,7 +37,7 @@ it('erases a public-ID match and its corroborated SID while preserving other iss
     expect($report->stores['user_identities'])->toBe(['deleted' => 1, 'anonymised' => 0, 'kept' => 0, 'reason' => null])
         ->and($report->stores['oidc_logout_revocations'])->toBe(['deleted' => 1, 'anonymised' => 1, 'kept' => 1, 'reason' => 'security_log'])
         ->and($report->stores['cleartext:oidc_logout_revocations.sid']['kept'])->toBe(1)
-        ->and($report->stores['cache:oidc-erasure']['deleted'])->toBe(1)
+        ->and($report->stores['cache:oidc-erasure'])->toBe(['deleted' => 1, 'anonymised' => 0, 'kept' => 1, 'reason' => 'cache_ttl'])
         ->and($report->changed())->toBe(4)
         ->and(OidcLogoutRevocation::query()->count())->toBe(4)
         ->and(OidcLogoutRevocation::query()->whereNull('sid')->sole()->only(['sub', 'sid', 'jti']))
@@ -54,20 +54,39 @@ it('erases a public-ID match and its corroborated SID while preserving other iss
         ->and(fn () => $revoker->revoke($signedLogout))->toThrow(InvalidTokenException::class, 'logout_token [jti] was already used.');
 });
 
-it('preserves a session-only row and cache key when two subjects corroborate the same SID', function (): void {
+it('reports a kept cache entry when competing subjects corroborate the same cached SID', function (bool $hasSessionOnlyRow, bool $hasCachedEntry): void {
     $user = localUser();
     $identity = linkIdentity($user);
     $revoker = app(SessionRevocationService::class);
     $revoker->revoke(new LogoutTokenData($identity->issuer, $identity->subject, 'shared-sid'));
     $revoker->revoke(new LogoutTokenData($identity->issuer, 'a-different-subject', 'shared-sid'));
-    $revoker->revoke(new LogoutTokenData($identity->issuer, null, 'shared-sid'));
+
+    if ($hasSessionOnlyRow) {
+        $revoker->revoke(new LogoutTokenData($identity->issuer, null, 'shared-sid'));
+    }
+
+    $cacheKey = SessionRevocationService::cacheKey('sid', $identity->issuer, 'shared-sid');
+
+    if (! $hasCachedEntry) {
+        Cache::forget($cacheKey);
+    }
 
     $report = app(OidcEraser::class)->erase((string) $user->id, (string) Str::uuid(), OidcEraser::DELETE);
 
-    expect($report->stores['cleartext:oidc_logout_revocations.sid']['kept'])->toBe(1)
-        ->and(OidcLogoutRevocation::query()->orderBy('id')->pluck('sub')->all())->toBe(['a-different-subject', null])
-        ->and(Cache::has(SessionRevocationService::cacheKey('sid', $identity->issuer, 'shared-sid')))->toBeTrue();
-});
+    expect($report->stores['cleartext:oidc_logout_revocations.sid']['kept'])->toBe($hasSessionOnlyRow ? 1 : 0)
+        ->and($report->stores['cache:'.Cache::getDefaultDriver()])->toBe([
+            'deleted' => 0,
+            'anonymised' => 0,
+            'kept' => $hasCachedEntry ? 1 : 0,
+            'reason' => $hasCachedEntry ? 'cache_ttl' : null,
+        ])
+        ->and(OidcLogoutRevocation::query()->orderBy('id')->pluck('sub')->all())->toBe($hasSessionOnlyRow ? ['a-different-subject', null] : ['a-different-subject'])
+        ->and(Cache::has($cacheKey))->toBe($hasCachedEntry);
+})->with([
+    'with a session-only row' => [true, true],
+    'without a session-only row' => [false, true],
+    'with an evicted cache entry' => [true, false],
+]);
 
 it('preserves the anonymised identity and revocation rows without any link back to the user', function (): void {
     $user = localUser();
