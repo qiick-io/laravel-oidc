@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Qiick\Oidc\Laravel\OidcServiceProvider;
 use Qiick\Oidc\Services\DiscoveryService;
 use Qiick\Oidc\Services\IdentityProviderHttpService;
 use Qiick\Oidc\Services\JwtValidatorService;
@@ -19,6 +20,27 @@ it('merges the package defaults into the oidc config', function (): void {
         'auto_link' => false,
         'only' => false,
     ]);
+});
+
+it('rejects a session lifetime above its configured revocation ceiling at boot', function (int $maximumSeconds, int $sessionMinutes): void {
+    config()->set('oidc.backchannel_logout.max_retention_seconds', $maximumSeconds);
+    config()->set('session.lifetime', $sessionMinutes);
+
+    expect(fn () => app()->register(OidcServiceProvider::class, force: true))
+        ->toThrow(InvalidArgumentException::class, 'session.lifetime exceeds oidc.backchannel_logout.max_retention_seconds');
+})->with([
+    'after the default 30 days' => [2_592_000, 43_201],
+    'after a custom ceiling' => [10_800, 181],
+    'overflowing minute value' => [2_592_000, PHP_INT_MAX],
+]);
+
+it('boots when the session lifetime exactly reaches the configured ceiling', function (): void {
+    config()->set('oidc.backchannel_logout.max_retention_seconds', 10_800);
+    config()->set('session.lifetime', 180);
+    config()->set('oidc.backchannel_logout.revocation_ttl', 86_400);
+
+    expect(app()->register(OidcServiceProvider::class, force: true))->toBeInstanceOf(OidcServiceProvider::class)
+        ->and(builtWith(SessionRevocationService::class, 'revocationSeconds'))->toBe(10_800);
 });
 
 it('lets an app publish the config file', function (): void {

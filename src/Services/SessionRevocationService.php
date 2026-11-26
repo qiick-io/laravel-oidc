@@ -102,18 +102,11 @@ final readonly class SessionRevocationService
     }
 
     /**
-     * Apply the same hard age limit to OIDC sessions and revocation retention.
-     * For younger sessions, a cache miss falls through to the table and a
-     * table read failure fails closed.
+     * A cache miss falls through to the revocation table. A table read
+     * failure fails closed.
      */
     public function isRevoked(IdentitySessionData $identity): bool
     {
-        // Laravel's session lifetime is an idle limit. An active session can
-        // reach the ledger's hard retention ceiling even with a shorter idle limit.
-        if ($identity->authenticatedAt <= Date::now()->getTimestamp() - OidcLogoutRevocation::maximumRetentionSeconds()) {
-            return true;
-        }
-
         if ($identity->sessionId !== null && $this->cache->has(self::cacheKey('sid', $identity->issuer, $identity->sessionId))) {
             return true;
         }
@@ -202,7 +195,7 @@ final readonly class SessionRevocationService
         // BCL §2.6 requires replay protection for as long as a token is accepted.
         // Refuse the token if its window cannot fit in the retention bound.
         if ($tokenExpiresAt !== null && $tokenExpiresAt > $latestExpiry - $replayWindowSeconds) {
-            throw new InvalidTokenException('logout_token expiry exceeds the 24-hour revocation retention limit.');
+            throw new InvalidTokenException('logout_token expiry exceeds oidc.backchannel_logout.max_retention_seconds.');
         }
 
         $fromRevocationLifetime = $receivedAt + $this->revocationSeconds;
@@ -214,13 +207,14 @@ final readonly class SessionRevocationService
     }
 
     /**
-     * Caches a revocation until the row's own expires_at, so the cache never
-     * outlives the table. The value is when the logout was received: the
-     * `sub` cut-off; for a `sid` key only its presence matters.
+     * Cache until the row's expiry or 24 hours, whichever comes first. A SID
+     * can be unattributable during erasure, so a cache entry has a shorter
+     * bound than the durable ledger. The stored value is the logout cut-off.
      */
     private function warmCache(string $cacheKey, int $receivedAt, int $expiresAt): void
     {
-        $this->cache->put($cacheKey, $receivedAt, Date::createFromTimestamp($expiresAt));
+        $cacheExpiresAt = min($expiresAt, Date::now()->getTimestamp() + 86_400);
+        $this->cache->put($cacheKey, $receivedAt, Date::createFromTimestamp($cacheExpiresAt));
     }
 
     /**

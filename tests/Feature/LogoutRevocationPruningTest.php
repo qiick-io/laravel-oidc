@@ -75,12 +75,17 @@ it('takes the longest of the revocation ttl and the session lifetime as the life
     'ttl as a string' => ['10000', 120, 7200],
     'session lifetime 0' => [null, 0, 60],
     'session lifetime 1' => [null, 1, 60],
-    'maximum revocation lifetime' => [86_400, 120, 86_400],
-    'maximum session lifetime' => [null, 1440, 86_400],
-    'revocation lifetime above the ceiling' => [86_401, 120, 86_400],
-    'session lifetime above the ceiling' => [null, 1441, 86_400],
-    'session lifetime cannot overflow the conversion to seconds' => [null, PHP_INT_MAX, 86_400],
+    'week-long sessions' => [null, 10_080, 604_800],
+    'maximum revocation lifetime' => [2_592_000, 120, 2_592_000],
+    'maximum session lifetime' => [null, 43_200, 2_592_000],
+    'revocation lifetime above the ceiling' => [2_592_001, 120, 2_592_000],
 ]);
+
+it('uses a thirty-day ceiling when the host cached config without the new key', function (): void {
+    Config::set('oidc.backchannel_logout', ['revocation_ttl' => null]);
+
+    expect(OidcLogoutRevocation::maximumRetentionSeconds())->toBe(2_592_000);
+});
 
 it('lets model:prune find the same rows', function (): void {
     revocationRow('expired', '2026-11-24 08:00:00', '2026-11-24 10:00:00');

@@ -67,7 +67,7 @@ class OidcLogoutRevocation extends Model
 
     /**
      * Larger of `oidc.backchannel_logout.revocation_ttl` and the host's session
-     * lifetime, capped at the longest possible OIDC session.
+     * lifetime, subject to the configured ceiling for the revocation ledger.
      */
     public static function maximumConfiguredLifetimeSeconds(): int
     {
@@ -79,9 +79,9 @@ class OidcLogoutRevocation extends Model
         return min($maximumRetentionSeconds, max($sessionLifetimeSeconds, is_int($configuredSeconds) ? $configuredSeconds : $sessionLifetimeSeconds));
     }
 
-    /** The durable ledger and its cache are both bounded to one day. */
+    /** Provide the default even if the host cached its config before this key existed. */
     public static function maximumRetentionSeconds(): int
     {
-        return 86_400;
+        return Config::integer('oidc.backchannel_logout.max_retention_seconds', 2_592_000);
     }
 }

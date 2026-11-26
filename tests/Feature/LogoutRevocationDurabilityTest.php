@@ -199,21 +199,11 @@ it('serves local and OIDC logins when the app allows week-long sessions', functi
 
     $this->get('/probe')->assertOk()->assertSeeText('guest');
     $this->actingAs($user)->get('/probe')->assertOk()->assertSeeText('signed-in');
-    $this->withSession(durableSsoSession())->get('/probe')->assertOk()->assertSeeText('signed-in');
-});
-
-it('ends an OIDC session at the revocation retention ceiling', function (int $sessionAge, string $expectedState): void {
-    Date::setTestNow(Date::now()->startOfSecond());
-
-    $this->actingAs(new GenericUser(['id' => 1, 'remember_token' => null]))
-        ->withSession(durableSsoSession(authenticatedAt: Date::now()->getTimestamp() - $sessionAge))
+    $this->withSession(durableSsoSession(authenticatedAt: Date::now()->subDays(2)->getTimestamp()))
         ->get('/probe')
         ->assertOk()
-        ->assertSeeText($expectedState);
-})->with([
-    'one second before expiry' => [86_399, 'signed-in'],
-    'at expiry' => [86_400, 'guest'],
-]);
+        ->assertSeeText('signed-in');
+});
 
 it('does not treat a cold cache as proof of not-revoked when a sub-only row exists', function (): void {
     app(SessionRevocationService::class)->revoke(new LogoutTokenData(

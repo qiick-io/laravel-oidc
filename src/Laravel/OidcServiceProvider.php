@@ -19,6 +19,7 @@ use Illuminate\Foundation\Http\Kernel as HttpKernel;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
+use InvalidArgumentException;
 use Qiick\Oidc\Console\ConfigureOidcCommand;
 use Qiick\Oidc\Console\ImportLegacySubjectsCommand;
 use Qiick\Oidc\Console\PruneLogoutRevocationsCommand;
@@ -264,6 +265,17 @@ final class OidcServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $sessionLifetimeMinutes = max(1, $this->config($this->app)->integer('session.lifetime'));
+        $maximumRetentionSeconds = OidcLogoutRevocation::maximumRetentionSeconds();
+
+        if ($sessionLifetimeMinutes > intdiv($maximumRetentionSeconds, 60)) {
+            throw new InvalidArgumentException(sprintf(
+                'session.lifetime exceeds oidc.backchannel_logout.max_retention_seconds (%d minutes versus %d seconds). Lower session.lifetime or raise the revocation retention ceiling.',
+                $sessionLifetimeMinutes,
+                $maximumRetentionSeconds,
+            ));
+        }
+
         $this->app->make(Dispatcher::class)->listen(Login::class, PromotePendingIdentityListener::class);
         $this->app->make(Dispatcher::class)->listen(Validated::class, EnforceSsoOnlyListener::class);
 

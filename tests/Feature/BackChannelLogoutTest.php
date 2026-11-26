@@ -210,8 +210,9 @@ it('keeps the revocation for the clock leeway past exp when the leeway is longer
 });
 
 it('refuses a logout whose replay window would exceed the retention ceiling', function (): void {
+    Config::set('oidc.backchannel_logout.max_retention_seconds', 172_800);
     Date::setTestNow(Date::now()->startOfSecond());
-    $latestAllowedExpiry = Date::now()->addDay()->subSeconds(120)->getTimestamp();
+    $latestAllowedExpiry = Date::now()->addDays(2)->subSeconds(120)->getTimestamp();
 
     postLogoutToken($this, $this->identityProvider, ['exp' => $latestAllowedExpiry + 1])->assertStatus(400);
     postLogoutToken($this, $this->identityProvider, ['exp' => 1.0e20])->assertStatus(400);

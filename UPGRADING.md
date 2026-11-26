@@ -5,7 +5,7 @@ What an app has to do for each pre-release, newest first. The [CHANGELOG](./CHAN
 ## Unreleased
 
 - Recreate the beta package tables using the procedure below. The identity owner key becomes nullable for anonymised rows, and logout revocations add a replay fingerprint. Preserve linked identities from a backup and expire sessions when replacing the logout revocation table.
-- OIDC sessions require reauthentication after 24 hours, including when the app allows longer sessions. Revocation retention is capped at 24 hours. Ensure the IdP's logout token lifetime plus clock leeway fits the same limit. Schedule `oidc:prune-logout-revocations` hourly.
+- The app continues to control OIDC session duration. The new `oidc.backchannel_logout.max_retention_seconds` defaults to 30 days. Before deploying, make sure it covers `session.lifetime` (minutes) and the IdP's logout token lifetime plus its replay allowance. Schedule `oidc:prune-logout-revocations` hourly.
 - Call `OidcEraser` from the product erasure orchestrator before deleting the user. The identity foreign key still cascades as a safety net.
 
 ## From any beta to 1.0.0-beta.7, in one pass

@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
-- Recreate the package tables to pick up nullable identity ownership and the logout replay fingerprint. OIDC sessions and revocation retention are capped at 24 hours. Schedule logout pruning hourly. See [UPGRADING.md](./UPGRADING.md#unreleased).
+- Recreate the package tables to pick up nullable identity ownership and the logout replay fingerprint. Durable revocations cover the app's configured session lifetime, within a configurable ceiling that defaults to 30 days. Schedule logout pruning hourly. See [UPGRADING.md](./UPGRADING.md#unreleased).
 
 ## [1.0.0-beta.7] - 2026-11-25
 
