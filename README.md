@@ -211,7 +211,7 @@ The package registers `POST /auth/oidc/backchannel-logout` (route `oidc.backchan
 
 **The table is the source of truth; the cache is only an accelerator.** A cache hit ends the session at once, but a cache miss is never read as "not revoked": only the table answers that, so `cache:clear`, eviction or a cache per server never loses a logout. If the table cannot be read, the session is treated as revoked (fail closed) and the error is logged.
 
-A row is kept until the later of the configured revocation lifetime and the logout token's expiry plus the greater of 120 seconds and the JWT clock leeway. The revocation lifetime is the larger of `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`. Both settings must fit within 24 hours. The logout endpoint rejects tokens whose replay window exceeds that limit, so pruning cannot make a valid token reusable. Schedule the prune command hourly to remove expired rows within 25 hours of receipt when scheduled runs succeed:
+A row is kept until the later of the configured revocation lifetime and the logout token's expiry plus the greater of 120 seconds and the JWT clock leeway. The revocation lifetime is the larger of `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`, capped at 24 hours. OIDC sessions require reauthentication after 24 hours, matching the revocation ceiling. Local logins continue to follow the app's session settings. The logout endpoint rejects tokens whose replay window exceeds the retention limit, so pruning cannot make a valid token reusable. Schedule the prune command hourly to remove expired rows within 25 hours of receipt when scheduled runs succeed:
 
 ```php
 Schedule::command('oidc:prune-logout-revocations')->hourly();
@@ -250,6 +250,8 @@ Set `dryRun: false` to apply the preview. `DELETE` deletes the identity rows. `A
 
 Both modes remove the personal fields and cache entries of revocations identified by issuer and subject, including session-only rows when that issuer has a single corroborating subject for the session ID. Signed logout rows keep a token fingerprint until expiry to preserve replay protection. Rows with an uncorroborated or ambiguous session ID remain in the security revocation store until pruning. The report lists unresolved session IDs as an aggregate count for the issuers found during the run. Their cache entries expire within 24 hours. Raw app session data and logout events stored by app listeners remain under the product's erasure and retention policy.
 
+The report uses the fleet's `security_log` reason for retained logout evidence. The logout ledger's 24-hour expiry applies to those entries.
+
 Each real run dispatches `SubjectErasedEvent` after commit with an aggregate `ErasureReport`. Repeating a completed run yields `changed() === 0`.
 
 ### Settings from the database
@@ -279,7 +281,7 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.userinfo` | `true` | Merge the userinfo claims into the identity. |
 | `oidc.routes.enabled` / `prefix` / `middleware` | `true` / `auth/oidc` / `['web', 'guest']` | The package routes; `middleware` applies to redirect and callback. |
 | `oidc.routes.except` | `[]` | Names of package routes the app registers itself (for example `['oidc.callback']`); every other package route is still registered. |
-| `oidc.backchannel_logout.revocation_ttl` | `null` | Minimum seconds a logout is kept; the lifetime is never shorter than `session.lifetime`. |
+| `oidc.backchannel_logout.revocation_ttl` | `null` | Minimum seconds a logout is kept. The setting and session lifetime are capped at 86,400 seconds for OIDC revocation. |
 | `oidc.frontchannel_logout.enabled` (`OIDC_FRONTCHANNEL_LOGOUT`) | `false` | Turns on the front-channel logout endpoint, see above. |
 | `oidc.redirect_uri` | `null` | `null` means `{APP_URL}/auth/oidc/callback`, the URI Externa and Excubia App already register. |
 | `oidc.scopes` | `openid profile email` | `openid` is always sent. Add `qiick.orgs` for Signaculum's organisation claims. |
@@ -368,7 +370,7 @@ What the package defends against, and what it leaves to the app and the IdP. Dec
 - A compromised IdP or a stolen IdP signing key: the package trusts what the IdP signs.
 - The app's own login, second factor and session hardening (cookie flags, session lifetime, `APP_KEY` rotation with `APP_PREVIOUS_KEYS`).
 - Rate limiting of the redirect, callback and back-channel routes (the front-channel route has its own limit): add `throttle` to `oidc.routes.middleware` or the app's route group if needed. A forged `logout_token` costs one signature check and at most one JWKS refetch per cooldown.
-- Pruning: schedule `oidc:prune-logout-revocations` daily; a missed run only leaves extra rows.
+- Schedule `oidc:prune-logout-revocations` hourly to remove expired rows within 25 hours of receipt when scheduled runs succeed.
 - Clock drift beyond `oidc.id_token.leeway` and an `app.timezone` other than `UTC`.
 
 ## Migrating Externa and Excubia App

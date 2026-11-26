@@ -273,8 +273,8 @@ return [
 
         /*
          * How long a back-channel logout is remembered, in seconds. It must
-         * cover the longest local session. Null uses `session.lifetime`.
-         * Both must fit in the 24-hour revocation retention limit.
+         * cover the longest OIDC session. Null uses `session.lifetime`.
+         * The effective retention is capped at 24 hours.
          */
         'revocation_ttl' => null,
 

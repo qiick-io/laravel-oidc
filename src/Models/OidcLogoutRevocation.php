@@ -9,7 +9,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\MassPrunable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Config;
-use InvalidArgumentException;
 use Qiick\Oidc\Models\Concerns\GuardsIdByDefaultTrait;
 
 /**
@@ -67,23 +66,17 @@ class OidcLogoutRevocation extends Model
     }
 
     /**
-     * Max of `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`
-     * (minutes → seconds), matching the write-time lifetime floor.
+     * Larger of `oidc.backchannel_logout.revocation_ttl` and the host's session
+     * lifetime, capped at the longest possible OIDC session.
      */
     public static function maximumConfiguredLifetimeSeconds(): int
     {
-        $sessionLifetimeMinutes = Config::integer('session.lifetime');
-        $configuredSeconds = Config::get('oidc.backchannel_logout.revocation_ttl');
         $maximumRetentionSeconds = self::maximumRetentionSeconds();
+        $sessionLifetimeMinutes = min(max(1, Config::integer('session.lifetime')), intdiv($maximumRetentionSeconds, 60));
+        $sessionLifetimeSeconds = $sessionLifetimeMinutes * 60;
+        $configuredSeconds = Config::get('oidc.backchannel_logout.revocation_ttl');
 
-        if ($sessionLifetimeMinutes > intdiv($maximumRetentionSeconds, 60)
-            || (is_int($configuredSeconds) && $configuredSeconds > $maximumRetentionSeconds)) {
-            throw new InvalidArgumentException('OIDC logout revocation retention cannot exceed 24 hours. Check session.lifetime and oidc.backchannel_logout.revocation_ttl.');
-        }
-
-        $sessionLifetimeSeconds = max(1, $sessionLifetimeMinutes) * 60;
-
-        return max($sessionLifetimeSeconds, is_int($configuredSeconds) ? $configuredSeconds : $sessionLifetimeSeconds);
+        return min($maximumRetentionSeconds, max($sessionLifetimeSeconds, is_int($configuredSeconds) ? $configuredSeconds : $sessionLifetimeSeconds));
     }
 
     /** The durable ledger and its cache are both bounded to one day. */

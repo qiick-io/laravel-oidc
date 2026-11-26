@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Qiick\Oidc\Data\LogoutTokenData;
 use Qiick\Oidc\Erasure\OidcEraser;
@@ -16,13 +16,19 @@ use Qiick\Standards\Erasure\Support\ErasurePerson;
 /**
  * Exercises both package tables. SessionRevocationService writes the two
  * personal cache keys, `oidc:revoked-sub:<sha256>` and `oidc:revoked-sid:<sha256>`,
- * on oidc.cache.store (the default Laravel store in this fixture). Login state
- * markers store only a random, single-use transaction key. Discovery and
- * JWKS entries describe the provider. The product owns the session store.
+ * on the named OIDC cache store. Login state markers store only a random,
+ * single-use transaction key. Discovery and JWKS describe the provider. The
+ * product owns the session store.
+ *
+ * SID is personal whenever a subject corroborates it, which is what this
+ * fixture seeds. The report's cleartext SID entry counts unresolved rows
+ * across affected issuers because those rows cannot be assigned to a person.
  */
 return new class implements ErasureFixture
 {
     private const string ISSUER = 'https://identity.example.test';
+
+    private const string CACHE_STORE = 'oidc-erasure-fixture';
 
     public function packageName(): string
     {
@@ -99,6 +105,11 @@ return new class implements ErasureFixture
 
     public function makePerson(): ErasurePerson
     {
+        Config::set([
+            'cache.stores.'.self::CACHE_STORE => ['driver' => 'array'],
+            'oidc.cache.store' => self::CACHE_STORE,
+        ]);
+
         $nextUserId = max(100_001, (int) User::query()->max('id') + 1);
         $person = ErasurePerson::fresh((string) $nextUserId);
         localUser($person->identifiers[0], ['id' => $nextUserId, 'name' => $person->identifiers[2]]);
@@ -155,7 +166,7 @@ return new class implements ErasureFixture
     public function cacheKeys(ErasurePerson $person): array
     {
         return [
-            Cache::getDefaultDriver() => [
+            self::CACHE_STORE => [
                 SessionRevocationService::cacheKey('sub', self::ISSUER, $person->userPublicId),
                 SessionRevocationService::cacheKey('sid', self::ISSUER, 'session-'.$person->userPublicId),
             ],

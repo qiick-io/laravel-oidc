@@ -102,11 +102,18 @@ final readonly class SessionRevocationService
     }
 
     /**
-     * Cache first, then the table. Never treats a cache miss as "not revoked".
-     * A table read failure fails closed.
+     * Apply the same hard age limit to OIDC sessions and revocation retention.
+     * For younger sessions, a cache miss falls through to the table and a
+     * table read failure fails closed.
      */
     public function isRevoked(IdentitySessionData $identity): bool
     {
+        // Laravel's session lifetime is an idle limit. An active session can
+        // reach the ledger's hard retention ceiling even with a shorter idle limit.
+        if ($identity->authenticatedAt <= Date::now()->getTimestamp() - OidcLogoutRevocation::maximumRetentionSeconds()) {
+            return true;
+        }
+
         if ($identity->sessionId !== null && $this->cache->has(self::cacheKey('sid', $identity->issuer, $identity->sessionId))) {
             return true;
         }
@@ -120,9 +127,9 @@ final readonly class SessionRevocationService
         try {
             return $this->isRevokedInTable($identity);
         } catch (Throwable $throwable) {
+            // Database exception messages can contain the subject and SID bindings.
             Log::warning('OIDC logout revocation table read failed; treating session as revoked.', [
                 'exception' => $throwable::class,
-                'message' => $throwable->getMessage(),
             ]);
 
             return true;

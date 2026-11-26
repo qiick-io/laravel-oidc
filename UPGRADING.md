@@ -5,7 +5,7 @@ What an app has to do for each pre-release, newest first. The [CHANGELOG](./CHAN
 ## Unreleased
 
 - Recreate the beta package tables using the procedure below. The identity owner key becomes nullable for anonymised rows, and logout revocations add a replay fingerprint. Preserve linked identities from a backup and expire sessions when replacing the logout revocation table.
-- Set `session.lifetime` to at most 1,440 minutes and any custom `oidc.backchannel_logout.revocation_ttl` to at most 86,400 seconds. Ensure the IdP's logout token lifetime plus clock leeway fits the same limit. Schedule `oidc:prune-logout-revocations` hourly.
+- OIDC sessions require reauthentication after 24 hours, including when the app allows longer sessions. Revocation retention is capped at 24 hours. Ensure the IdP's logout token lifetime plus clock leeway fits the same limit. Schedule `oidc:prune-logout-revocations` hourly.
 - Call `OidcEraser` from the product erasure orchestrator before deleting the user. The identity foreign key still cascades as a safety net.
 
 ## From any beta to 1.0.0-beta.7, in one pass
@@ -18,7 +18,7 @@ The betas edit the `create_…` migrations instead of adding forward ones (packa
 4. Keep your published `config/oidc.php`: nested keys it lacks now get the package default (the service provider merges them), and every key you set keeps your value.
 5. Register `{APP_URL}/auth/oidc/logged-out` at the IdP as a post-logout redirect URI and set `oidc.logout.redirect_to` (see "Post-logout return route" below).
 6. Point `oidc.cache.store` at a store every app server shares (database, redis): each login `state` is consumed there.
-7. Schedule `php artisan oidc:prune-logout-revocations` daily.
+7. Schedule `php artisan oidc:prune-logout-revocations` hourly.
 8. Run `php artisan oidc:configure` and fix every failure and warning it reports.
 
 Then read the sections of the versions you skip: they list the behaviour changes to announce and the code an app may have to change.
@@ -49,7 +49,7 @@ RP-initiated logout now sends a `state` and, by default, asks the IdP to return 
 ## 1.0.0-beta.6 (from 1.0.0-beta.5)
 
 - **Database:** recreate the package tables. The `user_identities` create migration gained the link snapshots, the last-login columns, `format_version` and `metadata`, and `oidc_logout_revocations` is a new table.
-- Schedule `php artisan oidc:prune-logout-revocations` daily.
+- Schedule `php artisan oidc:prune-logout-revocations` hourly.
 - **Outbound:** see below.
 
 ### Adopting `qiick/laravel-outbound`
