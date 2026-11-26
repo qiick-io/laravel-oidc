@@ -2,17 +2,11 @@
 
 What an app has to do for each pre-release, newest first. The [CHANGELOG](./CHANGELOG.md) lists every change; this page says what to act on. The public API that `1.0.0` freezes is in [`docs/PUBLIC-API.md`](./docs/PUBLIC-API.md).
 
-## Unreleased
-
-- Recreate the beta package tables using the procedure below. The identity owner key becomes nullable for anonymised rows, and logout revocations add a replay fingerprint. Preserve linked identities from a backup and expire sessions when replacing the logout revocation table.
-- The app continues to control OIDC session duration. The new `oidc.backchannel_logout.max_retention_seconds` defaults to 30 days. Before deploying, make sure it covers `session.lifetime` (minutes) and the IdP's logout token lifetime plus its replay allowance. Schedule `oidc:prune-logout-revocations` hourly.
-- Call `OidcEraser` from the product erasure orchestrator before deleting the user. The identity foreign key still cascades as a safety net.
-
-## From any beta to 1.0.0-beta.7, in one pass
+## From any beta to 1.0.0-beta.8, in one pass
 
 The betas edit the `create_…` migrations instead of adding forward ones (package migrations freeze only at the first stable tag), so the shortest safe path from any beta is:
 
-1. `composer require qiick/laravel-oidc:^1.0@beta` (it pulls `qiick/laravel-outbound:^0.1`).
+1. `composer require qiick/laravel-oidc:^1.0@beta` (it accepts `qiick/laravel-outbound:^0.1 || ^0.2`).
 2. An app that published the migrations (`vendor:publish --tag=oidc-migrations`) deletes the published package migrations and publishes them again.
 3. **Recreate the package tables.** Locally: `php artisan migrate:fresh --seed`. On a shared install: back up `user_identities`, recreate `user_identities` and `oidc_logout_revocations` from the package migrations, and restore the identity rows. A plain `migrate` does not pick up the edited create migrations. Before restoring, make sure no user holds two identities of one issuer: the unique `(user_id, issuer)` key refuses them.
 4. Keep your published `config/oidc.php`: nested keys it lacks now get the package default (the service provider merges them), and every key you set keeps your value.
@@ -22,6 +16,13 @@ The betas edit the `create_…` migrations instead of adding forward ones (packa
 8. Run `php artisan oidc:configure` and fix every failure and warning it reports.
 
 Then read the sections of the versions you skip: they list the behaviour changes to announce and the code an app may have to change.
+
+## 1.0.0-beta.8 (from 1.0.0-beta.7)
+
+- Recreate the beta package tables using the procedure above. The identity owner key becomes nullable for anonymised rows, and logout revocations add a replay fingerprint. Preserve linked identities from a backup and expire OIDC sessions when replacing the logout revocation table.
+- The app continues to control OIDC session duration. The new `oidc.backchannel_logout.max_retention_seconds` defaults to 30 days. Before deploying, choose a ceiling that covers `session.lifetime` (minutes) and the IdP's logout token lifetime plus its replay allowance. Schedule `oidc:prune-logout-revocations` hourly.
+- Call `OidcEraser` from the product erasure orchestrator before deleting the user. The identity foreign key still cascades as a safety net.
+- Keep `OIDC_ALLOW_PRIVATE_HOSTS=true` for an IdP on a private network. It now takes effect with outbound v0.2.0-beta.2.
 
 ## 1.0.0-beta.7 (from 1.0.0-beta.6)
 
