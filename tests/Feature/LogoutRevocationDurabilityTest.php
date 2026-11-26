@@ -7,7 +7,9 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Scope;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
@@ -153,7 +155,7 @@ it('still revokes after a cache flush because only the table answers not-revoked
         ->assertSeeText('guest');
 });
 
-it('treats a failed table read as revoked and never as a negative cache', function (): void {
+it('treats a failed table read as revoked and logs only the exception type', function (): void {
     Log::spy();
     $identity = new IdentitySessionData(
         issuer: 'https://idp.example.com/realms/test',
@@ -165,11 +167,18 @@ it('treats a failed table read as revoked and never as a negative cache', functi
 
     // Force the Eloquent query to throw without DDL (MySQL commits on RENAME
     // and would destroy RefreshDatabase savepoints; PostgreSQL aborts).
-    OidcLogoutRevocation::addGlobalScope('oidc-fail-closed-test', new class implements Scope
+    OidcLogoutRevocation::addGlobalScope('oidc-fail-closed-test', new class($identity) implements Scope
     {
+        public function __construct(private readonly IdentitySessionData $identity) {}
+
         public function apply(Builder $builder, Model $model): void
         {
-            throw new RuntimeException('forced table read failure');
+            throw new QueryException(
+                'testing',
+                'select * from oidc_logout_revocations where sub = ? or sid = ?',
+                [$this->identity->subject, $this->identity->sessionId],
+                new RuntimeException('Forced read failure.'),
+            );
         }
     });
 
@@ -177,11 +186,23 @@ it('treats a failed table read as revoked and never as a negative cache', functi
         expect(app(SessionRevocationService::class)->isRevoked($identity))->toBeTrue();
         Log::shouldHaveReceived('warning')->withArgs(
             fn (string $message, array $context): bool => str_contains($message, 'logout revocation table read failed')
-                && $context === ['exception' => RuntimeException::class, 'message' => 'forced table read failure'],
+                && $context === ['exception' => QueryException::class],
         );
     } finally {
         Model::clearBootedModels();
     }
+});
+
+it('serves local and OIDC logins when the app allows week-long sessions', function (): void {
+    Config::set('session.lifetime', 10_080);
+    $user = new GenericUser(['id' => 1, 'remember_token' => null]);
+
+    $this->get('/probe')->assertOk()->assertSeeText('guest');
+    $this->actingAs($user)->get('/probe')->assertOk()->assertSeeText('signed-in');
+    $this->withSession(durableSsoSession(authenticatedAt: Date::now()->subDays(2)->getTimestamp()))
+        ->get('/probe')
+        ->assertOk()
+        ->assertSeeText('signed-in');
 });
 
 it('does not treat a cold cache as proof of not-revoked when a sub-only row exists', function (): void {

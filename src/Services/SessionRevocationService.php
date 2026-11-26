@@ -57,6 +57,7 @@ final readonly class SessionRevocationService
                     'sid' => $logoutToken->sessionId,
                     'sub' => $logoutToken->subject,
                     'jti' => $logoutToken->tokenId,
+                    'replay_key' => $logoutToken->tokenId === null ? null : hash('sha256', $logoutToken->tokenId),
                     // Callers set backchannel or frontchannel; the DB default is backchannel.
                     'channel' => $logoutToken->channel,
                     'received_at' => $receivedAt,
@@ -69,9 +70,9 @@ final readonly class SessionRevocationService
 
         // Accelerator only; the table remains the source of truth.
         if ($logoutToken->sessionId !== null) {
-            $this->warmCache($this->cacheKey('sid', $logoutToken->issuer, $logoutToken->sessionId), $receivedAt->getTimestamp(), $expiresAt);
+            $this->warmCache(self::cacheKey('sid', $logoutToken->issuer, $logoutToken->sessionId), $receivedAt->getTimestamp(), $expiresAt);
         } elseif ($logoutToken->subject !== null) {
-            $this->warmCache($this->cacheKey('sub', $logoutToken->issuer, $logoutToken->subject), $receivedAt->getTimestamp(), $expiresAt);
+            $this->warmCache(self::cacheKey('sub', $logoutToken->issuer, $logoutToken->subject), $receivedAt->getTimestamp(), $expiresAt);
         }
 
         $this->dispatchLogoutReceived($logoutToken);
@@ -101,16 +102,21 @@ final readonly class SessionRevocationService
     }
 
     /**
-     * Cache first, then the table. Never treats a cache miss as "not revoked".
-     * A table read failure fails closed.
+     * A cache miss falls through to the revocation table. A table read
+     * failure fails closed.
      */
     public function isRevoked(IdentitySessionData $identity): bool
     {
-        if ($identity->sessionId !== null && $this->cache->has($this->cacheKey('sid', $identity->issuer, $identity->sessionId))) {
+        // App repositories can enable SSO at runtime without the boot-time config flag.
+        if (! OidcLogoutRevocation::isSessionLifetimeCovered()) {
             return true;
         }
 
-        $subjectRevokedAt = $this->cache->get($this->cacheKey('sub', $identity->issuer, $identity->subject));
+        if ($identity->sessionId !== null && $this->cache->has(self::cacheKey('sid', $identity->issuer, $identity->sessionId))) {
+            return true;
+        }
+
+        $subjectRevokedAt = $this->cache->get(self::cacheKey('sub', $identity->issuer, $identity->subject));
 
         if (is_int($subjectRevokedAt) && $identity->authenticatedAt <= $subjectRevokedAt) {
             return true;
@@ -119,9 +125,9 @@ final readonly class SessionRevocationService
         try {
             return $this->isRevokedInTable($identity);
         } catch (Throwable $throwable) {
+            // Database exception messages can contain the subject and SID bindings.
             Log::warning('OIDC logout revocation table read failed; treating session as revoked.', [
                 'exception' => $throwable::class,
-                'message' => $throwable->getMessage(),
             ]);
 
             return true;
@@ -147,7 +153,7 @@ final readonly class SessionRevocationService
 
             if ($sessionRevocation !== null) {
                 $this->warmCache(
-                    $this->cacheKey('sid', $identity->issuer, $identity->sessionId),
+                    self::cacheKey('sid', $identity->issuer, $identity->sessionId),
                     $sessionRevocation->received_at->getTimestamp(),
                     $sessionRevocation->expires_at->getTimestamp(),
                 );
@@ -167,7 +173,7 @@ final readonly class SessionRevocationService
 
         if ($subjectRevocation !== null) {
             $this->warmCache(
-                $this->cacheKey('sub', $identity->issuer, $identity->subject),
+                self::cacheKey('sub', $identity->issuer, $identity->subject),
                 $subjectRevocation->received_at->getTimestamp(),
                 $subjectRevocation->expires_at->getTimestamp(),
             );
@@ -186,22 +192,34 @@ final readonly class SessionRevocationService
      * of `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`;
      * prune deletes by this stored expires_at and never recomputes the TTL.
      */
-    private function expiresAt(int $receivedAt, ?int $tokenExpiresAt): int
+    private function expiresAt(int $receivedAt, int|float|null $tokenExpiresAt): int
     {
+        $latestExpiry = $receivedAt + OidcLogoutRevocation::maximumRetentionSeconds();
+        $replayWindowSeconds = max(120, $this->leewaySeconds);
+
+        // BCL §2.6 requires replay protection for as long as a token is accepted.
+        // Refuse the token if its window cannot fit in the retention bound.
+        if ($tokenExpiresAt !== null && $tokenExpiresAt > $latestExpiry - $replayWindowSeconds) {
+            throw new InvalidTokenException('logout_token expiry exceeds oidc.backchannel_logout.max_retention_seconds.');
+        }
+
         $fromRevocationLifetime = $receivedAt + $this->revocationSeconds;
-        $fromToken = $tokenExpiresAt !== null ? $tokenExpiresAt + max(120, $this->leewaySeconds) : $fromRevocationLifetime;
+        // JSON NumericDate values can be fractional (RFC 7519). Round up after
+        // enforcing the upper bound so an oversized value cannot wrap as an int.
+        $fromToken = $tokenExpiresAt !== null ? (int) ceil($tokenExpiresAt + $replayWindowSeconds) : $fromRevocationLifetime;
 
         return max($fromRevocationLifetime, $fromToken);
     }
 
     /**
-     * Caches a revocation until the row's own expires_at, so the cache never
-     * outlives the table. The value is when the logout was received: the
-     * `sub` cut-off; for a `sid` key only its presence matters.
+     * Cache until the row's expiry or 24 hours, whichever comes first. A SID
+     * can be unattributable during erasure, so a cache entry has a shorter
+     * bound than the durable ledger. The stored value is the logout cut-off.
      */
     private function warmCache(string $cacheKey, int $receivedAt, int $expiresAt): void
     {
-        $this->cache->put($cacheKey, $receivedAt, Date::createFromTimestamp($expiresAt));
+        $cacheExpiresAt = min($expiresAt, Date::now()->getTimestamp() + 86_400);
+        $this->cache->put($cacheKey, $receivedAt, Date::createFromTimestamp($cacheExpiresAt));
     }
 
     /**
@@ -210,7 +228,7 @@ final readonly class SessionRevocationService
      *
      * @param  'sid'|'sub'  $kind
      */
-    private function cacheKey(string $kind, string $issuer, string $value): string
+    public static function cacheKey(string $kind, string $issuer, string $value): string
     {
         return sprintf('oidc:revoked-%s:%s', $kind, hash('sha256', sprintf('%s|%s', $issuer, $value)));
     }

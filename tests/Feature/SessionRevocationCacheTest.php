@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Qiick\Oidc\Data\IdentitySessionData;
 use Qiick\Oidc\Data\LogoutTokenData;
@@ -94,6 +95,38 @@ it('keeps the sub cut-off in the cache: later sessions of the user stay signed i
 
     expect(isCachedSessionRevoked(cachedSession(null, authenticatedAt: Date::now()->getTimestamp())))->toBeTrue()
         ->and(isCachedSessionRevoked(cachedSession(null, authenticatedAt: Date::now()->addSecond()->getTimestamp())))->toBeFalse();
+});
+
+it('ends an OIDC session when the configured ledger cannot cover its lifetime', function (): void {
+    Config::set('oidc.enabled', false);
+    Config::set('oidc.backchannel_logout.max_retention_seconds', 10_800);
+    Config::set('session.lifetime', 181);
+
+    expect(isCachedSessionRevoked(cachedSession('session-outside-retention')))->toBeTrue();
+});
+
+it('limits SID cache writes to one day and still revokes from the database for the app session lifetime', function (): void {
+    Config::set('session.lifetime', 10_080);
+    $receivedAt = Date::now()->toImmutable();
+    $session = cachedSession('long-lived-sid');
+    $cacheKey = SessionRevocationService::cacheKey('sid', CACHE_TEST_ISSUER, 'long-lived-sid');
+    revokeForCacheTest('long-lived-sid', null, 'week-long-revocation');
+
+    expect(OidcLogoutRevocation::query()->sole()->expires_at->getTimestamp())->toBe($receivedAt->addWeek()->getTimestamp());
+
+    Date::setTestNow($receivedAt->addDay()->subSecond());
+    expect(Cache::has($cacheKey))->toBeTrue();
+
+    Date::setTestNow($receivedAt->addDay());
+    expect(Cache::has($cacheKey))->toBeFalse()
+        ->and(isCachedSessionRevoked($session))->toBeTrue()
+        ->and(Cache::has($cacheKey))->toBeTrue();
+
+    Date::setTestNow($receivedAt->addDays(2));
+    expect(Cache::has($cacheKey))->toBeFalse();
+
+    Date::setTestNow($receivedAt->addWeek());
+    expect(isCachedSessionRevoked($session))->toBeFalse();
 });
 
 it('keeps a sid and a sub with the same value apart in the cache', function (): void {

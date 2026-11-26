@@ -32,6 +32,10 @@ An app may use these classes as described in the README. "Construct" means the a
 | `Data\LoginOptionsData` | returned by `SsoOnlyModeService::loginOptions()` |
 | `Enums\LoginRefusalReasonEnum` | cases and `message()` |
 | `Enums\TokenEndpointAuthMethodEnum` | cases |
+| `Erasure\OidcEraser` | resolved from the container; `erase()`, `DELETE`, `ANONYMISE` |
+| `Erasure\ErasureReport` | read by apps; `changed()`, `toArray()` |
+| `Erasure\OrganisationScopeUnsupportedException` | caught when an app requests organisation-scoped OIDC erasure |
+| `Events\SubjectErasedEvent` | listened to by apps; carries the erasure report |
 | `Events\OidcIdentityLinkedEvent`, `OidcLoginSucceededEvent`, `OidcUserProvisionedEvent`, `OidcLogoutReceivedEvent` | listened to by apps |
 | `Exceptions\OidcException` and its subclasses (`IdentityProviderRequestException`, `InvalidCallbackException`, `InvalidTokenException`, `LoginRefusedException`, `OidcNotConfiguredException`) | caught by apps |
 | `Models\UserIdentity`, `Models\OidcLogoutRevocation` | queried by apps; their tables are listed below |
@@ -43,7 +47,7 @@ Every class name above is in the `Qiick\Oidc` namespace. Adding a trailing optio
 
 ## Configuration and environment
 
-Config keys (all under `oidc.`): `enabled`, `issuer`, `client_id`, `client_secret`, `button_label`, `jit`, `auto_link`, `only`, `redirect_uri`, `allowed_domains`, `require_verified_email`, `remember`, `home`, `login_url`, `users.model`, `users.table`, `users.email_column`, `users.active_column`, `break_glass.roles`, `break_glass.require_two_factor`, `break_glass.query_parameter`, `roles.enabled`, `roles.claim`, `roles.organization`, `roles.map`, `roles.forbidden`, `mfa.required`, `mfa.amr_values`, `mfa.acr_values`, `mfa.request_acr_values`, `mfa.max_age`, `mfa.require_requested_acr`, `post_logout_redirect_uri`, `logout.redirect_to`, `userinfo`, `routes.enabled`, `routes.prefix`, `routes.middleware`, `routes.except`, `backchannel_logout.revocation_ttl`, `frontchannel_logout.enabled`, `scopes`, `token_endpoint_auth_method`, `id_token.algorithms`, `id_token.leeway`, `id_token.trusted_audiences`, `cache.store`, `cache.discovery_ttl`, `cache.jwks_ttl`, `cache.jwks_refetch_cooldown`, `http.timeout`, `http.connect_timeout`, `http.max_response_bytes`, `http.discovery_base`, `http.server_origin`, `http.allow_private_hosts`.
+Config keys (all under `oidc.`): `enabled`, `issuer`, `client_id`, `client_secret`, `button_label`, `jit`, `auto_link`, `only`, `redirect_uri`, `allowed_domains`, `require_verified_email`, `remember`, `home`, `login_url`, `users.model`, `users.table`, `users.email_column`, `users.active_column`, `break_glass.roles`, `break_glass.require_two_factor`, `break_glass.query_parameter`, `roles.enabled`, `roles.claim`, `roles.organization`, `roles.map`, `roles.forbidden`, `mfa.required`, `mfa.amr_values`, `mfa.acr_values`, `mfa.request_acr_values`, `mfa.max_age`, `mfa.require_requested_acr`, `post_logout_redirect_uri`, `logout.redirect_to`, `userinfo`, `routes.enabled`, `routes.prefix`, `routes.middleware`, `routes.except`, `backchannel_logout.revocation_ttl`, `backchannel_logout.max_retention_seconds`, `frontchannel_logout.enabled`, `scopes`, `token_endpoint_auth_method`, `id_token.algorithms`, `id_token.leeway`, `id_token.trusted_audiences`, `cache.store`, `cache.discovery_ttl`, `cache.jwks_ttl`, `cache.jwks_refetch_cooldown`, `http.timeout`, `http.connect_timeout`, `http.max_response_bytes`, `http.discovery_base`, `http.server_origin`, `http.allow_private_hosts`.
 
 Environment variables: `OIDC_ENABLED`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_BUTTON_LABEL`, `OIDC_JIT`, `OIDC_AUTO_LINK`, `OIDC_ONLY`, `OIDC_FRONTCHANNEL_LOGOUT`, `OIDC_HTTP_TIMEOUT`, `OIDC_HTTP_CONNECT_TIMEOUT`, `OIDC_MAX_RESPONSE_BYTES`, `OIDC_DISCOVERY_BASE`, `OIDC_SERVER_ORIGIN`, `OIDC_ALLOW_PRIVATE_HOSTS`.
 
@@ -53,7 +57,7 @@ A key added in a minor release always has a default, and a config file published
 
 - Route names under `oidc.routes.prefix` (`auth/oidc`): `oidc.redirect`, `oidc.callback`, `oidc.backchannel-logout`, `oidc.frontchannel-logout`, `oidc.logged-out`, with their paths and HTTP methods.
 - Commands: `oidc:configure` (`--issuer`, `--client-id`, `--client-secret`, `--write-env`, `--json`, and the JSON report keys), `oidc:import-legacy-subjects` (`--column`, `--issuer`, `--dry-run`), `oidc:prune-logout-revocations` (`--chunk`).
-- Events: the four event classes above, with their public properties.
+- Events: the five event classes above, with their public properties.
 - Tables: `user_identities` and `oidc_logout_revocations`, as created by the package migrations. After `1.0.0` the migrations are forward-only and additive.
 - Session keys (`oidc.identity`, `oidc.pending_identity`, `oidc.pending_logins`) and cache keys are internal.
 

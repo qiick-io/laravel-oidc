@@ -46,7 +46,7 @@ return new class extends Migration
         Schema::create('user_identities', function (Blueprint $table) use ($usersTable, $isMysqlFamily): void {
             $table->id();
             $table->uuid('public_id')->unique();
-            $table->foreignId('user_id')->constrained(is_string($usersTable) ? $usersTable : 'users')->cascadeOnDelete();
+            $table->foreignId('user_id')->nullable()->constrained(is_string($usersTable) ? $usersTable : 'users')->cascadeOnDelete();
             $issuer = $table->string('issuer');
             $subject = $table->string('subject');
 

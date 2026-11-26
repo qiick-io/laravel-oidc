@@ -190,7 +190,7 @@ it('accepts a sub, sid and jti of exactly 255 characters', function (): void {
 
 it('keeps the revocation until the logout token itself expires, plus two minutes', function (): void {
     Date::setTestNow(Date::now()->startOfSecond());
-    $tokenExpiresAt = Date::now()->addDays(2)->getTimestamp();
+    $tokenExpiresAt = Date::now()->addHours(23)->getTimestamp();
 
     postLogoutToken($this, $this->identityProvider, ['exp' => $tokenExpiresAt])->assertOk();
 
@@ -202,16 +202,29 @@ it('keeps the revocation for the clock leeway past exp when the leeway is longer
     // sooner would let a replay through (unique jti only holds while stored).
     Config::set('oidc.id_token.leeway', 300);
     Date::setTestNow(Date::now()->startOfSecond());
-    $tokenExpiresAt = Date::now()->addDays(2)->getTimestamp();
+    $tokenExpiresAt = Date::now()->addHours(23)->getTimestamp();
 
     postLogoutToken($this, $this->identityProvider, ['exp' => $tokenExpiresAt])->assertOk();
 
     expect(OidcLogoutRevocation::query()->sole()->expires_at->getTimestamp())->toBe($tokenExpiresAt + 300);
 });
 
+it('refuses a logout whose replay window would exceed the retention ceiling', function (): void {
+    Config::set('oidc.backchannel_logout.max_retention_seconds', 172_800);
+    Date::setTestNow(Date::now()->startOfSecond());
+    $latestAllowedExpiry = Date::now()->addDays(2)->subSeconds(120)->getTimestamp();
+
+    postLogoutToken($this, $this->identityProvider, ['exp' => $latestAllowedExpiry + 1])->assertStatus(400);
+    postLogoutToken($this, $this->identityProvider, ['exp' => 1.0e20])->assertStatus(400);
+    expect(OidcLogoutRevocation::query()->count())->toBe(0);
+
+    postLogoutToken($this, $this->identityProvider, ['exp' => $latestAllowedExpiry])->assertOk();
+    expect(OidcLogoutRevocation::query()->sole()->expires_at->getTimestamp())->toBe($latestAllowedExpiry + 120);
+});
+
 it('keeps the revocation until a fractional exp, rounded up, plus two minutes', function (): void {
     Date::setTestNow(Date::now()->startOfSecond());
-    $tokenExpiresAt = Date::now()->addDays(2)->getTimestamp();
+    $tokenExpiresAt = Date::now()->addHours(23)->getTimestamp();
 
     postLogoutToken($this, $this->identityProvider, ['exp' => $tokenExpiresAt + 0.5])->assertOk();
 

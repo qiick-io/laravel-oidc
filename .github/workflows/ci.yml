@@ -76,6 +76,8 @@ jobs:
       - name: Pest
         run: vendor/bin/pest
 
+      - run: node tests/Erasure/run.mjs
+
   # qiick/laravel-outbound 0.2 is a beta for now, so the stable cells still
   # resolve 0.1: this job runs PHPStan and the suite on the 0.2 line too.
   outbound-0-2:
@@ -423,7 +425,7 @@ jobs:
 
   # The qiick standards pack (agent files, architecture test) must match app-ui.
   standards:
-    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@cbb1843eb1f50ef5a38e7e7bdf9b8dbec7b48bed # v0.11.0
+    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@0d97ae1429a856411c76e6de1ec258cae0eabab6 # v0.15.0
     with:
       standards: true
       registry: false

@@ -38,7 +38,8 @@ it('fills nested keys missing from a published config', function (): void {
         ->and(config('oidc.mfa.required'))->toBeTrue()
         ->and(config('oidc.mfa.amr_values'))->toBe(['mfa'])
         ->and(config('oidc.id_token.leeway'))->toBe(60)
-        ->and(config('oidc.cache.jwks_ttl'))->toBe(3600);
+        ->and(config('oidc.cache.jwks_ttl'))->toBe(3600)
+        ->and(config('oidc.backchannel_logout.max_retention_seconds'))->toBe(2_592_000);
 });
 
 it('keeps the app lists instead of merging them with the defaults', function (): void {

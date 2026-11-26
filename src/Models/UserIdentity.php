@@ -19,7 +19,7 @@ use Qiick\Oidc\Models\Concerns\GuardsIdByDefaultTrait;
  *
  * @property int $id
  * @property string $public_id
- * @property int $user_id
+ * @property int|null $user_id
  * @property string $issuer
  * @property string $subject
  * @property string|null $subject_type

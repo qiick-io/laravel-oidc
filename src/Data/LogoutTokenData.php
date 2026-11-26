@@ -20,7 +20,7 @@ final readonly class LogoutTokenData
         public ?string $subject,
         public ?string $sessionId,
         public ?string $tokenId = null,
-        public ?int $expiresAt = null,
+        public int|float|null $expiresAt = null,
         public string $channel = 'backchannel',
     ) {}
 }

@@ -23,6 +23,7 @@ use Qiick\Oidc\Models\Concerns\GuardsIdByDefaultTrait;
  * @property string|null $sid
  * @property string|null $sub
  * @property string|null $jti
+ * @property string|null $replay_key
  * @property string $channel
  * @property CarbonImmutable $received_at
  * @property CarbonImmutable $expires_at
@@ -65,14 +66,28 @@ class OidcLogoutRevocation extends Model
     }
 
     /**
-     * Max of `oidc.backchannel_logout.revocation_ttl` and `session.lifetime`
-     * (minutes → seconds), matching the write-time lifetime floor.
+     * Larger of `oidc.backchannel_logout.revocation_ttl` and the host's session
+     * lifetime, subject to the configured ceiling for the revocation ledger.
      */
     public static function maximumConfiguredLifetimeSeconds(): int
     {
-        $sessionLifetimeSeconds = max(1, Config::integer('session.lifetime')) * 60;
+        $maximumRetentionSeconds = self::maximumRetentionSeconds();
+        $sessionLifetimeMinutes = min(max(1, Config::integer('session.lifetime')), intdiv($maximumRetentionSeconds, 60));
+        $sessionLifetimeSeconds = $sessionLifetimeMinutes * 60;
         $configuredSeconds = Config::get('oidc.backchannel_logout.revocation_ttl');
 
-        return max($sessionLifetimeSeconds, is_int($configuredSeconds) ? $configuredSeconds : $sessionLifetimeSeconds);
+        return min($maximumRetentionSeconds, max($sessionLifetimeSeconds, is_int($configuredSeconds) ? $configuredSeconds : $sessionLifetimeSeconds));
+    }
+
+    /** Provide the default even if the host cached its config before this key existed. */
+    public static function maximumRetentionSeconds(): int
+    {
+        return Config::integer('oidc.backchannel_logout.max_retention_seconds', 2_592_000);
+    }
+
+    /** Compare in minutes so even an oversized session lifetime cannot overflow. */
+    public static function isSessionLifetimeCovered(): bool
+    {
+        return max(1, Config::integer('session.lifetime')) <= intdiv(self::maximumRetentionSeconds(), 60);
     }
 }

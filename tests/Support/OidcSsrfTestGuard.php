@@ -78,7 +78,7 @@ final class OidcSsrfTestGuard
                 }
             });
 
-        $this->guard = new RemoteUrlGuard($resolver, allowPrivateHosts: false, httpsOnly: false);
+        $this->guard = new RemoteUrlGuard($resolver, allowPrivateHosts: $isPrivateHostAllowed, httpsOnly: false);
         $this->options = new UrlGuardOptions(
             httpsOnly: ! $isPrivateHostAllowed,
             allowPrivateHosts: $isPrivateHostAllowed,

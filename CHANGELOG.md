@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.8] - 2026-11-26
+
+### Upgrade notes
+
+- Recreate the package tables to pick up nullable identity ownership and the logout replay fingerprint. Durable revocations cover the app's configured session lifetime, within a configurable ceiling that defaults to 30 days. Schedule logout pruning hourly. See [UPGRADING.md](./UPGRADING.md#100-beta8-from-100-beta7).
+- Keep `OIDC_ALLOW_PRIVATE_HOSTS=true` if the IdP is on a private network.
+
+### Added
+
+- The fleet-standard `OidcEraser` explicitly deletes or anonymises OIDC identity and attributable logout data and reports aggregate counts after commit (#84).
+
+### Fixed
+
+- Private IdPs work with `OIDC_ALLOW_PRIVATE_HOSTS=true` on `qiick/laravel-outbound` v0.2.0-beta.2. Private hosts are blocked by default, and cloud metadata stays blocked with the opt-in enabled (#104).
+- Apps with OIDC disabled can boot with a local session lifetime longer than the OIDC retention ceiling. The runtime check ends OIDC sessions when the ledger cannot cover their configured lifetime. Erasure reports count retained, unattributable SID cache entries with the `cache_ttl` reason.
+
 ## [1.0.0-beta.7] - 2026-11-25
 
 ### Upgrade notes
@@ -214,7 +230,8 @@ First public beta of `qiick/laravel-oidc`: a generic OpenID Connect client for L
 
 - PHP `^8.3`, Laravel 12 and 13 (`illuminate/support`, `illuminate/http`, `illuminate/cache`), `firebase/php-jwt` `^7.0`, `guzzlehttp/guzzle` `^7.8 || ^8.0` (Guzzle 8 allowed since #10; Laravel 13 accepts it, Laravel 12 stays on Guzzle 7).
 
-[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.7...HEAD
+[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.8...HEAD
+[1.0.0-beta.8]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.7...v1.0.0-beta.8
 [1.0.0-beta.7]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.6...v1.0.0-beta.7
 [1.0.0-beta.6]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.5...v1.0.0-beta.6
 [1.0.0-beta.5]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.4...v1.0.0-beta.5
