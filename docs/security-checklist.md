@@ -6,7 +6,7 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 
 ## Authorization request and callback
 
-| ID | Check | Spec | Tests |
+| ID | Check | Spec | Covering test |
 | --- | --- | --- | --- |
 | SEC-01 | PKCE `S256` on every login, also for confidential clients; the verifier sent matches the challenge | RFC 7636 §4 | `AuthorizationCodeFlowTest › redirects with PKCE S256, state, nonce and the configured scopes`; `› sends the PKCE verifier that matches the challenge` |
 | SEC-02 | `state` is required, bound to the browser session, single-use and expires after ten minutes | RFC 6749 §10.12, RFC 9700 §4.7 | `AuthorizationCodeFlowTest › refuses a callback without state, with an unknown state, or from another browser session`; `› accepts each state once, even after a failed callback`; `› expires a pending login after ten minutes`; `› refuses a pending login exactly when it expires`; `› keeps only the five newest pending logins` |
@@ -17,7 +17,7 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 
 ## `id_token`
 
-| ID | Check | Spec | Tests |
+| ID | Check | Spec | Covering test |
 | --- | --- | --- | --- |
 | SEC-10 | Signature through the IdP's JWKS; a changed payload or a foreign key with a published `kid` is refused | OIDC Core §3.1.3.7 step 6, RFC 7515 | `IdTokenValidationTest › refuses a token signed with another key that reuses the published kid`; `› refuses a token whose payload was changed after signing`; `› refuses malformed tokens` |
 | SEC-11 | Algorithm allowlist: asymmetric only, never `none` or HMAC, even when configured | RFC 8725 §3.1, OIDC Core §3.1.3.7 step 7 | `IdTokenValidationTest › refuses alg none, HMAC and algorithms not configured`; `› refuses an HS256 token signed with the client secret even when HS256 is configured` |
@@ -34,7 +34,7 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 
 ## Userinfo, linking and MFA
 
-| ID | Check | Spec | Tests |
+| ID | Check | Spec | Covering test |
 | --- | --- | --- | --- |
 | SEC-30 | Userinfo `sub` must equal the `id_token` `sub`; `id_token` claims win, and `amr`, `acr`, `auth_time`, `sid`, `azp`, `nbf` are never taken from userinfo | OIDC Core §5.3.4, §2 | `UserinfoTest › refuses a userinfo response for another subject`; `› never takes a trust-sensitive claim from userinfo, even when the id_token lacks it`; `MultiFactorTest › never trusts amr from the unsigned userinfo response` |
 | SEC-31 | The identity key is (issuer, `sub`); the email never signs anyone in | design §4 | `SsoLoginTest › signs in the user linked to (issuer, sub), whatever the email says`; `› refuses an unknown identity when auto-link and JIT are off, even with a matching email` |
@@ -46,7 +46,7 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 
 ## Session and logout
 
-| ID | Check | Spec | Tests |
+| ID | Check | Spec | Covering test |
 | --- | --- | --- | --- |
 | SEC-40 | The session is regenerated at login and gets no remember cookie by default | OWASP session fixation | `SsoLoginTest › regenerates the session and sets no remember cookie by default` |
 | SEC-41 | The stored `id_token` is encrypted; an unreadable one or an unknown payload version ends the session | standards review S6 | `IdentitySessionEncryptionTest › stores the id_token encrypted and reads it back in clear`; `› ends a session whose stored id_token cannot be decrypted`; `› ends the session when the pending identity no longer reads at promotion` |
@@ -61,7 +61,7 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 
 ## Server-side requests (SSRF)
 
-| ID | Check | Spec | Tests |
+| ID | Check | Spec | Covering test |
 | --- | --- | --- | --- |
 | SEC-50 | IdP calls are https only, never to private, loopback or metadata addresses (metadata stays blocked even with the private-host opt-in) | OWASP SSRF | `RemoteUrlGuardTest › refuses unsafe server urls`; `› refuses a public host name that resolves to a private address`; `› keeps cloud metadata blocked when private hosts are allowed`; `DiscoveryTest › refuses a discovery url on a private network without the opt-in` |
 | SEC-51 | Every IdP call is pinned to the checked address and follows no redirect | DNS rebinding | `RemoteUrlGuardTest › pins a public ipv4 literal to itself without resolving it`; `RemoteUrlGuardPinTest.php`; `DiscoveryTest › does not follow redirects`; `IdentityProviderHttpOutboundTest › does not follow redirects from the IdP` |

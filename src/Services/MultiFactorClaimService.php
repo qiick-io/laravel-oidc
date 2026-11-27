@@ -14,7 +14,7 @@ use Qiick\Oidc\Data\AuthenticatedIdentityData;
  * requested values, MFA is not proven at all, whatever `amr` says: the IdP
  * did not confirm the step-up, so the app's own second factor runs.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class MultiFactorClaimService
 {

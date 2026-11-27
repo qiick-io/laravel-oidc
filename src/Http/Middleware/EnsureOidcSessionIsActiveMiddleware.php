@@ -21,7 +21,7 @@ use Symfony\Component\HttpFoundation\Response;
  * token), invalidates the session and lets the request continue as a guest,
  * so the app's own `auth` middleware decides where to send the user.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class EnsureOidcSessionIsActiveMiddleware
 {

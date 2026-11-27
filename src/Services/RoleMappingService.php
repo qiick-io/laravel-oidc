@@ -25,7 +25,7 @@ use Qiick\Oidc\Data\AuthenticatedIdentityData;
  * A login without that organisation in `orgs` revokes the managed roles: the
  * user is no longer a member.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class RoleMappingService
 {

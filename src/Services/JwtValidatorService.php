@@ -36,7 +36,7 @@ use Throwable;
  *
  * Token-specific claims (`nonce`, `sub`, `events`, ...) are the caller's job.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class JwtValidatorService
 {
