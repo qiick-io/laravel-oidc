@@ -264,6 +264,11 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 
 ### Advanced configuration
 
+Older published configuration files and caches get the shipped defaults for
+missing keys, even when an entire nested section is empty. Lists and role
+maps are replaced as a whole. An invalid published value stops application
+boot with an error naming its `oidc.*` key.
+
 | Config key | Default | Meaning |
 | --- | --- | --- |
 | `oidc.allowed_domains` | `[]` | JIT only for these email domains; empty allows all. |
