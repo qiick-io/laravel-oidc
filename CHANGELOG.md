@@ -7,19 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.9] - 2026-11-27
+
 ### Upgrade notes
 
-- SSO preserves a user's self-enrolled Fortify TOTP even when `oidc.mfa.required` is off. IdP MFA requires explicit trust and configured claims. A required local challenge that cannot start now refuses and logs the SSO login (#42).
-- OIDC requires `qiick/laravel-outbound` v0.2.0-beta.4 or a compatible 1.x
-  release for its isolated IdP HTTP stack. Update products pinned to
-  Outbound 0.1 before upgrading OIDC.
+- **IdP MFA requires explicit trust.** Before deploying with `oidc.mfa.required` enabled, configure the exact signed `amr` or `acr` values the IdP emits, or make a usable local challenge available. See the [Signaculum upgrade example](./UPGRADING.md#100-beta9-from-100-beta8) and run `php artisan oidc:check` (#42).
+- Update `qiick/laravel-outbound` with OIDC. The public HTTP stack factory requires Outbound `v0.2.0-beta.4` or a compatible `1.x` release (#110). While using the Outbound beta on a stable-only Composer project, require the beta explicitly in the root project.
+- Databases migrated with beta.8 already have the schema beta.9 uses. If upgrading from an earlier beta, follow the [database steps in UPGRADING.md](./UPGRADING.md#from-any-beta-to-100-beta9-in-one-pass).
 
 ### Security
 
-- Back-channel logout limits rejected requests per sender IP, with a default of
-  600 per minute (`oidc.backchannel_logout.rate_limit`). Valid logout requests
-  are accepted throughout a burst. A repeated front-channel logout acknowledges
-  an active revocation once and creates a fresh revocation after expiry (#83).
+- SSO preserves a user's voluntarily enabled Fortify TOTP. Trust in IdP MFA is off by default, and a required local challenge refuses the login if it cannot start. A refused JIT login rolls back provisioning and database role changes (#42).
+- Back-channel logout limits rejected requests per sender IP while accepting valid signed requests during bursts. Front-channel notices deduplicate active revocations and refresh them after expiry, using the existing replay index (#83).
+
+### Added
+
+- `oidc:check` validates the active OIDC configuration for deployments and reports unusable MFA settings with a non-zero exit status.
+
+### Changed
+
+- The package declares the Illuminate components it imports directly (#33).
+- CI uses the shared compatibility matrix, checks Composer advisories and verifies erasure and per-class mutation coverage. Real-transport tests own their PHP server processes and fail when no tests are discovered.
+
+### Fixed
+
+- Older published configuration files and caches fill missing nested defaults, preserve explicit overrides and fail at boot with the key and expected type for invalid settings (#85).
+
+### Documentation
+
+- The public API inventory, security checklist and dated package decisions use the canonical paths and describe the package's logout and MFA trust boundaries (#81).
 
 ## [1.0.0-beta.8] - 2026-11-26
 
@@ -244,7 +260,8 @@ First public beta of `qiick/laravel-oidc`: a generic OpenID Connect client for L
 
 - PHP `^8.3`, Laravel 12 and 13 (`illuminate/support`, `illuminate/http`, `illuminate/cache`), `firebase/php-jwt` `^7.0`, `guzzlehttp/guzzle` `^7.8 || ^8.0` (Guzzle 8 allowed since #10; Laravel 13 accepts it, Laravel 12 stays on Guzzle 7).
 
-[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.8...HEAD
+[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.9...HEAD
+[1.0.0-beta.9]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.8...v1.0.0-beta.9
 [1.0.0-beta.8]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.7...v1.0.0-beta.8
 [1.0.0-beta.7]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.6...v1.0.0-beta.7
 [1.0.0-beta.6]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.5...v1.0.0-beta.6

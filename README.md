@@ -11,9 +11,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![PHP](https://img.shields.io/badge/PHP-%5E8.3-777BB4?logo=php&logoColor=white)](./composer.json)
 [![Laravel](https://img.shields.io/badge/Laravel-12%20%7C%2013-FF2D20?logo=laravel&logoColor=white)](./composer.json)
-[![Version](https://img.shields.io/badge/version-1.0.0--beta.8-orange.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.0.0--beta.9-orange.svg)](./CHANGELOG.md)
 
-> **Status:** `1.0.0-beta.8`. Pre-release: APIs and config may still change before `1.0.0`. See [CHANGELOG](./CHANGELOG.md) Upgrade notes. The public API that `1.0.0` freezes, and the deprecation policy after it, are in [`docs/PUBLIC-API.md`](./docs/PUBLIC-API.md).
+> **Status:** `1.0.0-beta.9`. Pre-release: APIs and config may still change before `1.0.0`. See [CHANGELOG](./CHANGELOG.md) Upgrade notes. The public API that `1.0.0` freezes, and the deprecation policy after it, are in [`docs/PUBLIC-API.md`](./docs/PUBLIC-API.md).
 
 `qiick/laravel-oidc` is an OpenID Connect client for Laravel apps: PKCE, `id_token` validation, logout, role mapping. It works with any standard identity provider: Keycloak, Zitadel, Authentik, Microsoft Entra ID, Google Workspace or Signaculum. It is the shared SSO login of the [qiick](https://qiick.io) apps and replaces the OIDC client that Externa and Excubia App each carry today.
 
