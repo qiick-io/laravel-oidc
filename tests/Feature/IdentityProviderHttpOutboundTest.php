@@ -26,6 +26,7 @@ function outboundIdpHttp(
 ): IdentityProviderHttpService {
     $outbound = OutboundHttpStackData::make(
         $resolver,
+        httpsOnly: false,
         limits: $limits ?? new OutboundHttpLimits,
         httpFactory: $fakeResponse === null ? app(HttpFactory::class) : FakeOutboundHttpFactory::fake($fakeResponse),
     );

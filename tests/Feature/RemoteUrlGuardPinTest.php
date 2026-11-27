@@ -255,7 +255,7 @@ function identityProviderHttpWithResolver(callable $resolve): IdentityProviderHt
     };
 
     $options = new UrlGuardOptions(httpsOnly: true, allowPrivateHosts: false);
-    $outbound = OutboundHttpStackData::make($resolver, httpFactory: app(HttpFactory::class));
+    $outbound = OutboundHttpStackData::make($resolver, httpsOnly: false, httpFactory: app(HttpFactory::class));
 
     return new IdentityProviderHttpService($outbound->client, $options, 5);
 }

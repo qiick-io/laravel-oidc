@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- OIDC requires `qiick/laravel-outbound` v0.2.0-beta.4 or a compatible 1.x
+  release for its isolated IdP HTTP stack. Update products pinned to
+  Outbound 0.1 before upgrading OIDC.
+
 ## [1.0.0-beta.8] - 2026-11-26
 
 ### Upgrade notes
