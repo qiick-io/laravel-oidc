@@ -2,6 +2,10 @@
 
 What an app has to do for each pre-release, newest first. The [CHANGELOG](./CHANGELOG.md) lists every change; this page says what to act on. The public API that `1.0.0` freezes is in [`docs/public-api.md`](./docs/public-api.md).
 
+## Unreleased
+
+When `oidc.enabled` is true, OIDC now schedules hourly logout revocation pruning. Remove any existing app schedule for `oidc:prune-logout-revocations`, or set `oidc.backchannel_logout.schedule` to `false` to keep managing it in the app. Apps that enable OIDC only through a custom provider repository while keeping `oidc.enabled` false should keep their app schedule. Use a shared scheduler cache on multi-server deployments. The command's new `--dry-run` option reports the number of eligible rows before you prune.
+
 ## From any beta to 1.0.0-beta.9, in one pass
 
 1. Update OIDC and Outbound together. If the app still uses the Outbound beta, require it explicitly in the root project.

@@ -8,37 +8,40 @@ use Illuminate\Console\Command;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
 
 /**
- * `php artisan oidc:prune-logout-revocations`: deletes rows whose write-time
- * `expires_at` has passed. That timestamp was fixed at insert as the max of
- * the configured lifetimes (`revocation_ttl` and `session.lifetime`) and the
- * token validation window; prune never recomputes those TTLs (M10).
+ * Prunes logout revocations once their recorded expiry and the current
+ * session retention floor have passed. A dry run counts the same rows.
  */
 final class PruneLogoutRevocationsCommand extends Command
 {
     protected $signature = 'oidc:prune-logout-revocations
-        {--chunk=1000 : Rows to delete per batch}';
+        {--chunk=1000 : Rows to delete per batch}
+        {--dry-run : Report how many rows would be deleted}';
 
     protected $description = 'Delete expired oidc_logout_revocations rows';
 
     public function handle(): int
     {
+        $expiredRevocations = (new OidcLogoutRevocation)->prunable();
+
+        if ($this->option('dry-run') === true) {
+            $eligibleCount = $expiredRevocations->count();
+            $this->info("Would delete {$eligibleCount} expired logout revocation(s).");
+
+            return self::SUCCESS;
+        }
+
         $chunkOption = $this->option('chunk');
         $chunkSize = is_numeric($chunkOption) ? max(1, (int) $chunkOption) : 1000;
         $deletedCount = 0;
-        // Safety floor: never prune a row younger than the max of the
-        // lifetimes configured now, even if a stale expires_at is already past.
-        $maximumConfiguredLifetimeSeconds = OidcLogoutRevocation::maximumConfiguredLifetimeSeconds();
 
         do {
-            $expiredIds = OidcLogoutRevocation::query()
-                ->where('expires_at', '<', now())
-                ->where('received_at', '<', now()->subSeconds($maximumConfiguredLifetimeSeconds))
+            $expiredIds = (clone $expiredRevocations)
                 ->orderBy('id')
                 ->limit($chunkSize)
                 ->pluck('id');
 
-            OidcLogoutRevocation::query()->whereIn('id', $expiredIds)->delete();
-            $deletedCount += $expiredIds->count();
+            // A front-channel notice can refresh an expired row while pruning is running.
+            $deletedCount += (clone $expiredRevocations)->whereKey($expiredIds->all())->toBase()->delete();
         } while ($expiredIds->count() === $chunkSize);
 
         $this->info("Deleted {$deletedCount} expired logout revocation(s).");

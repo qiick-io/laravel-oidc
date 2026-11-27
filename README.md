@@ -218,13 +218,11 @@ Rejected requests count toward `oidc.backchannel_logout.rate_limit` (600 per min
 
 **The table is the source of truth; the cache is only an accelerator.** A cache hit ends the session at once, but a cache miss is never read as "not revoked": only the table answers that, so `cache:clear`, eviction or a cache per server never loses a logout. If the table cannot be read, the session is treated as revoked (fail closed) and the error is logged.
 
-A logout row, including one with only a session ID, stays active for at least the Laravel `session.lifetime` in effect when it is written. The row can live longer to satisfy `oidc.backchannel_logout.revocation_ttl` or to cover the logout token's expiry plus the greater of 120 seconds and the JWT clock leeway. The application chooses its database retention ceiling through `oidc.backchannel_logout.max_retention_seconds`. It defaults to 30 days. Increase it only to cover longer sessions or replay windows required by the application. With `oidc.enabled=true`, the package refuses to boot if `session.lifetime` exceeds the ceiling. The runtime session check also ends OIDC sessions if their configured lifetime exceeds the ceiling, including when a custom provider repository enables SSO. The logout endpoint refuses tokens whose replay window exceeds the ceiling. Each cache entry expires within 24 hours, and the database can still revoke a session after its cache entry expires. Schedule the prune command hourly to remove rows after their retention window.
+A logout row, including one with only a session ID, stays active for at least the Laravel `session.lifetime` in effect when it is written. The row can live longer to satisfy `oidc.backchannel_logout.revocation_ttl` or to cover the logout token's expiry plus the greater of 120 seconds and the JWT clock leeway. The application chooses its database retention ceiling through `oidc.backchannel_logout.max_retention_seconds`. It defaults to 30 days. Increase it only to cover longer sessions or replay windows required by the application. With `oidc.enabled=true`, the package refuses to boot if `session.lifetime` exceeds the ceiling. The runtime session check also ends OIDC sessions if their configured lifetime exceeds the ceiling, including when a custom provider repository enables SSO. The logout endpoint refuses tokens whose replay window exceeds the ceiling. Each cache entry expires within 24 hours, and the database can still revoke a session after its cache entry expires.
 
-```php
-Schedule::command('oidc:prune-logout-revocations')->hourly();
-```
+When `oidc.enabled` is true, the package schedules `oidc:prune-logout-revocations` hourly with `onOneServer()` and `withoutOverlapping()`. Run Laravel's scheduler and configure a shared scheduler cache if you run it on several servers. Set `oidc.backchannel_logout.schedule` to `false` if your app schedules the command itself. Run `php artisan oidc:prune-logout-revocations --dry-run` to see how many rows are eligible.
 
-The model is also `MassPrunable`, so `model:prune` has the same effect. A missed run only leaves extra rows.
+The model is also `MassPrunable`, so `model:prune` uses the same eligibility rules. A missed run only leaves extra rows.
 
 Every stored logout, back-channel or front-channel, dispatches `OidcLogoutReceivedEvent` after its row is committed: `channel` (`backchannel` or `frontchannel`), `issuer`, `subject` (null for front-channel) and `sessionIdHash` (the SHA-256 of `sid`, or null). Listen to it to write the logout into the app's activity log; a refused or replayed logout dispatches nothing. A listener that throws is logged and does not fail the logout, which is already stored; a queued listener is still the better choice for slow work.
 
@@ -297,6 +295,7 @@ rejection limit when set on `oidc.backchannel_logout.rate_limit`.
 | `oidc.userinfo` | `true` | Merge the userinfo claims into the identity. |
 | `oidc.routes.enabled` / `prefix` / `middleware` | `true` / `auth/oidc` / `['web', 'guest']` | The package routes; `middleware` applies to redirect and callback. |
 | `oidc.routes.except` | `[]` | Names of package routes the app registers itself (for example `['oidc.callback']`); every other package route is still registered. |
+| `oidc.backchannel_logout.schedule` | `true` | Register hourly revocation pruning when `oidc.enabled` is true. |
 | `oidc.backchannel_logout.rate_limit` | `600` | Rejected requests per minute per sender IP. Null disables the limit. |
 | `oidc.backchannel_logout.revocation_ttl` | `null` | Optional minimum retention in seconds. Null uses the app's session lifetime. |
 | `oidc.backchannel_logout.max_retention_seconds` | `2592000` | App-selected database retention ceiling in seconds. It must cover `session.lifetime` converted from minutes and the longest accepted logout replay window. |
@@ -391,7 +390,7 @@ What the package defends against, and what it leaves to the app and the IdP. Dec
 - A compromised IdP or a stolen IdP signing key: the package trusts what the IdP signs.
 - The app's own login, second factor and session hardening (cookie flags, session lifetime, `APP_KEY` rotation with `APP_PREVIOUS_KEYS`).
 - Rate limiting of the login redirect and callback routes: add `throttle` to `oidc.routes.middleware` or the app's route group if needed.
-- Schedule `oidc:prune-logout-revocations` hourly so expired rows can be removed on the next successful run.
+- Run Laravel's scheduler so the hourly prune can remove expired logout revocations.
 - Clock drift beyond `oidc.id_token.leeway` and an `app.timezone` other than `UTC`.
 
 ## Migrating Externa and Excubia App

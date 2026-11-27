@@ -8,6 +8,7 @@ use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Events\Validated;
 use Illuminate\Cache\CacheManager;
 use Illuminate\Config\Repository as ConfigRepository;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Auth\Factory as AuthFactory;
 use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
@@ -271,9 +272,11 @@ final class OidcServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        $this->validateConfiguration($this->configurationDefaults(), $this->config($this->app)->array('oidc'), 'oidc');
+        $config = $this->config($this->app);
+        $this->validateConfiguration($this->configurationDefaults(), $config->array('oidc'), 'oidc');
+        $isOidcEnabled = $config->boolean('oidc.enabled');
 
-        if ($this->config($this->app)->boolean('oidc.enabled') && ! OidcLogoutRevocation::isSessionLifetimeCovered()) {
+        if ($isOidcEnabled && ! OidcLogoutRevocation::isSessionLifetimeCovered()) {
             throw new InvalidArgumentException(sprintf(
                 'session.lifetime exceeds oidc.backchannel_logout.max_retention_seconds (%d minutes versus %d seconds). Lower session.lifetime or raise the revocation retention ceiling.',
                 $this->config($this->app)->integer('session.lifetime'),
@@ -320,6 +323,15 @@ final class OidcServiceProvider extends ServiceProvider
                 ImportLegacySubjectsCommand::class,
                 PruneLogoutRevocationsCommand::class,
             ]);
+
+            if ($isOidcEnabled && $config->boolean('oidc.backchannel_logout.schedule')) {
+                $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+                    $schedule->command('oidc:prune-logout-revocations')
+                        ->hourly()
+                        ->onOneServer()
+                        ->withoutOverlapping();
+                });
+            }
 
             $this->publishesMigrations([
                 __DIR__.'/../../database/migrations' => database_path('migrations'),
