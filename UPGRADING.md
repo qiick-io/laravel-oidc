@@ -2,31 +2,30 @@
 
 What an app has to do for each pre-release, newest first. The [CHANGELOG](./CHANGELOG.md) lists every change; this page says what to act on. The public API that `1.0.0` freezes is in [`docs/public-api.md`](./docs/public-api.md).
 
-## From any beta to 1.0.0-beta.8, in one pass
+## From any beta to 1.0.0-beta.9, in one pass
 
-The betas edit the `create_…` migrations instead of adding forward ones (package migrations freeze only at the first stable tag), so the shortest safe path from any beta is:
+1. Update OIDC and Outbound together. If the app still uses the Outbound beta, require it explicitly in the root project.
 
-1. `composer require qiick/laravel-oidc:^1.0@beta` (it accepts `qiick/laravel-outbound:^0.1 || ^0.2`).
-2. An app that published the migrations (`vendor:publish --tag=oidc-migrations`) deletes the published package migrations and publishes them again.
-3. **Recreate the package tables.** Locally: `php artisan migrate:fresh --seed`. On a shared install: back up `user_identities`, recreate `user_identities` and `oidc_logout_revocations` from the package migrations, and restore the identity rows. A plain `migrate` does not pick up the edited create migrations. Before restoring, make sure no user holds two identities of one issuer: the unique `(user_id, issuer)` key refuses them.
-4. Keep your published `config/oidc.php`: nested keys it lacks now get the package default (the service provider merges them), and every key you set keeps your value.
-5. Register `{APP_URL}/auth/oidc/logged-out` at the IdP as a post-logout redirect URI and set `oidc.logout.redirect_to` (see "Post-logout return route" below).
-6. Point `oidc.cache.store` at a store every app server shares (database, redis): each login `state` is consumed there.
-7. Schedule `php artisan oidc:prune-logout-revocations` hourly.
-8. Run `php artisan oidc:configure` and fix every failure and warning it reports.
+   ```bash
+   composer require 'qiick/laravel-oidc:1.0.0-beta.9' 'qiick/laravel-outbound:^0.2.0-beta.4' --with-all-dependencies
+   ```
 
-Then read the sections of the versions you skip: they list the behaviour changes to announce and the code an app may have to change.
+   A compatible Outbound `^1.0` release also satisfies OIDC. Follow Outbound's upgrade notes for any webhook tables you use.
+2. If upgrading from beta.7 or earlier, bring the two package tables up to the beta.8 schema. If you published the migrations, back up the old package copies, remove them and run `vendor:publish --tag=oidc-migrations`. Locally, use `php artisan migrate:fresh --seed` only on a disposable database. On a shared installation, back up `user_identities`, recreate `user_identities` and `oidc_logout_revocations` from the package migrations, then restore identities and expire OIDC sessions. A user can keep one identity per issuer. Review the linked identities for duplicates before restoring them. Databases migrated with beta.8 already have the required schema.
+3. Keep your published `config/oidc.php`. Missing keys get the shipped defaults. Boot reports the key and expected type for an invalid value.
+4. Apply the MFA settings below before enabling SSO on the upgraded app.
+5. Register `{APP_URL}/auth/oidc/logged-out` at the IdP as a post-logout redirect URI and set `oidc.logout.redirect_to`.
+6. Point `oidc.cache.store` at a store every app server shares, such as a database or Redis, to consume each login state once.
+7. Keep `oidc:prune-logout-revocations` scheduled hourly with Laravel's `onOneServer()` on a shared scheduler cache.
+8. Run `php artisan oidc:check` and exercise a real login and logout before switching users over.
 
-## Unreleased
+Read the notes for each beta you skipped for changes that affect your app.
 
-**Before deploying with `oidc.mfa.required = true`:** Users who rely on MFA at
-the IdP and have no local second factor will be refused until you explicitly
-trust the IdP's proof. With `oidc.only = true`, an invalid MFA setup can lock
-out everyone except a working local break-glass account. Verify that account
-before the upgrade.
+## 1.0.0-beta.9 (from 1.0.0-beta.8)
 
-For an installation already relying on Signaculum for MFA, set these keys in
-the `mfa` section of `config/oidc.php` before deployment:
+**Before deploying with `oidc.mfa.required = true`, verify the second-factor setup.** Users who rely on IdP MFA and have no local second factor need explicit provider trust. With `oidc.only = true`, verify a working local break-glass login before the upgrade.
+
+For Signaculum installations that rely on MFA at the IdP, set these values in the `mfa` section of the published `config/oidc.php`.
 
 ```php
 'mfa' => [
@@ -34,25 +33,13 @@ the `mfa` section of `config/oidc.php` before deployment:
     'trust_provider' => true,
     'amr_values' => ['mfa'],
     'acr_values' => ['urn:qiick:loa:mfa'],
-    // Keep the other MFA settings from your published config.
+    // Keep your other published MFA settings.
 ],
 ```
 
-For another IdP, confirm the exact signed `amr` or `acr` values it emits for
-MFA before filling the accepted lists. If you require local MFA, clear the
-provider lists and enroll users in Fortify or bind your own working challenge.
-`php artisan oidc:check` exits non-zero when the published lists are ignored or
-required MFA has no usable provider proof or Fortify enrollment. The check
-shares the setup diagnostics with `oidc:configure`. Exercise a real SSO login
-before switching users over, particularly with a custom challenge contract.
+For another IdP, verify its signed claims before setting the accepted values. For local-only MFA, clear both provider allowlists and enroll users or bind a working second-factor adapter. `oidc:check` shares setup diagnostics with `oidc:configure` and exits non-zero for ignored lists or required MFA without a usable configured path. Check custom adapters with a real login. A required challenge that returns `null` refuses the login and rolls back JIT provisioning and role changes on the provisioning connection.
 
-- When a user needs local MFA, a `SecondFactorChallengeContract::challenge()`
-  result of `null` refuses and logs the login. A refused JIT login rolls back
-  the new user, identity and role changes on the provisioning connection.
-- Update `qiick/laravel-outbound` and the application lockfile. OIDC requires
-  `^0.2.0-beta.4 || ^1.0` for its isolated IdP HTTP stack. If your
-  application pins Outbound 0.1, update that constraint and follow
-  Outbound's upgrade notes for any webhook tables you use.
+Back-channel logout counts rejected requests against `oidc.backchannel_logout.rate_limit` (600 per sender IP per minute by default, `null` to disable). Configure Laravel's `TrustProxies` if OIDC sits behind a reverse proxy. Beta.9 uses the replay index and schema shipped with beta.8.
 
 ## 1.0.0-beta.8 (from 1.0.0-beta.7)
 
