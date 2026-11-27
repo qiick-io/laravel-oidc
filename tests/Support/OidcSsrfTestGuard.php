@@ -9,6 +9,7 @@ use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Factories\OidcOutboundStackFactory;
 use Qiick\Oidc\Services\IdentityProviderHttpService;
 use Qiick\Outbound\Contracts\HostResolver;
+use Qiick\Outbound\Http\OutboundHttpStackData;
 use Qiick\Outbound\Ssrf\RemoteUrlGuard;
 use Qiick\Outbound\Ssrf\UnsafeUrl;
 use Qiick\Outbound\Ssrf\UrlGuardOptions;
@@ -78,7 +79,7 @@ final class OidcSsrfTestGuard
                 }
             });
 
-        $this->guard = new RemoteUrlGuard($resolver, allowPrivateHosts: $isPrivateHostAllowed, httpsOnly: false);
+        $this->guard = OutboundHttpStackData::make($resolver, allowPrivateHosts: $isPrivateHostAllowed, httpsOnly: false)->guard;
         $this->options = new UrlGuardOptions(
             httpsOnly: ! $isPrivateHostAllowed,
             allowPrivateHosts: $isPrivateHostAllowed,
