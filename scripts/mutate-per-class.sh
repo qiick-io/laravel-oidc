@@ -70,6 +70,7 @@ classes=(
   'Qiick\Oidc\Services\UserLinkingService'
   'Qiick\Oidc\Services\UserinfoService'
   'Qiick\Oidc\Testing\FakeIdentityProvider'
+  'Qiick\Oidc\Enums\LoginRefusalReasonEnum'
   'Qiick\Oidc\Erasure\ErasureReport'
   'Qiick\Oidc\Erasure\OidcEraser'
 )
@@ -83,12 +84,18 @@ for index in "${!classes[@]}"; do
 
   class="${classes[$index]}"
   class_paths="$paths"
+  class_options=(--mutate --class="${class}" --min="${min}")
   if [[ -z "${MUTATE_PATHS:-}" && "$class" == Qiick\\Oidc\\Erasure\\* ]]; then
     class_paths="tests/Feature/OidcEraserTest.php tests/Erasure"
   fi
+  if [[ "$class" == 'Qiick\Oidc\Enums\LoginRefusalReasonEnum' ]]; then
+    # Pest currently produces zero mutants for the enum's literal match arms.
+    # The feature suite checks every case, and any future mutants still need 95%.
+    class_options+=(--ignore-min-score-on-zero-mutations)
+  fi
   echo "==> mutate ${class} (min=${min}, shard ${shard}/${shards})"
   # shellcheck disable=SC2086
-  if ! vendor/bin/pest --mutate --class="${class}" --min="${min}" ${class_paths} "$@"; then
+  if ! vendor/bin/pest "${class_options[@]}" ${class_paths} "$@"; then
     status=1
   fi
 done
