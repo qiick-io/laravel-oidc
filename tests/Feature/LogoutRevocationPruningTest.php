@@ -58,17 +58,25 @@ it('keeps an expired row younger than the longest configured lifetime', function
     expect(OidcLogoutRevocation::query()->count())->toBe(1);
 });
 
-it('reports eligible rows without deleting any rows in a dry run', function (): void {
-    revocationRow('expired', '2026-11-24 08:00:00', '2026-11-24 10:00:00');
+it('reports the same count as real pruning without deleting any rows in a dry run', function (): void {
+    revocationRow('expired-first', '2026-11-24 08:00:00', '2026-11-24 10:00:00');
+    revocationRow('expired-second', '2026-11-24 09:00:00', '2026-11-24 11:00:00');
     revocationRow('recent', '2026-11-24 11:00:00', '2026-11-24 11:30:00');
     revocationRow('live', '2026-11-24 09:00:00', '2026-11-24 13:00:00');
 
     $this->artisan('oidc:prune-logout-revocations', ['--chunk' => 1, '--dry-run' => true])
-        ->expectsOutput('Would delete 1 expired logout revocation(s).')
+        ->expectsOutput('Would delete 2 expired logout revocation(s).')
         ->assertSuccessful();
 
     expect(OidcLogoutRevocation::query()->orderBy('id')->pluck('jti')->all())
-        ->toBe(['expired', 'recent', 'live']);
+        ->toBe(['expired-first', 'expired-second', 'recent', 'live']);
+
+    $this->artisan('oidc:prune-logout-revocations', ['--chunk' => 1])
+        ->expectsOutput('Deleted 2 expired logout revocation(s).')
+        ->assertSuccessful();
+
+    expect(OidcLogoutRevocation::query()->orderBy('id')->pluck('jti')->all())
+        ->toBe(['recent', 'live']);
 });
 
 it('keeps a revocation refreshed after the batch selected it', function (): void {
