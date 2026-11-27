@@ -8,7 +8,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 
 /**
  * The app user of the test suite, on Testbench's default `users` table.
- * `is_active` is added by the tests that need it.
+ * The test schema includes the host application's `is_active` flag.
  */
 class User extends Authenticatable
 {

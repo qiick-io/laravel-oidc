@@ -5,37 +5,34 @@ declare(strict_types=1);
 use GuzzleHttp\Promise\Create as PromiseCreate;
 use GuzzleHttp\Psr7\Response as Psr7Response;
 use Illuminate\Http\Client\Factory as HttpFactory;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
-use Psr\Http\Message\RequestInterface;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Services\IdentityProviderHttpService;
 use Qiick\Outbound\Http\OutboundHttpException;
 use Qiick\Outbound\Http\OutboundHttpLimits;
-use Qiick\Outbound\Http\PinnedHttpClient;
-use Qiick\Outbound\Ssrf\RemoteUrlGuard;
+use Qiick\Outbound\Http\OutboundHttpStackData;
 use Qiick\Outbound\Ssrf\UrlGuardOptions;
 use Qiick\Outbound\Testing\FakeHostResolver;
+use Qiick\Outbound\Testing\FakeOutboundHttpFactory;
 
-/**
- * @param  callable|null  $transferHandler
- */
 function outboundIdpHttp(
     FakeHostResolver $resolver = new FakeHostResolver,
     int $maxResponseBytes = 1_048_576,
-    mixed $transferHandler = null,
+    ?Closure $fakeResponse = null,
     int $timeoutSeconds = 5,
     int $connectTimeoutSeconds = 10,
     ?OutboundHttpLimits $limits = null,
 ): IdentityProviderHttpService {
-    $guard = new RemoteUrlGuard($resolver, allowPrivateHosts: false, httpsOnly: false);
+    $outbound = OutboundHttpStackData::make(
+        $resolver,
+        httpsOnly: false,
+        limits: $limits ?? new OutboundHttpLimits,
+        httpFactory: $fakeResponse === null ? app(HttpFactory::class) : FakeOutboundHttpFactory::fake($fakeResponse),
+    );
 
     return new IdentityProviderHttpService(
-        new PinnedHttpClient(
-            app(HttpFactory::class),
-            $guard,
-            $limits ?? new OutboundHttpLimits,
-            transferHandler: $transferHandler,
-        ),
+        $outbound->client,
         new UrlGuardOptions(httpsOnly: true, allowPrivateHosts: false),
         timeoutSeconds: $timeoutSeconds,
         connectTimeoutSeconds: $connectTimeoutSeconds,
@@ -80,7 +77,7 @@ it('maps every UnsafeUrl reason to the public OIDC exception wording', function 
 it('includes a sanitised OAuth error code on HTTP failures', function (): void {
     $http = outboundIdpHttp(
         new FakeHostResolver(answers: ['idp.example.com' => ['93.184.216.34']]),
-        transferHandler: function () {
+        fakeResponse: function () {
             return PromiseCreate::promiseFor(new Psr7Response(
                 400,
                 ['Content-Type' => 'application/json'],
@@ -96,7 +93,7 @@ it('includes a sanitised OAuth error code on HTTP failures', function (): void {
 it('does not echo a non-string OAuth error field', function (): void {
     $http = outboundIdpHttp(
         new FakeHostResolver(answers: ['idp.example.com' => ['93.184.216.34']]),
-        transferHandler: function () {
+        fakeResponse: function () {
             return PromiseCreate::promiseFor(new Psr7Response(
                 500,
                 ['Content-Type' => 'application/json'],
@@ -114,7 +111,7 @@ it('refuses an oversized JSON response through the size limit', function (): voi
     $http = outboundIdpHttp(
         new FakeHostResolver(answers: ['idp.example.com' => ['93.184.216.34']]),
         maxResponseBytes: 32,
-        transferHandler: function (RequestInterface $request, array $options) {
+        fakeResponse: function () {
             return PromiseCreate::promiseFor(new Psr7Response(
                 200,
                 ['Content-Type' => 'application/json'],
@@ -143,8 +140,8 @@ it('posts form bodies and returns a JSON object', function (): void {
 
     $http = outboundIdpHttp(
         new FakeHostResolver(answers: ['idp.example.com' => ['93.184.216.34']]),
-        transferHandler: function (RequestInterface $request, array $options) use (&$seenBody) {
-            $seenBody = (string) $request->getBody();
+        fakeResponse: function (Request $request) use (&$seenBody) {
+            $seenBody = $request->body();
 
             return PromiseCreate::promiseFor(new Psr7Response(
                 200,
@@ -163,7 +160,7 @@ it('posts form bodies and returns a JSON object', function (): void {
 it('wraps OutboundHttpException as a connection error', function (): void {
     $http = outboundIdpHttp(
         new FakeHostResolver(answers: ['idp.example.com' => ['93.184.216.34']]),
-        transferHandler: function () {
+        fakeResponse: function () {
             throw new OutboundHttpException('Response exceeds max_response_bytes.');
         },
     );
@@ -175,7 +172,7 @@ it('wraps OutboundHttpException as a connection error', function (): void {
 it('refuses a non-object JSON payload', function (): void {
     $http = outboundIdpHttp(
         new FakeHostResolver(answers: ['idp.example.com' => ['93.184.216.34']]),
-        transferHandler: function () {
+        fakeResponse: function () {
             return PromiseCreate::promiseFor(new Psr7Response(200, ['Content-Type' => 'application/json'], '["list"]'));
         },
     );
@@ -191,7 +188,7 @@ it('maps timeout 0 onto the literal 86400 ceiling, not only the named constant',
 
     $http = outboundIdpHttp(
         new FakeHostResolver(answers: ['idp.example.com' => ['93.184.216.34']]),
-        transferHandler: function (RequestInterface $request, array $options) use (&$seenTimeout) {
+        fakeResponse: function (Request $request, array $options) use (&$seenTimeout) {
             $seenTimeout = $options['timeout'] ?? null;
 
             return PromiseCreate::promiseFor(new Psr7Response(200, ['Content-Type' => 'application/json'], '{"ok":true}'));

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Schedule logout revocation pruning hourly when OIDC is enabled, and support `--dry-run` to preview eligible rows.
+
+## [1.0.0-beta.9] - 2026-11-27
+
+### Upgrade notes
+
+- **IdP MFA requires explicit trust.** Before deploying with `oidc.mfa.required` enabled, configure the exact signed `amr` or `acr` values the IdP emits, or make a usable local challenge available. See the [Signaculum upgrade example](./UPGRADING.md#100-beta9-from-100-beta8) and run `php artisan oidc:check` (#42).
+- Update `qiick/laravel-outbound` with OIDC. The public HTTP stack factory requires Outbound `v0.2.0-beta.4` or a compatible `1.x` release (#110). While using the Outbound beta on a stable-only Composer project, require the beta explicitly in the root project.
+- Databases migrated with beta.8 already have the schema beta.9 uses. If upgrading from an earlier beta, follow the [database steps in UPGRADING.md](./UPGRADING.md#from-any-beta-to-100-beta9-in-one-pass).
+
+### Security
+
+- SSO preserves a user's voluntarily enabled Fortify TOTP. Trust in IdP MFA is off by default, and a required local challenge refuses the login if it cannot start. A refused JIT login rolls back provisioning and database role changes (#42).
+- Back-channel logout limits rejected requests per sender IP while accepting valid signed requests during bursts. Front-channel notices deduplicate active revocations and refresh them after expiry, using the existing replay index (#83).
+
+### Added
+
+- `oidc:check` validates the active OIDC configuration for deployments and reports unusable MFA settings with a non-zero exit status.
+
+### Changed
+
+- The package declares the Illuminate components it imports directly (#33).
+- CI uses the shared compatibility matrix, checks Composer advisories and verifies erasure and per-class mutation coverage. Real-transport tests own their PHP server processes and fail when no tests are discovered.
+
+### Fixed
+
+- Older published configuration files and caches fill missing nested defaults, preserve explicit overrides and fail at boot with the key and expected type for invalid settings (#85).
+
+### Documentation
+
+- The public API inventory, security checklist and dated package decisions use the canonical paths and describe the package's logout and MFA trust boundaries (#81).
+
 ## [1.0.0-beta.8] - 2026-11-26
 
 ### Upgrade notes
@@ -99,9 +133,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `UPGRADING.md` covers every beta: a one-pass path from any beta to beta.7, then what each version from beta.1 on asks of an app.
 - README: a threat model section (what the package defends against and what it leaves to the app and the IdP) and the list of fields for an app's settings UI, basic and advanced, with where each one is read (standards review S10).
-- `docs/PUBLIC-API.md` lists `oidc.mfa.max_age`, `oidc.mfa.require_requested_acr`, `oidc.logout.redirect_to` and the `oidc.logged-out` route; `JwksService`, `JwtValidatorService`, `BackChannelLogoutService`, `IdentitySessionService`, `IdentitySessionData`, `MultiFactorClaimService` and `Models\Concerns\GuardsIdByDefaultTrait` are marked `@internal`; an architecture test fails when a class is neither listed nor internal; the README links the page.
-- `docs/SECURITY-CHECKLIST.md`: every security check with a stable ID (`SEC-01` …), the spec section behind it and the tests that prove a bad value is refused.
-- `docs/PUBLIC-API.md` lists the public API that 1.0.0 freezes (classes, config keys, env vars, routes, commands, events, tables) and the deprecation policy; internal classes carry `@internal`.
+- `docs/public-api.md` lists `oidc.mfa.max_age`, `oidc.mfa.require_requested_acr`, `oidc.logout.redirect_to` and the `oidc.logged-out` route; `JwksService`, `JwtValidatorService`, `BackChannelLogoutService`, `IdentitySessionService`, `IdentitySessionData`, `MultiFactorClaimService` and `Models\Concerns\GuardsIdByDefaultTrait` are marked `@internal`; an architecture test fails when a class is neither listed nor internal; the README links the page.
+- `docs/security-checklist.md`: every security check with a stable ID (`SEC-01` …), the spec section behind it and the tests that prove a bad value is refused.
+- `docs/public-api.md` lists the public API that 1.0.0 freezes (classes, config keys, env vars, routes, commands, events, tables) and the deprecation policy; internal classes carry `@internal`.
 - README brought up to beta.6: version, the `oidc_logout_revocations` table as the source of truth with the prune schedule, front-channel logout setup, `oidc.routes.except`, and the supported `id_token` algorithms.
 - Dependency register `docs/dependencies.md`: one row per runtime `composer.json` `require` entry with constraint rationale, usage, maintainer, license, known risk and an in-package exit plan.
 
@@ -230,7 +264,8 @@ First public beta of `qiick/laravel-oidc`: a generic OpenID Connect client for L
 
 - PHP `^8.3`, Laravel 12 and 13 (`illuminate/support`, `illuminate/http`, `illuminate/cache`), `firebase/php-jwt` `^7.0`, `guzzlehttp/guzzle` `^7.8 || ^8.0` (Guzzle 8 allowed since #10; Laravel 13 accepts it, Laravel 12 stays on Guzzle 7).
 
-[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.8...HEAD
+[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.9...HEAD
+[1.0.0-beta.9]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.8...v1.0.0-beta.9
 [1.0.0-beta.8]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.7...v1.0.0-beta.8
 [1.0.0-beta.7]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.6...v1.0.0-beta.7
 [1.0.0-beta.6]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.5...v1.0.0-beta.6

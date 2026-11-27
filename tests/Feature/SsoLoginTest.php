@@ -3,10 +3,8 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Events\QueryExecuted;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
@@ -188,7 +186,6 @@ it('signs in the loser of two concurrent first logins of the same sub as the lin
 ]);
 
 it('still refuses an inactive user who won the race', function (): void {
-    Schema::table('users', fn (Blueprint $table) => $table->boolean('is_active')->default(true));
     $user = localUser('sso.user@example.com', ['is_active' => false]);
 
     afterIdentityLookup(fn () => DB::table('user_identities')->insert([
@@ -289,7 +286,6 @@ it('uses the app provisioning when bound', function (): void {
 });
 
 it('refuses inactive users', function (array $configOverrides, Closure $prepareUser): void {
-    Schema::table('users', fn (Blueprint $table) => $table->boolean('is_active')->default(true));
     $prepareUser();
 
     assertRefused(ssoLogin($this, fakeProvider(['users.active_column' => 'is_active', ...$configOverrides])), LoginRefusalReasonEnum::InactiveUser);

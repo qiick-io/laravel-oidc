@@ -170,24 +170,23 @@ return [
     ],
 
     /*
-     * Second factor. When the app requires 2FA for a user, an SSO login counts
-     * only if the IdP says MFA happened: an `amr` value (RFC 8176) in
-     * `amr_values`, or an `acr` in `acr_values`. Otherwise the app runs its
-     * own TOTP or passkey challenge after the callback (Laravel Fortify is
-     * supported out of the box). Apps bind SecondFactorChallengeContract to
-     * read their own "2FA required" setting; `required` is the default.
+     * The default preserves a user's self-enrolled Laravel Fortify TOTP.
+     * Enable provider trust and list its accepted signed `amr` (RFC 8176) or
+     * `acr` values to let its MFA satisfy the app's second factor.
      */
     'mfa' => [
 
         'required' => false,
 
-        'amr_values' => ['mfa'],
+        'trust_provider' => false,
+
+        'amr_values' => [],
 
         /*
          * Accepted `acr` values that count as MFA (Signaculum: `urn:qiick:loa:mfa`).
          * Password-only Signaculum value is `urn:qiick:loa:pwd` and is not listed here.
          */
-        'acr_values' => ['urn:qiick:loa:mfa'],
+        'acr_values' => [],
 
         /*
          * Sent as `acr_values` on the authorization request to ask the IdP
@@ -270,6 +269,12 @@ return [
     ],
 
     'backchannel_logout' => [
+
+        /* Register hourly revocation pruning when OIDC is enabled. */
+        'schedule' => true,
+
+        /* Rejected requests per minute per sender IP. Null disables the limit. */
+        'rate_limit' => 600,
 
         /*
          * How long a back-channel logout is remembered, in seconds. It must

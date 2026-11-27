@@ -2,14 +2,12 @@
 
 declare(strict_types=1);
 
-use Illuminate\Http\Client\Factory as HttpFactory;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Services\IdentityProviderHttpService;
 use Qiick\Outbound\Http\HttpRequestOptions;
-use Qiick\Outbound\Http\OutboundHttpLimits;
+use Qiick\Outbound\Http\OutboundHttpStackData;
 use Qiick\Outbound\Http\OutboundRequest;
 use Qiick\Outbound\Http\PinnedHttpClient;
-use Qiick\Outbound\Ssrf\RemoteUrlGuard;
 use Qiick\Outbound\Ssrf\UrlGuardOptions;
 use Qiick\Outbound\Testing\FakeHostResolver;
 
@@ -26,8 +24,8 @@ final class OidcRealTransportServer
 
     public int $port;
 
-    /** @var resource */
-    public $process;
+    /** @var resource|null */
+    public $process = null;
 
     public PinnedHttpClient $client;
 
@@ -38,27 +36,28 @@ final class OidcRealTransportServer
         $this->captureDir = sys_get_temp_dir().'/oidc-rt-'.bin2hex(random_bytes(8));
         mkdir($this->captureDir, 0700, true);
 
-        $router = dirname(__DIR__, 2).'/Support/real-transport-server.php';
-        $this->process = $this->startPhpServer($router);
-        $this->waitUntilAcceptingConnections();
+        try {
+            $router = dirname(__DIR__, 2).'/Support/real-transport-server.php';
+            $this->process = $this->startPhpServer($router);
+            $this->waitUntilAcceptingConnections();
 
-        $resolver = (new FakeHostResolver)
-            ->with('app.test', [$this->pinAddress])
-            ->with('evil.test', [$this->pinAddress]);
+            $resolver = (new FakeHostResolver)
+                ->with('app.test', [$this->pinAddress])
+                ->with('evil.test', [$this->pinAddress]);
 
-        $guard = new RemoteUrlGuard($resolver, allowPrivateHosts: true, httpsOnly: false);
-        $this->client = new PinnedHttpClient(
-            new HttpFactory,
-            $guard,
-            new OutboundHttpLimits,
-        );
-        $this->identityProviderHttp = new IdentityProviderHttpService(
-            $this->client,
-            new UrlGuardOptions(httpsOnly: false, allowPrivateHosts: true),
-            timeoutSeconds: 5,
-            connectTimeoutSeconds: 2,
-            maxResponseBytes: $maxResponseBytes ?? 1_048_576,
-        );
+            $this->client = OutboundHttpStackData::make($resolver, allowPrivateHosts: true, httpsOnly: false)->client;
+            $this->identityProviderHttp = new IdentityProviderHttpService(
+                $this->client,
+                new UrlGuardOptions(httpsOnly: false, allowPrivateHosts: true),
+                timeoutSeconds: 5,
+                connectTimeoutSeconds: 2,
+                maxResponseBytes: $maxResponseBytes ?? 1_048_576,
+            );
+        } catch (Throwable $exception) {
+            $this->stop();
+
+            throw $exception;
+        }
     }
 
     /**
@@ -71,30 +70,27 @@ final class OidcRealTransportServer
             1 => ['file', $this->captureDir.'/server.out', 'w'],
             2 => ['file', $this->captureDir.'/server.err', 'w'],
         ];
+        $environment = getenv();
+        $environment['REAL_TRANSPORT_CAPTURE_DIR'] = $this->captureDir;
+        // One native PHP process per handle, even if the caller enables workers.
+        unset($environment['PHP_CLI_SERVER_WORKERS']);
 
         for ($attempt = 0; $attempt < 20; $attempt++) {
             $port = $this->allocateFreePort();
-            $cmd = sprintf(
-                'REAL_TRANSPORT_CAPTURE_DIR=%s %s -S %s:%d %s',
-                escapeshellarg($this->captureDir),
-                escapeshellarg(PHP_BINARY),
-                $this->pinAddress,
-                $port,
-                escapeshellarg($router),
-            );
-
+            $command = [PHP_BINARY, '-S', $this->pinAddress.':'.$port, $router];
             $pipes = [];
-            $process = proc_open($cmd, $descriptors, $pipes);
+            $process = proc_open($command, $descriptors, $pipes, env_vars: $environment);
 
             if (! is_resource($process)) {
                 throw new RuntimeException('Failed to start php -S for real-transport tests.');
             }
 
+            fclose($pipes[0]);
             usleep(30_000);
             $status = proc_get_status($process);
-            $err = @file_get_contents($this->captureDir.'/server.err') ?: '';
+            $serverError = @file_get_contents($this->captureDir.'/server.err') ?: '';
 
-            if (($status['running'] ?? false) === true && ! str_contains($err, 'Address already in use')) {
+            if (($status['running'] ?? false) === true && ! str_contains($serverError, 'Address already in use')) {
                 $this->port = $port;
 
                 return $process;
@@ -181,6 +177,7 @@ final class OidcRealTransportServer
         if (is_resource($this->process)) {
             proc_terminate($this->process);
             proc_close($this->process);
+            $this->process = null;
         }
 
         foreach (glob($this->captureDir.'/*') ?: [] as $file) {
@@ -222,6 +219,27 @@ final class OidcRealTransportServer
         return 'http://'.$host.':'.$this->port.$path;
     }
 }
+
+it('owns and stops the PHP server used by the real-transport fixture', function (): void {
+    $server = new OidcRealTransportServer;
+
+    try {
+        $status = proc_get_status($server->process);
+
+        expect($status['command'])->toBe(PHP_BINARY)
+            ->and($status['running'])->toBeTrue();
+    } finally {
+        $server->stop();
+    }
+
+    $connection = @fsockopen($server->pinAddress, $server->port, $errorCode, $errorMessage, 0.25);
+
+    if (is_resource($connection)) {
+        fclose($connection);
+    }
+
+    expect($connection)->toBeFalse();
+})->group('real-transport');
 
 it('pins IdentityProviderHttpService through real curl CONNECT_TO', function (): void {
     $server = new OidcRealTransportServer;

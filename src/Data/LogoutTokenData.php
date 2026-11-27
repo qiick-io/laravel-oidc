@@ -11,16 +11,20 @@ namespace Qiick\Oidc\Data;
  * session ends, with `sub` alone every session of the user ends. Trailing
  * fields feed the durable `oidc_logout_revocations` row (M10).
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class LogoutTokenData
 {
+    public const string BackChannel = 'backchannel';
+
+    public const string FrontChannel = 'frontchannel';
+
     public function __construct(
         public string $issuer,
         public ?string $subject,
         public ?string $sessionId,
         public ?string $tokenId = null,
         public int|float|null $expiresAt = null,
-        public string $channel = 'backchannel',
+        public string $channel = self::BackChannel,
     ) {}
 }

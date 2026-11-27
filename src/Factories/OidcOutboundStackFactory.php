@@ -12,9 +12,8 @@ use Qiick\Oidc\Services\IdentityProviderHttpService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
 use Qiick\Outbound\Contracts\HostResolver;
 use Qiick\Outbound\Http\OutboundHttpLimits;
-use Qiick\Outbound\Http\PinnedHttpClient;
+use Qiick\Outbound\Http\OutboundHttpStackData;
 use Qiick\Outbound\Laravel\OutboundServiceProvider;
-use Qiick\Outbound\Ssrf\RemoteUrlGuard;
 use Qiick\Outbound\Ssrf\UrlGuardOptions;
 
 /**
@@ -25,7 +24,7 @@ use Qiick\Outbound\Ssrf\UrlGuardOptions;
  * {@see FakeIdentityProvider} still intercept IdP calls. DNS is swapped through
  * {@see HostResolverBinding} only.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class OidcOutboundStackFactory
 {
@@ -55,12 +54,6 @@ final readonly class OidcOutboundStackFactory
         $timeoutSeconds = IdentityProviderHttpService::resolveTimeoutSeconds($this->config->integer('oidc.http.timeout'));
         $connectTimeoutSeconds = IdentityProviderHttpService::resolveTimeoutSeconds($this->config->integer('oidc.http.connect_timeout'));
 
-        // Outbound 0.2 lets request options narrow the guard's private-host policy.
-        $remoteUrlGuard = new RemoteUrlGuard(
-            hostResolver: $this->hostResolver,
-            allowPrivateHosts: $isPrivateHostAllowed,
-            httpsOnly: false,
-        );
         $urlGuardOptions = new UrlGuardOptions(
             httpsOnly: ! $isPrivateHostAllowed,
             allowPrivateHosts: $isPrivateHostAllowed,
@@ -70,12 +63,14 @@ final readonly class OidcOutboundStackFactory
             maxConnectTimeoutSeconds: max(30, $connectTimeoutSeconds),
             totalDeadlineSeconds: max(30, $timeoutSeconds * 3),
         );
-        $pinnedHttp = new PinnedHttpClient(
-            $this->http,
-            $remoteUrlGuard,
-            $httpLimits,
+        $outbound = OutboundHttpStackData::make(
+            $this->hostResolver,
+            allowPrivateHosts: $isPrivateHostAllowed,
+            httpsOnly: false,
+            limits: $httpLimits,
+            httpFactory: $this->http,
         );
 
-        return new OidcOutboundStackData($pinnedHttp, $urlGuardOptions, $remoteUrlGuard, $httpLimits);
+        return new OidcOutboundStackData($outbound->client, $urlGuardOptions, $outbound->guard, $httpLimits);
     }
 }

@@ -1,6 +1,6 @@
 # Public API and deprecation policy
 
-This is the public API of `qiick/laravel-oidc` that `1.0.0` freezes (packages 1.0 checklist, items 14 and 16). Everything listed here follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and the deprecation policy below. Everything else is internal: a class marked `@internal` can change or disappear in any release, and apps must not construct, extend or call it. An architecture test (`tests/Arch/PackageArchitectureTest.php`) fails when a class in `src/` is neither listed here nor marked `@internal`.
+This is the public API of `qiick/laravel-oidc` that `1.0.0` freezes (packages 1.0 checklist, items 14 and 16). Everything listed here follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and the deprecation policy below. A class marked `@internal` can change or disappear in any release. `tests/Arch/PublicApiTest.php` checks class classification, config keys, environment variables and named routes against this page.
 
 ## Classes
 
@@ -36,8 +36,8 @@ An app may use these classes as described in the README. "Construct" means the a
 | `Erasure\ErasureReport` | read by apps; `changed()`, `toArray()` |
 | `Erasure\OrganisationScopeUnsupportedException` | caught when an app requests organisation-scoped OIDC erasure |
 | `Events\SubjectErasedEvent` | listened to by apps; carries the erasure report |
-| `Events\OidcIdentityLinkedEvent`, `OidcLoginSucceededEvent`, `OidcUserProvisionedEvent`, `OidcLogoutReceivedEvent` | listened to by apps |
-| `Exceptions\OidcException` and its subclasses (`IdentityProviderRequestException`, `InvalidCallbackException`, `InvalidTokenException`, `LoginRefusedException`, `OidcNotConfiguredException`) | caught by apps |
+| `Events\OidcIdentityLinkedEvent`, `Events\OidcLoginSucceededEvent`, `Events\OidcUserProvisionedEvent`, `Events\OidcLogoutReceivedEvent` | listened to by apps |
+| `Exceptions\OidcException`, `Exceptions\IdentityProviderRequestException`, `Exceptions\InvalidCallbackException`, `Exceptions\InvalidTokenException`, `Exceptions\LoginRefusedException`, `Exceptions\OidcNotConfiguredException` | caught by apps |
 | `Models\UserIdentity`, `Models\OidcLogoutRevocation` | queried by apps; their tables are listed below |
 | `Http\Controllers\*Controller` | route targets an app may register itself (see `oidc.routes.except`) |
 | `Console\*Command` | through their command names and options only |
@@ -47,7 +47,7 @@ Every class name above is in the `Qiick\Oidc` namespace. Adding a trailing optio
 
 ## Configuration and environment
 
-Config keys (all under `oidc.`): `enabled`, `issuer`, `client_id`, `client_secret`, `button_label`, `jit`, `auto_link`, `only`, `redirect_uri`, `allowed_domains`, `require_verified_email`, `remember`, `home`, `login_url`, `users.model`, `users.table`, `users.email_column`, `users.active_column`, `break_glass.roles`, `break_glass.require_two_factor`, `break_glass.query_parameter`, `roles.enabled`, `roles.claim`, `roles.organization`, `roles.map`, `roles.forbidden`, `mfa.required`, `mfa.amr_values`, `mfa.acr_values`, `mfa.request_acr_values`, `mfa.max_age`, `mfa.require_requested_acr`, `post_logout_redirect_uri`, `logout.redirect_to`, `userinfo`, `routes.enabled`, `routes.prefix`, `routes.middleware`, `routes.except`, `backchannel_logout.revocation_ttl`, `backchannel_logout.max_retention_seconds`, `frontchannel_logout.enabled`, `scopes`, `token_endpoint_auth_method`, `id_token.algorithms`, `id_token.leeway`, `id_token.trusted_audiences`, `cache.store`, `cache.discovery_ttl`, `cache.jwks_ttl`, `cache.jwks_refetch_cooldown`, `http.timeout`, `http.connect_timeout`, `http.max_response_bytes`, `http.discovery_base`, `http.server_origin`, `http.allow_private_hosts`.
+Config keys (all under `oidc.`): `enabled`, `issuer`, `client_id`, `client_secret`, `button_label`, `jit`, `auto_link`, `only`, `redirect_uri`, `allowed_domains`, `require_verified_email`, `remember`, `home`, `login_url`, `users.model`, `users.table`, `users.email_column`, `users.active_column`, `break_glass.roles`, `break_glass.require_two_factor`, `break_glass.query_parameter`, `roles.enabled`, `roles.claim`, `roles.organization`, `roles.map`, `roles.forbidden`, `mfa.required`, `mfa.trust_provider`, `mfa.amr_values`, `mfa.acr_values`, `mfa.request_acr_values`, `mfa.max_age`, `mfa.require_requested_acr`, `post_logout_redirect_uri`, `logout.redirect_to`, `userinfo`, `routes.enabled`, `routes.prefix`, `routes.middleware`, `routes.except`, `backchannel_logout.schedule`, `backchannel_logout.rate_limit`, `backchannel_logout.revocation_ttl`, `backchannel_logout.max_retention_seconds`, `frontchannel_logout.enabled`, `scopes`, `token_endpoint_auth_method`, `id_token.algorithms`, `id_token.leeway`, `id_token.trusted_audiences`, `cache.store`, `cache.discovery_ttl`, `cache.jwks_ttl`, `cache.jwks_refetch_cooldown`, `http.timeout`, `http.connect_timeout`, `http.max_response_bytes`, `http.discovery_base`, `http.server_origin`, `http.allow_private_hosts`.
 
 Environment variables: `OIDC_ENABLED`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_BUTTON_LABEL`, `OIDC_JIT`, `OIDC_AUTO_LINK`, `OIDC_ONLY`, `OIDC_FRONTCHANNEL_LOGOUT`, `OIDC_HTTP_TIMEOUT`, `OIDC_HTTP_CONNECT_TIMEOUT`, `OIDC_MAX_RESPONSE_BYTES`, `OIDC_DISCOVERY_BASE`, `OIDC_SERVER_ORIGIN`, `OIDC_ALLOW_PRIVATE_HOSTS`.
 
@@ -55,10 +55,21 @@ A key added in a minor release always has a default, and a config file published
 
 ## Routes, commands, events and tables
 
-- Route names under `oidc.routes.prefix` (`auth/oidc`): `oidc.redirect`, `oidc.callback`, `oidc.backchannel-logout`, `oidc.frontchannel-logout`, `oidc.logged-out`, with their paths and HTTP methods.
-- Commands: `oidc:configure` (`--issuer`, `--client-id`, `--client-secret`, `--write-env`, `--json`, and the JSON report keys), `oidc:import-legacy-subjects` (`--column`, `--issuer`, `--dry-run`), `oidc:prune-logout-revocations` (`--chunk`).
+| Name | Method | Default URI |
+| --- | --- | --- |
+| `oidc.redirect` | `GET` | `/auth/oidc/redirect` |
+| `oidc.callback` | `GET` | `/auth/oidc/callback` |
+| `oidc.backchannel-logout` | `POST` | `/auth/oidc/backchannel-logout` |
+| `oidc.frontchannel-logout` | `GET` | `/auth/oidc/frontchannel-logout` |
+| `oidc.logged-out` | `GET` | `/auth/oidc/logged-out` |
+
+`oidc.routes.prefix` changes the path prefix. `oidc.routes.except` excludes individual routes by name so an app can register its own handler. `oidc.routes.enabled` controls registration of all five routes. The front-channel endpoint returns `404` unless the feature is enabled.
+
+- Commands: `oidc:check` (exit code), `oidc:configure` (`--issuer`, `--client-id`, `--client-secret`, `--write-env`, `--json`, and the JSON report keys), `oidc:import-legacy-subjects` (`--column`, `--issuer`, `--dry-run`), `oidc:prune-logout-revocations` (`--chunk`, `--dry-run`).
 - Events: the five event classes above, with their public properties.
 - Tables: `user_identities` and `oidc_logout_revocations`, as created by the package migrations. After `1.0.0` the migrations are forward-only and additive.
+- Reserved identity columns: `user_identities.subject_type` and `user_identities.provider_key` default to `NULL`. Package login and import leave them `NULL` until the [multi-provider registry work (L4)](./decisions/2026-11-22-defer-provider-registry.md).
+- Back-channel protocol errors use HTTP `400` with `error: invalid_request` and `error_description`. Over-budget rejections use HTTP `429` with `error: too_many_requests` and `Retry-After`.
 - Session keys (`oidc.identity`, `oidc.pending_identity`, `oidc.pending_logins`) and cache keys are internal.
 
 ## Deprecation policy

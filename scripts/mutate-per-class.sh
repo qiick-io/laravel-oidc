@@ -5,7 +5,8 @@
 #
 # CI splits the list into parallel shards: MUTATE_SHARD=i MUTATE_SHARDS=n runs
 # the classes at positions i, i+n, i+2n, ... (1-based). Without them, every
-# class runs, as locally.
+# class runs, as locally. The shared PR plan can restrict the same list to
+# changed source paths through MUTATE_SCOPE=changed and MUTATE_CLASSES.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,6 +17,26 @@ shard="${MUTATE_SHARD:-1}"
 shards="${MUTATE_SHARDS:-1}"
 # Default scope: the feature suite (the integration groups need live IdPs).
 paths="${MUTATE_PATHS:-tests/Feature}"
+scope="${MUTATE_SCOPE:-all}"
+selected_paths=''
+
+case "$scope" in
+  all)
+    ;;
+  changed)
+    selected_paths="$(node -e '
+      const changedPaths = JSON.parse(process.env.MUTATE_CLASSES ?? "[]");
+      if (!Array.isArray(changedPaths) || !changedPaths.every((path) => typeof path === "string")) {
+        throw new Error("MUTATE_CLASSES must be a JSON array of source paths.");
+      }
+      process.stdout.write(changedPaths.join("\n"));
+    ')"
+    ;;
+  *)
+    echo "MUTATE_SCOPE must be all or changed." >&2
+    exit 2
+    ;;
+esac
 
 # A shard outside 1..shards would run no class and pass: refuse it.
 if ! [[ "${shards}" =~ ^[1-9][0-9]*$ && "${shard}" =~ ^[1-9][0-9]*$ ]] || (( shard > shards )); then
@@ -70,8 +91,10 @@ classes=(
   'Qiick\Oidc\Services\UserLinkingService'
   'Qiick\Oidc\Services\UserinfoService'
   'Qiick\Oidc\Testing\FakeIdentityProvider'
+  'Qiick\Oidc\Enums\LoginRefusalReasonEnum'
   'Qiick\Oidc\Erasure\ErasureReport'
   'Qiick\Oidc\Erasure\OidcEraser'
+  'Qiick\Oidc\Console\CheckOidcCommand'
 )
 
 status=0
@@ -82,13 +105,25 @@ for index in "${!classes[@]}"; do
   fi
 
   class="${classes[$index]}"
+  relative_path="${class#Qiick\\Oidc\\}"
+  source_path="src/${relative_path//\\//}.php"
+  if [[ "$scope" == changed && $'\n'"$selected_paths"$'\n' != *$'\n'"$source_path"$'\n'* ]]; then
+    continue
+  fi
+
   class_paths="$paths"
+  class_options=(--mutate --class="${class}" --min="${min}")
   if [[ -z "${MUTATE_PATHS:-}" && "$class" == Qiick\\Oidc\\Erasure\\* ]]; then
     class_paths="tests/Feature/OidcEraserTest.php tests/Erasure"
   fi
+  if [[ "$class" == 'Qiick\Oidc\Enums\LoginRefusalReasonEnum' ]]; then
+    # Pest currently produces zero mutants for the enum's literal match arms.
+    # The feature suite checks every case, and any future mutants still need 95%.
+    class_options+=(--ignore-min-score-on-zero-mutations)
+  fi
   echo "==> mutate ${class} (min=${min}, shard ${shard}/${shards})"
   # shellcheck disable=SC2086
-  if ! vendor/bin/pest --mutate --class="${class}" --min="${min}" ${class_paths} "$@"; then
+  if ! vendor/bin/pest "${class_options[@]}" ${class_paths} "$@"; then
     status=1
   fi
 done

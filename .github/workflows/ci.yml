@@ -6,49 +6,46 @@ on:
       - main
       - develop
   pull_request:
+  schedule:
+    - cron: '45 3 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  package-matrix:
+    uses: qiick-io/app-ui/.github/workflows/package-matrix.yml@94753d4fb73913f6b5a3a5d0a685357b70829391 # develop after #295
+    with:
+      app-ui-ref: 94753d4fb73913f6b5a3a5d0a685357b70829391
+
   tests:
     name: PHP ${{ matrix.php }} Laravel ${{ matrix.laravel }} ${{ matrix.dependency-version }}
+    needs: package-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      matrix:
-        php:
-          - '8.3'
-          - '8.4'
-          - '8.5'
-        laravel:
-          - '12'
-          - '13'
-        dependency-version:
-          - lowest
-          - stable
-        include:
-          - laravel: '12'
-            testbench: '10'
-          - laravel: '13'
-            testbench: '11'
+      matrix: ${{ fromJSON(needs.package-matrix.outputs.matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: ${{ !matrix.skip }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        if: ${{ !matrix.skip }}
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: ${{ matrix.php }}
           coverage: none
           tools: composer:v2
 
       - name: Install dependencies
+        if: ${{ !matrix.skip }}
         run: |
           composer require --dev --no-interaction --no-update "orchestra/testbench:^${{ matrix.testbench }}.0"
           composer require --no-interaction --no-update "illuminate/support:^${{ matrix.laravel }}.0"
@@ -62,34 +59,69 @@ jobs:
       # with --prefer-lowest, old polyfills (paragonie/random_compat 2.x via
       # symfony/polyfill-uuid) redefine core functions without types.
       - name: Pint
-        if: matrix.dependency-version == 'stable'
+        if: ${{ !matrix.skip && matrix.dependency-version == 'stable' }}
         run: vendor/bin/pint --test
 
       - name: PHPStan
-        if: matrix.dependency-version == 'stable'
+        if: ${{ !matrix.skip && matrix.dependency-version == 'stable' }}
         run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
 
       # Level max with no baseline: the ratchet fails if a baseline ever appears.
       - name: Larastan baseline only shrinks
+        if: ${{ !matrix.skip }}
         run: node scripts/qiick-ratchet.mjs phpstan
 
       - name: Pest
+        if: ${{ !matrix.skip }}
         run: vendor/bin/pest
+
+  php-matrix:
+    name: PHP matrix
+    needs: tests
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every PHP matrix cell passed
+        run: test "${{ needs.tests.result }}" = "success"
+
+  # Run the erasure contract on every PR, including documentation-only PRs.
+  erasure:
+    name: Erasure conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          coverage: none
+          extensions: curl, intl, pdo_sqlite
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer update --no-interaction --prefer-dist
 
       - run: node tests/Erasure/run.mjs
 
-  # qiick/laravel-outbound 0.2 is a beta for now, so the stable cells still
-  # resolve 0.1: this job runs PHPStan and the suite on the 0.2 line too.
+  # Keep a dedicated 0.2 check. The default matrix can select Outbound 1.x
+  # once a stable tag is available.
   outbound-0-2:
     name: Pest on laravel-outbound 0.2
+    needs: package-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.4'
           coverage: none
@@ -97,19 +129,23 @@ jobs:
           tools: composer:v2
 
       - name: Install dependencies
+        if: needs.package-matrix.outputs.docs-only != 'true'
         run: |
-          composer require --no-interaction --no-update "qiick/laravel-outbound:^0.2@beta"
+          composer require --no-interaction --no-update "qiick/laravel-outbound:^0.2.0-beta.4"
           composer update --no-interaction --prefer-dist --with-all-dependencies
           composer show qiick/laravel-outbound | grep -E '^versions'
 
       - name: PHPStan
+        if: needs.package-matrix.outputs.docs-only != 'true'
         run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
 
       - name: Pest
+        if: needs.package-matrix.outputs.docs-only != 'true'
         run: vendor/bin/pest
 
   real-transport:
     name: Real transport Guzzle ${{ matrix.guzzle }}
+    needs: package-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -122,10 +158,12 @@ jobs:
             prefer: stable
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.4'
           coverage: none
@@ -133,6 +171,7 @@ jobs:
           tools: composer:v2
 
       - name: Install dependencies
+        if: needs.package-matrix.outputs.docs-only != 'true'
         run: |
           # Packagist advisories block older Guzzle 7 installs; this job exists
           # to exercise that line under real curl, so advisory blocking is off here only.
@@ -148,13 +187,8 @@ jobs:
           composer show guzzlehttp/guzzle | head -5
 
       - name: Real-transport Pest
-        run: vendor/bin/pest --group=real-transport
-
-      - name: Stop php -S servers
-        if: always()
-        run: |
-          # Real-transport starts php -S per test; kill any leftover listeners.
-          pkill -f 'php -S 127.0.0.1:' || true
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        run: vendor/bin/pest --group=real-transport --fail-on-empty-test-suite
 
   # Per-class mutation gate over every class with logic in src/ (packages 1.0
   # checklist item 3): one pest --mutate per class, split round-robin across
@@ -163,6 +197,7 @@ jobs:
   # shard passes 30 minutes.
   mutation-shards:
     name: Mutation (shard ${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: package-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -171,10 +206,12 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: needs.package-matrix.outputs.mutate-scope == 'all' || needs.package-matrix.outputs.mutate-classes != '[]'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        if: needs.package-matrix.outputs.mutate-scope == 'all' || needs.package-matrix.outputs.mutate-classes != '[]'
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.4'
           coverage: pcov
@@ -182,13 +219,17 @@ jobs:
           tools: composer:v2
 
       - name: Install dependencies
+        if: needs.package-matrix.outputs.mutate-scope == 'all' || needs.package-matrix.outputs.mutate-classes != '[]'
         run: |
           composer require --dev --no-interaction --no-update "orchestra/testbench:^11.0"
           composer require --no-interaction --no-update "illuminate/support:^13.0" "illuminate/http:^13.0" "illuminate/cache:^13.0"
           composer update --no-interaction --prefer-dist --with-all-dependencies
 
       - name: Pest mutate per class
+        if: needs.package-matrix.outputs.mutate-scope == 'all' || needs.package-matrix.outputs.mutate-classes != '[]'
         env:
+          MUTATE_SCOPE: ${{ needs.package-matrix.outputs.mutate-scope }}
+          MUTATE_CLASSES: ${{ needs.package-matrix.outputs.mutate-classes }}
           MUTATE_SHARD: ${{ matrix.shard }}
           MUTATE_SHARDS: ${{ strategy.job-total }}
         run: bash scripts/mutate-per-class.sh
@@ -210,45 +251,28 @@ jobs:
   # supports, not only on in-memory SQLite.
   databases:
     name: Pest on ${{ matrix.database.name }}
+    needs: package-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        database:
-          - name: MySQL 8.4
-            connection: mysql
-            image: mysql:8.4
-            port: 3306
-            options: >-
-              -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -e MYSQL_DATABASE=laravel_oidc
-              --health-cmd="mysqladmin ping -h 127.0.0.1" --health-interval=5s --health-retries=20
-          - name: MariaDB 10.11
-            connection: mariadb
-            image: mariadb:10.11
-            port: 3306
-            options: >-
-              -e MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=yes -e MARIADB_DATABASE=laravel_oidc
-              --health-cmd="healthcheck.sh --connect --innodb_initialized" --health-interval=5s --health-retries=20
-          - name: PostgreSQL 17
-            connection: pgsql
-            image: postgres:17
-            port: 5432
-            options: >-
-              -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=laravel_oidc
-              --health-cmd="pg_isready -U postgres" --health-interval=5s --health-retries=20
+        database: ${{ fromJSON(needs.package-matrix.outputs.databases) }}
     services:
       database:
-        image: ${{ matrix.database.image }}
+        image: ${{ needs.package-matrix.outputs.run-databases == 'true' && matrix.database.image || '' }}
+        env: ${{ matrix.database.environment }}
         ports:
           - ${{ matrix.database.port }}:${{ matrix.database.port }}
         options: ${{ matrix.database.options }}
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: needs.package-matrix.outputs.run-databases == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        if: needs.package-matrix.outputs.run-databases == 'true'
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.4'
           coverage: none
@@ -257,25 +281,29 @@ jobs:
           tools: composer:v2
 
       - name: Install dependencies
+        if: needs.package-matrix.outputs.run-databases == 'true'
         run: composer update --no-interaction --prefer-dist
 
       - name: Pest
+        if: needs.package-matrix.outputs.run-databases == 'true'
         env:
           DB_CONNECTION: ${{ matrix.database.connection }}
           DB_HOST: 127.0.0.1
           DB_PORT: ${{ matrix.database.port }}
-          DB_DATABASE: laravel_oidc
-          DB_USERNAME: ${{ matrix.database.connection == 'pgsql' && 'postgres' || 'root' }}
-          DB_PASSWORD: ''
+          DB_DATABASE: ${{ matrix.database.environment.POSTGRES_DB || matrix.database.environment.MYSQL_DATABASE || matrix.database.environment.MARIADB_DATABASE }}
+          DB_USERNAME: ${{ matrix.database.username }}
+          DB_PASSWORD: ${{ matrix.database.password }}
         run: vendor/bin/pest
 
   keycloak:
     name: Keycloak 26 end to end
+    needs: package-matrix
+    if: needs.package-matrix.outputs.docs-only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Not a `services:` container: Keycloak needs the `start-dev --import-realm` arguments.
       - name: Start Keycloak
@@ -285,7 +313,7 @@ jobs:
             quay.io/keycloak/keycloak:26.2 start-dev --import-realm
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.4'
           coverage: none
@@ -296,7 +324,7 @@ jobs:
 
       - name: Wait for Keycloak
         run: |
-          for attempt in $(seq 1 60); do
+          for _attempt in $(seq 1 60); do
             curl -sf http://localhost:8080/realms/laravel-oidc/.well-known/openid-configuration > /dev/null && exit 0
             sleep 3
           done
@@ -310,16 +338,21 @@ jobs:
 
   signaculum:
     name: Signaculum end to end
+    needs: package-matrix
+    # Fork pull requests do not receive the private Signaculum checkout token.
+    if: >-
+      needs.package-matrix.outputs.docs-only != 'true' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Same-org private checkout: set QIICK_CHECKOUT_TOKEN (repo read on
       # qiick-io/signaculum-core) when GITHUB_TOKEN cannot reach that repo.
       - name: Checkout Signaculum
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: qiick-io/signaculum-core
           ref: develop
@@ -327,7 +360,7 @@ jobs:
           token: ${{ secrets.QIICK_CHECKOUT_TOKEN || github.token }}
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.4'
           coverage: none
@@ -335,11 +368,14 @@ jobs:
           extensions: bcmath, intl, pcntl, pdo_sqlite, zip
 
       - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: .signaculum/package-lock.json
+
+      - name: Test Signaculum log redaction
+        run: node --test tests/Fixtures/signaculum/redact-server-log.test.mjs
 
       - name: Install package dependencies
         run: composer update --no-interaction --prefer-dist
@@ -368,16 +404,16 @@ jobs:
         run: |
           # shellcheck disable=SC1090
           source "${SIGNACULUM_RUN_STATE_DIR}/env.sh"
-          php -S 127.0.0.1:${BACKCHANNEL_PORT} tests/Fixtures/signaculum/backchannel-receiver.php > "${RUNNER_TEMP}/backchannel-receiver.log" 2>&1 &
+          php -S "127.0.0.1:${BACKCHANNEL_PORT}" tests/Fixtures/signaculum/backchannel-receiver.php > "${RUNNER_TEMP}/backchannel-receiver.log" 2>&1 &
           (cd "${SIGNACULUM_DIR}" && php artisan serve --host=127.0.0.1 --port="${SIGNACULUM_PORT}") > "${RUNNER_TEMP}/signaculum-serve.log" 2>&1 &
-          for attempt in $(seq 1 60); do
-            curl -sf "${SIGNACULUM_URL}/.well-known/openid-configuration" > /dev/null && exit 0
+          for _attempt in $(seq 1 60); do
+            discovery_status="$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_code}' "${SIGNACULUM_URL}/.well-known/openid-configuration" || true)"
+            if [[ "${discovery_status}" == 200 ]]; then
+              exit 0
+            fi
             sleep 2
           done
-          echo '--- signaculum serve ---'
-          cat "${RUNNER_TEMP}/signaculum-serve.log" || true
-          echo '--- backchannel ---'
-          cat "${RUNNER_TEMP}/backchannel-receiver.log" || true
+          printf 'Signaculum discovery did not become ready (HTTP %s).\n' "${discovery_status}" >&2
           exit 1
 
       - name: Pest (Signaculum)
@@ -388,16 +424,39 @@ jobs:
           source "${SIGNACULUM_RUN_STATE_DIR}/env.sh"
           vendor/bin/pest --group=signaculum
 
+      - name: Redact Signaculum server logs
+        id: redact-signaculum-logs
+        if: failure()
+        run: |
+          diagnostics_dir="${RUNNER_TEMP}/signaculum-diagnostics"
+          mkdir "${diagnostics_dir}"
+          for log in signaculum-serve.log backchannel-receiver.log; do
+            if [[ -f "${RUNNER_TEMP}/${log}" ]]; then
+              node tests/Fixtures/signaculum/redact-server-log.mjs < "${RUNNER_TEMP}/${log}" > "${diagnostics_dir}/${log}"
+            fi
+          done
+
+      - name: Upload redacted Signaculum logs
+        if: failure() && steps.redact-signaculum-logs.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signaculum-diagnostics
+          path: ${{ runner.temp }}/signaculum-diagnostics/*.log
+          retention-days: 3
+          if-no-files-found: ignore
+
   zitadel:
     name: Zitadel end to end
+    needs: package-matrix
+    if: needs.package-matrix.outputs.docs-only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.4'
           coverage: none
@@ -424,8 +483,33 @@ jobs:
           vendor/bin/pest --group=zitadel
 
   # The qiick standards pack (agent files, architecture test) must match app-ui.
-  standards:
-    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@0d97ae1429a856411c76e6de1ec258cae0eabab6 # v0.15.0
+  app-ui-drift:
+    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@94753d4fb73913f6b5a3a5d0a685357b70829391 # develop after #295
     with:
       standards: true
       registry: false
+
+  nightly-failure:
+    name: Report nightly failure
+    needs: [php-matrix, erasure, outbound-0-2, real-transport, mutate, databases, keycloak, signaculum, zitadel, app-ui-drift]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue for the failed run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Nightly CI failed on $(date -u +%F)"
+          existing_issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all \
+            --search "\"$title\" in:title" --json title --jq ".[] | select(.title == \"$title\") | .title")
+          if [ -n "$existing_issue" ]; then
+            exit 0
+          fi
+
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "$title" \
+            --body "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --label bug --label area:ci

@@ -28,7 +28,7 @@ use Qiick\Oidc\Models\UserIdentity;
  * authentication. The JWKS refetch cooldown keeps forged `kid` values from
  * turning it into an amplifier against the IdP.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class BackChannelLogoutService
 {
@@ -91,7 +91,7 @@ final readonly class BackChannelLogoutService
             sessionId: $sessionId,
             tokenId: $tokenId,
             expiresAt: is_int($expiresAtClaim) || is_float($expiresAtClaim) ? $expiresAtClaim : null,
-            channel: 'backchannel',
+            channel: LogoutTokenData::BackChannel,
         );
         $this->sessionRevocation->revoke($logout);
 

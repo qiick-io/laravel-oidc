@@ -6,7 +6,7 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 
 ## Authorization request and callback
 
-| ID | Check | Spec | Tests |
+| ID | Check | Spec | Covering test |
 | --- | --- | --- | --- |
 | SEC-01 | PKCE `S256` on every login, also for confidential clients; the verifier sent matches the challenge | RFC 7636 §4 | `AuthorizationCodeFlowTest › redirects with PKCE S256, state, nonce and the configured scopes`; `› sends the PKCE verifier that matches the challenge` |
 | SEC-02 | `state` is required, bound to the browser session, single-use and expires after ten minutes | RFC 6749 §10.12, RFC 9700 §4.7 | `AuthorizationCodeFlowTest › refuses a callback without state, with an unknown state, or from another browser session`; `› accepts each state once, even after a failed callback`; `› expires a pending login after ten minutes`; `› refuses a pending login exactly when it expires`; `› keeps only the five newest pending logins` |
@@ -17,7 +17,7 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 
 ## `id_token`
 
-| ID | Check | Spec | Tests |
+| ID | Check | Spec | Covering test |
 | --- | --- | --- | --- |
 | SEC-10 | Signature through the IdP's JWKS; a changed payload or a foreign key with a published `kid` is refused | OIDC Core §3.1.3.7 step 6, RFC 7515 | `IdTokenValidationTest › refuses a token signed with another key that reuses the published kid`; `› refuses a token whose payload was changed after signing`; `› refuses malformed tokens` |
 | SEC-11 | Algorithm allowlist: asymmetric only, never `none` or HMAC, even when configured | RFC 8725 §3.1, OIDC Core §3.1.3.7 step 7 | `IdTokenValidationTest › refuses alg none, HMAC and algorithms not configured`; `› refuses an HS256 token signed with the client secret even when HS256 is configured` |
@@ -34,17 +34,19 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 
 ## Userinfo, linking and MFA
 
-| ID | Check | Spec | Tests |
+| ID | Check | Spec | Covering test |
 | --- | --- | --- | --- |
 | SEC-30 | Userinfo `sub` must equal the `id_token` `sub`; `id_token` claims win, and `amr`, `acr`, `auth_time`, `sid`, `azp`, `nbf` are never taken from userinfo | OIDC Core §5.3.4, §2 | `UserinfoTest › refuses a userinfo response for another subject`; `› never takes a trust-sensitive claim from userinfo, even when the id_token lacks it`; `MultiFactorTest › never trusts amr from the unsigned userinfo response` |
 | SEC-31 | The identity key is (issuer, `sub`); the email never signs anyone in | design §4 | `SsoLoginTest › signs in the user linked to (issuer, sub), whatever the email says`; `› refuses an unknown identity when auto-link and JIT are off, even with a matching email` |
 | SEC-32 | Auto-link and JIT need a verified email; one identity per user and issuer, also under concurrent logins | OIDC Core §5.1, standards review | `SsoLoginTest › never auto-links or provisions from an unverified email`; `› does not auto-link a user already linked to another identity of the same issuer`; `› refuses an auto-link that loses the race to a concurrent link of the same user`; `› does not treat LIKE wildcards in an email as a match` |
 | SEC-33 | MFA counts only from a signed `amr` / `acr`; a requested `acr` not returned does not count (or refuses) | RFC 8176, OIDC Core §2 | `MultiFactorTest › runs the app second factor when the IdP did not prove MFA`; `StepUpAuthenticationTest › proves MFA through the requested acr only when the IdP returns it`; `› refuses a missing or lower acr when require_requested_acr is on` |
 | SEC-34 | Inactive users are refused; SSO-only mode keeps local login for break-glass accounts only | design §4 | `SsoLoginTest › refuses inactive users`; `SsoOnlyModeTest › keeps local login only for break-glass accounts`; `› refuses password logins through Auth::attempt() for everyone but break-glass accounts` |
+| SEC-35 | An active Fortify TOTP requires a challenge after SSO unless a trusted provider's signed ID token proves MFA using configured values | design §4, RFC 8176 | `FortifySecondFactorChallengeTest › SEC-35 enforces self-enrolled TOTP at the OIDC callback unless signed MFA satisfies it`; `MultiFactorTest › requires local MFA until the app opts in and configures accepted IdP claims` |
+| SEC-36 | An unavailable local challenge refuses and logs a login that requires it. Failed JIT provisioning rolls back, and the deploy check catches known MFA setup failures. | 1.0 security review | `MultiFactorTest › refuses and logs a required second factor that cannot be started`; `› rolls back JIT provisioning and mapped roles when required MFA cannot start`; `FortifySecondFactorChallengeTest › denies an enrolled user when the Fortify challenge route is unavailable`; `ConfigureCommandTest › reports when required MFA has no usable provider or local challenge`; `› fails the deploy check for allowed IdP claims while trust is off` |
 
 ## Session and logout
 
-| ID | Check | Spec | Tests |
+| ID | Check | Spec | Covering test |
 | --- | --- | --- | --- |
 | SEC-40 | The session is regenerated at login and gets no remember cookie by default | OWASP session fixation | `SsoLoginTest › regenerates the session and sets no remember cookie by default` |
 | SEC-41 | The stored `id_token` is encrypted; an unreadable one or an unknown payload version ends the session | standards review S6 | `IdentitySessionEncryptionTest › stores the id_token encrypted and reads it back in clear`; `› ends a session whose stored id_token cannot be decrypted`; `› ends the session when the pending identity no longer reads at promotion` |
@@ -54,13 +56,21 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 | SEC-45 | The revocation check runs after the session starts and before `auth` | OIDC Back-Channel Logout §2.7 | `BackChannelLogoutTest › does not let a revoked session reach a route behind auth`; `› orders its session check after the session starts and before auth` |
 | SEC-46 | Front-channel logout: off by default; needs both `iss` and `sid`; `iss` is the configured issuer; only the issuer origin may frame it | OIDC Front-Channel Logout §2–3 | `FrontChannelLogoutTest › answers 404 for front-channel logout while the flag is off`; `› refuses front-channel logout without both iss and sid`; `› refuses a front-channel iss that is not the configured issuer`; `› lets only the issuer origin frame the endpoint` |
 | SEC-47 | RP-initiated logout return: a random `state` in an HttpOnly, SameSite=Lax cookie; the landing page comes from config only | RP-Initiated Logout §2–3 | `PostLogoutReturnTest › sends a random state and returns to the package route by default`; `› redirects to the configured landing page when the state matches, and drops the cookie`; `› still redirects, with a warning, when the state does not check out` |
+| SEC-48 | Back-channel logout rate-limits rejections per sender IP while continuing to accept valid tokens | Logout availability and resource exhaustion | `BackChannelLogoutTest › rate limits only rejected back-channel requests and allows a valid token on the same IP`; `› accepts an IdP burst of 100 valid back-channel tokens within one minute` |
+| SEC-49 | Duplicate active front-channel revocations are idempotent, expired rows can be replaced, and signed JTIs have their own namespace | OIDC Front-Channel Logout §2 | `FrontChannelLogoutTest › acknowledges a repeated front-channel logout without extending it or dispatching another event`; `› records a fresh front-channel revocation when the matching row expired before pruning`; `› keeps front-channel SID keys separate from signed back-channel JTI keys` |
 
 ## Server-side requests (SSRF)
 
-| ID | Check | Spec | Tests |
+| ID | Check | Spec | Covering test |
 | --- | --- | --- | --- |
 | SEC-50 | IdP calls are https only, never to private, loopback or metadata addresses (metadata stays blocked even with the private-host opt-in) | OWASP SSRF | `RemoteUrlGuardTest › refuses unsafe server urls`; `› refuses a public host name that resolves to a private address`; `› keeps cloud metadata blocked when private hosts are allowed`; `DiscoveryTest › refuses a discovery url on a private network without the opt-in` |
 | SEC-51 | Every IdP call is pinned to the checked address and follows no redirect | DNS rebinding | `RemoteUrlGuardTest › pins a public ipv4 literal to itself without resolving it`; `RemoteUrlGuardPinTest.php`; `DiscoveryTest › does not follow redirects`; `IdentityProviderHttpOutboundTest › does not follow redirects from the IdP` |
 | SEC-52 | Response bodies are size-capped; IdP errors never echo a body | resource exhaustion, information leak | `IdentityProviderHttpOutboundTest › refuses an oversized JSON response through the size limit`; `DiscoveryTest › surfaces an HTTP error without the response body` |
 | SEC-53 | Browser endpoints from discovery use https and carry no credentials | OIDC Discovery §3 | `DiscoveryTest › refuses browser endpoints with an unsafe scheme`; `OidcOutboundIsolationTest › refuses browser endpoints with credentials through DiscoveryService from the container` |
 | SEC-54 | Installing `qiick/laravel-outbound` cannot loosen the package's SSRF guard or timeouts | standards review | `OidcOutboundIsolationTest › refuses a loopback IdP when OutboundServiceProvider registers after OIDC with private hosts open` |
+
+## Published configuration
+
+| ID | Check | Spec | Tests |
+| --- | --- | --- | --- |
+| SEC-60 | Missing nested settings use shipped defaults and an invalid published value stops boot with the full key | Fleet F1 | `PublishedConfigDefaultsTest › fills an empty published section while keeping explicitly empty lists and null overrides`; `› fills missing nested keys from an older configuration cache`; `› reports the full key when a present config value is invalid at boot` |

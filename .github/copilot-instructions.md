@@ -142,7 +142,7 @@ One answer per topic for every qiick package and product (decision of 2026-11-24
 - **F25 Strict Laravel:** products boot with strict models, destructive commands prohibited and HTTPS forced in production, immutable dates and the password defaults; every PHP repo's tests stop stray HTTP requests and processes.
 - **F27 Public APIs:** an API is versioned in its path (`/api/v1`), described by a hand-written OpenAPI file that a test compares with the routes, answers errors in the F11 shape, and retires a version only after announcing it with `Deprecation` and `Sunset` headers.
 - **F28 UI quality:** a product with a UI calls the shared `ui-quality` and drift checks, and proves its screens in a browser test in light and dark.
-- **F15–F17** (repository settings, labels and project, agent rules) are in the repository rules, **F19–F24, F26, F29 and F30** (security policy, secrets, expand / contract, backup, signed tags, supply chain, observability, privacy, runbooks) in the security, data and operations rules.
+- **F15–F17** (repository settings, labels and project, agent rules) are in the repository rules. **F19–F24, F26 and F29–F33** (security, supply chain, privacy and operations) are in the security, data and operations rules.
 
 With a `conventions` object in `qiick-standards.json`, `app-ui-drift / standards` runs the static checks of these rules; an exception is a `conventions.divergences` entry with `reason`, `decision` and `review_by`.
 
@@ -156,6 +156,16 @@ GDPR erasure across qiick packages and products: one eraser of the same shape in
 - **Products:** user deletion goes only through the erasure orchestrator, which writes a resumable `erasure_requests` row first and runs the erasers in the standard order. The fleet conformance check C17 proves it. Nothing else calls an eraser or `PrincipalDirectory::eraseUser()`.
 
 **Details:** `.qiick/standards/erasure.md`. Read it before writing or changing an eraser, a package store that holds personal data, a user deletion path, the erasure orchestrator or tests/Erasure.
+
+## Dependency register
+
+Every Composer package (`package: true` in `qiick-standards.json`) keeps `docs/dependencies.md` up to date. List every runtime entry in the root `composer.json` `require` object, including platform requirements such as `php` and `ext-*`; do not list `require-dev`.
+
+For each dependency, document its version constraint, why that minimum is needed, what the package uses, what it replaces or extends (classes, actions, or config) and why, who maintains it (company, community, or an individual maintainer), its license, known risks, and a one-line exit plan for replacing it inside the package without changing products.
+
+Update the register in every PR that changes `composer.json` `require`, and review it at every release. When the points replaced or extended outnumber the points used, evaluate an in-package implementation.
+
+The package drift check fails when `docs/dependencies.md` is missing or a `require` name is absent from the table's `Dependency` column. It checks coverage by exact dependency name; reviewers remain responsible for the accuracy of the rationale and risk assessment.
 
 ## Testing
 
@@ -201,7 +211,7 @@ Every qiick repo is configured the same way, so a check name, a label or a merge
 
 ## Security, data and operations
 
-What every qiick repo does so a vulnerability can be reported, a leaked secret replaced, a schema changed without downtime, the data restored, a release and its dependencies trusted, a running product watched, personal data accounted for, and an incident handled from a page instead of from memory (fleet conventions F19–F24, F26, F29 and F30, maintainer request of 2026-11-25; F25, F27 and F28 are code conventions, in the conventions rules).
+Operations rules F19–F24, F26 and F29–F34 cover vulnerability reporting, secrets, migrations, backups, releases, observability, privacy, incident response and security verification. F25, F27 and F28 are in the conventions rules.
 
 - **F19 Security policy:** every repo has a `SECURITY.md` (supported versions, how to report, response time) and GitHub private vulnerability reporting switched on, because the policy sends reporters there.
 - **F20 Secrets runbook:** every product has `docs/runbooks/secrets.md`: each secret of `.env.example` and each key file, where it lives, who rotates it, how, what the rotation breaks, and what to do after a leak.
@@ -212,10 +222,14 @@ What every qiick repo does so a vulnerability can be reported, a leaked secret r
 - **F26 Observability with Excubia:** every product requires `qiick/excubia-core` (not `--dev`), keeps an `excubia.json`, schedules `excubia:check` daily, and serves `/health/live` and `/health/ready`; pushing to an `excubia-app` is the operator's choice, configured only through `EXCUBIA_APP_URL` and `EXCUBIA_APP_TOKEN`.
 - **F29 Privacy:** every product keeps `docs/privacy.md`: the personal data it stores (table and column), why, for how long, which processors and outbound destinations receive any of it, and how a person's data is exported and erased. No telemetry, ever, unless the operator turns it on.
 - **F30 Runbooks:** every product keeps `docs/runbooks/deploy.md` (deploy, upgrade and rollback) and `docs/runbooks/incident.md` (first steps, who to tell, what to write down afterwards), next to the secrets and backup runbooks.
+- **F31 Security discovery:** every deployed product and the three marketing sites serve an RFC 9116 `/.well-known/security.txt` with a private reporting contact, an expiry within a year, `Preferred-Languages: en, it`, and a policy link.
+- **F32 Code scanning:** public `qiick-io` repositories run CodeQL and OpenSSF Scorecard weekly and on pushes to `develop`. They use standard hosted runners, display a Scorecard badge and report to GitHub code scanning. PHP uses PHPStan at max and the existing checks.
+- **F33 Release inventory:** every GitHub release attaches a CycloneDX SBOM. Release artefacts that already carry build provenance also carry an SBOM attestation.
+- **F34 ASVS 5.0 L2:** every product uses `docs/asvs.md` as its security checklist. Record a status and evidence for every OWASP ASVS 5.0.0 Level 1 and Level 2 requirement, including why an item does not apply and which qiick package owns any inherited control.
 
-With a `conventions` object in `qiick-standards.json`, the standards drift check runs the static checks of F19, F20, F22–F24, F26, F29 and F30; `migrations-frozen / migrations-frozen` checks F21; `scripts/check-repo-settings.mjs` in app-ui checks that private vulnerability reporting is on. An exception is a `conventions.divergences` entry like any other convention.
+With a `conventions` object in `qiick-standards.json`, the standards drift check runs the static checks of F19, F20, F22–F24, F26, F29, F30 and F34; `migrations-frozen / migrations-frozen` checks F21; `scripts/check-repo-settings.mjs` in app-ui checks that private vulnerability reporting is on. An exception is a `conventions.divergences` entry like any other convention.
 
-**Details:** `.qiick/standards/operations.md`. Read it before writing or changing SECURITY.md, a secret, a runbook, a migration that drops, renames or changes a column or table, a backup, a release tag or release workflow, a dependency or an audit exception, monitoring or health endpoints, or anything that stores or sends personal data.
+**Details:** `.qiick/standards/operations.md`. Read it before writing or changing SECURITY.md, an ASVS assessment, a secret, a runbook, a migration that drops, renames or changes a column or table, a backup, a release tag or release workflow, a dependency or an audit exception, monitoring or health endpoints, or anything that stores or sends personal data.
 
 ## Releases: never without the maintainer
 

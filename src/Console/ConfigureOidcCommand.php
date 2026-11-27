@@ -8,16 +8,20 @@ use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\FileStore;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\MissingAttributeException;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Route;
 use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
+use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
 use Qiick\Oidc\Data\DiscoveryDocumentData;
 use Qiick\Oidc\Data\ProviderConfigurationData;
 use Qiick\Oidc\Exceptions\OidcException;
 use Qiick\Oidc\Models\UserIdentity;
 use Qiick\Oidc\Services\DiscoveryService;
+use Qiick\Oidc\Services\FortifySecondFactorChallengeService;
 use Qiick\Oidc\Services\IdentityProviderHttpService;
 use Qiick\Oidc\Services\JwtValidatorService;
 
@@ -30,7 +34,7 @@ use Qiick\Oidc\Services\JwtValidatorService;
  * discovery document and the capabilities it advertises, the JWKS, the
  * signing algorithms, the redirect and logout URIs, that `app.timezone` is
  * UTC, that the cache store can make each login state single-use, the
- * front-channel logout setup when it is on and, in SSO-only mode,
+ * front-channel logout setup when it is on, MFA and, in SSO-only mode,
  * that a break-glass account exists. It
  * prints the URIs to register at the IdP. With `--write-env` it writes the
  * settings to `.env`, only when no check failed. `--json` prints a machine
@@ -67,7 +71,10 @@ final class ConfigureOidcCommand extends Command
         DiscoveryService $discovery,
         IdentityProviderHttpService $identityProviderHttp,
         BreakGlassPolicyContract $breakGlassPolicy,
+        SecondFactorChallengeContract $secondFactorChallenge,
     ): int {
+        $this->results = [];
+        $this->capabilities = null;
         $this->applyOptions();
         $configuration = $this->resolveConfiguration($configurationRepository);
 
@@ -84,6 +91,7 @@ final class ConfigureOidcCommand extends Command
             $this->checkTimezone();
             $this->checkCacheStore();
             $this->checkFrontChannelLogout();
+            $this->checkMultiFactor($secondFactorChallenge);
             $this->checkBreakGlass($breakGlassPolicy);
         }
 
@@ -97,6 +105,37 @@ final class ConfigureOidcCommand extends Command
         $this->report($hasFailure, $urisToRegister);
 
         return $hasFailure ? self::FAILURE : self::SUCCESS;
+    }
+
+    /** Old published allowlists only work after the operator opts in to trust. */
+    private function checkMultiFactor(SecondFactorChallengeContract $secondFactorChallenge): void
+    {
+        $hasAllowlist = $this->configuredStrings('oidc.mfa.amr_values') !== []
+            || $this->configuredStrings('oidc.mfa.acr_values') !== [];
+        $isProviderTrusted = Config::boolean('oidc.mfa.trust_provider');
+
+        if ($hasAllowlist && ! $isProviderTrusted) {
+            $this->record('identity provider MFA', 'failure', 'oidc.mfa.amr_values or oidc.mfa.acr_values is set while oidc.mfa.trust_provider is off. Enable trust for a verified IdP or clear both allowlists.');
+        }
+
+        if (! Config::boolean('oidc.mfa.required') || ($isProviderTrusted && $hasAllowlist) || ! $secondFactorChallenge instanceof FortifySecondFactorChallengeService) {
+            return;
+        }
+
+        $configuredActiveColumn = Config::get('oidc.users.active_column');
+        $activeColumn = is_string($configuredActiveColumn) && $configuredActiveColumn !== '' ? $configuredActiveColumn : null;
+
+        try {
+            if ($secondFactorChallenge->hasAvailableEnrollment(UserIdentity::userModel(), $activeColumn)) {
+                return;
+            }
+        } catch (QueryException|MissingAttributeException) {
+            $this->record('local MFA', 'failure', 'oidc.mfa.required is on. Cannot read Fortify enrollment from the configured user model; check the database and Fortify migrations.');
+
+            return;
+        }
+
+        $this->record('local MFA', 'failure', 'oidc.mfa.required is on but no trusted IdP claims or usable local Fortify enrollment can satisfy it. Configure a trusted IdP or enable Fortify and enroll users before deployment.');
     }
 
     /**

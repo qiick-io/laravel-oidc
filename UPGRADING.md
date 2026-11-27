@@ -1,21 +1,49 @@
 # Upgrading
 
-What an app has to do for each pre-release, newest first. The [CHANGELOG](./CHANGELOG.md) lists every change; this page says what to act on. The public API that `1.0.0` freezes is in [`docs/PUBLIC-API.md`](./docs/PUBLIC-API.md).
+What an app has to do for each pre-release, newest first. The [CHANGELOG](./CHANGELOG.md) lists every change; this page says what to act on. The public API that `1.0.0` freezes is in [`docs/public-api.md`](./docs/public-api.md).
 
-## From any beta to 1.0.0-beta.8, in one pass
+## Unreleased
 
-The betas edit the `create_…` migrations instead of adding forward ones (package migrations freeze only at the first stable tag), so the shortest safe path from any beta is:
+When `oidc.enabled` is true, OIDC now schedules hourly logout revocation pruning. Remove any existing app schedule for `oidc:prune-logout-revocations`, or set `oidc.backchannel_logout.schedule` to `false` to keep managing it in the app. Apps that enable OIDC only through a custom provider repository while keeping `oidc.enabled` false should keep their app schedule. Use a shared scheduler cache on multi-server deployments. The command's new `--dry-run` option reports the number of eligible rows before you prune.
 
-1. `composer require qiick/laravel-oidc:^1.0@beta` (it accepts `qiick/laravel-outbound:^0.1 || ^0.2`).
-2. An app that published the migrations (`vendor:publish --tag=oidc-migrations`) deletes the published package migrations and publishes them again.
-3. **Recreate the package tables.** Locally: `php artisan migrate:fresh --seed`. On a shared install: back up `user_identities`, recreate `user_identities` and `oidc_logout_revocations` from the package migrations, and restore the identity rows. A plain `migrate` does not pick up the edited create migrations. Before restoring, make sure no user holds two identities of one issuer: the unique `(user_id, issuer)` key refuses them.
-4. Keep your published `config/oidc.php`: nested keys it lacks now get the package default (the service provider merges them), and every key you set keeps your value.
-5. Register `{APP_URL}/auth/oidc/logged-out` at the IdP as a post-logout redirect URI and set `oidc.logout.redirect_to` (see "Post-logout return route" below).
-6. Point `oidc.cache.store` at a store every app server shares (database, redis): each login `state` is consumed there.
-7. Schedule `php artisan oidc:prune-logout-revocations` hourly.
-8. Run `php artisan oidc:configure` and fix every failure and warning it reports.
+## From any beta to 1.0.0-beta.9, in one pass
 
-Then read the sections of the versions you skip: they list the behaviour changes to announce and the code an app may have to change.
+1. Update OIDC and Outbound together. If the app still uses the Outbound beta, require it explicitly in the root project.
+
+   ```bash
+   composer require 'qiick/laravel-oidc:1.0.0-beta.9' 'qiick/laravel-outbound:^0.2.0-beta.4' --with-all-dependencies
+   ```
+
+   A compatible Outbound `^1.0` release also satisfies OIDC. Follow Outbound's upgrade notes for any webhook tables you use.
+2. If upgrading from beta.7 or earlier, bring the two package tables up to the beta.8 schema. If you published the migrations, back up the old package copies, remove them and run `vendor:publish --tag=oidc-migrations`. Locally, use `php artisan migrate:fresh --seed` only on a disposable database. On a shared installation, back up `user_identities`, recreate `user_identities` and `oidc_logout_revocations` from the package migrations, then restore identities and expire OIDC sessions. A user can keep one identity per issuer. Review the linked identities for duplicates before restoring them. Databases migrated with beta.8 already have the required schema.
+3. Keep your published `config/oidc.php`. Missing keys get the shipped defaults. Boot reports the key and expected type for an invalid value.
+4. Apply the MFA settings below before enabling SSO on the upgraded app.
+5. Register `{APP_URL}/auth/oidc/logged-out` at the IdP as a post-logout redirect URI and set `oidc.logout.redirect_to`.
+6. Point `oidc.cache.store` at a store every app server shares, such as a database or Redis, to consume each login state once.
+7. Keep `oidc:prune-logout-revocations` scheduled hourly with Laravel's `onOneServer()` on a shared scheduler cache.
+8. Run `php artisan oidc:check` and exercise a real login and logout before switching users over.
+
+Read the notes for each beta you skipped for changes that affect your app.
+
+## 1.0.0-beta.9 (from 1.0.0-beta.8)
+
+**Before deploying with `oidc.mfa.required = true`, verify the second-factor setup.** Users who rely on IdP MFA and have no local second factor need explicit provider trust. With `oidc.only = true`, verify a working local break-glass login before the upgrade.
+
+For Signaculum installations that rely on MFA at the IdP, set these values in the `mfa` section of the published `config/oidc.php`.
+
+```php
+'mfa' => [
+    'required' => true,
+    'trust_provider' => true,
+    'amr_values' => ['mfa'],
+    'acr_values' => ['urn:qiick:loa:mfa'],
+    // Keep your other published MFA settings.
+],
+```
+
+For another IdP, verify its signed claims before setting the accepted values. For local-only MFA, clear both provider allowlists and enroll users or bind a working second-factor adapter. `oidc:check` shares setup diagnostics with `oidc:configure` and exits non-zero for ignored lists or required MFA without a usable configured path. Check custom adapters with a real login. A required challenge that returns `null` refuses the login and rolls back JIT provisioning and role changes on the provisioning connection.
+
+Back-channel logout counts rejected requests against `oidc.backchannel_logout.rate_limit` (600 per sender IP per minute by default, `null` to disable). Configure Laravel's `TrustProxies` if OIDC sits behind a reverse proxy. Beta.9 uses the replay index and schema shipped with beta.8.
 
 ## 1.0.0-beta.8 (from 1.0.0-beta.7)
 
@@ -36,7 +64,8 @@ Then read the sections of the versions you skip: they list the behaviour changes
 - **`oidc:import-legacy-subjects`:** the issuer comes from the bound `ProviderConfigurationRepositoryContract`, never `oidc.issuer`. While SSO is not configured, pass `--issuer`. `--dry-run` now works before the package migration.
 - **Logout route throttle:** `GET /auth/oidc/logged-out` allows 60 requests a minute.
 - **Logout event:** `OidcLogoutReceivedEvent` is dispatched for every stored logout; listen to it for the app's activity log.
-- **Code that builds internal classes by hand** (prefer the container; they are `@internal`, see `docs/PUBLIC-API.md`): `AuthorizationCodeFlowService` takes `leewaySeconds`, `isRequestedAcrRequired`, `cache` and `isArrayCacheAllowed`; `SessionRevocationService` takes the event dispatcher and `leewaySeconds`; `FortifySecondFactorChallengeService` takes optional Fortify class names (test hooks). Removed: `IdentityProviderHttpService::UnlimitedTimeoutSeconds`, `IdentitySessionService::PENDING_SECONDS`, `RoleMappingService::ALWAYS_FORBIDDEN_ROLES`; `JwtValidatorService::SUPPORTED_ALGORITHMS` is now `JwtValidatorService::supportedAlgorithms()`.
+- Apps that construct `AuthorizationCodeFlowService` pass `leewaySeconds`, `isRequestedAcrRequired`, `cache` and `isArrayCacheAllowed`. `FortifySecondFactorChallengeService` accepts optional Fortify class names for test adapters.
+- Internal services are resolved through the container. `SessionRevocationService` now receives the event dispatcher and `leewaySeconds`. `IdentityProviderHttpService::UnlimitedTimeoutSeconds`, `IdentitySessionService::PENDING_SECONDS` and `RoleMappingService::ALWAYS_FORBIDDEN_ROLES` were removed. `JwtValidatorService::supportedAlgorithms()` replaces `JwtValidatorService::SUPPORTED_ALGORITHMS`.
 
 ### Post-logout return route
 
