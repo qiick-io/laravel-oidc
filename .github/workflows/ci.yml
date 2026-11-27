@@ -339,7 +339,10 @@ jobs:
   signaculum:
     name: Signaculum end to end
     needs: package-matrix
-    if: needs.package-matrix.outputs.docs-only != 'true'
+    # Fork pull requests do not receive the private Signaculum checkout token.
+    if: >-
+      needs.package-matrix.outputs.docs-only != 'true' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -371,6 +374,9 @@ jobs:
           cache: npm
           cache-dependency-path: .signaculum/package-lock.json
 
+      - name: Test Signaculum log redaction
+        run: node --test tests/Fixtures/signaculum/redact-server-log.test.mjs
+
       - name: Install package dependencies
         run: composer update --no-interaction --prefer-dist
 
@@ -401,13 +407,13 @@ jobs:
           php -S "127.0.0.1:${BACKCHANNEL_PORT}" tests/Fixtures/signaculum/backchannel-receiver.php > "${RUNNER_TEMP}/backchannel-receiver.log" 2>&1 &
           (cd "${SIGNACULUM_DIR}" && php artisan serve --host=127.0.0.1 --port="${SIGNACULUM_PORT}") > "${RUNNER_TEMP}/signaculum-serve.log" 2>&1 &
           for _attempt in $(seq 1 60); do
-            curl -sf "${SIGNACULUM_URL}/.well-known/openid-configuration" > /dev/null && exit 0
+            discovery_status="$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_code}' "${SIGNACULUM_URL}/.well-known/openid-configuration" || true)"
+            if [[ "${discovery_status}" == 200 ]]; then
+              exit 0
+            fi
             sleep 2
           done
-          echo '--- signaculum serve ---'
-          cat "${RUNNER_TEMP}/signaculum-serve.log" || true
-          echo '--- backchannel ---'
-          cat "${RUNNER_TEMP}/backchannel-receiver.log" || true
+          printf 'Signaculum discovery did not become ready (HTTP %s).\n' "${discovery_status}" >&2
           exit 1
 
       - name: Pest (Signaculum)
@@ -417,6 +423,27 @@ jobs:
           # shellcheck disable=SC1090
           source "${SIGNACULUM_RUN_STATE_DIR}/env.sh"
           vendor/bin/pest --group=signaculum
+
+      - name: Redact Signaculum server logs
+        id: redact-signaculum-logs
+        if: failure()
+        run: |
+          diagnostics_dir="${RUNNER_TEMP}/signaculum-diagnostics"
+          mkdir "${diagnostics_dir}"
+          for log in signaculum-serve.log backchannel-receiver.log; do
+            if [[ -f "${RUNNER_TEMP}/${log}" ]]; then
+              node tests/Fixtures/signaculum/redact-server-log.mjs < "${RUNNER_TEMP}/${log}" > "${diagnostics_dir}/${log}"
+            fi
+          done
+
+      - name: Upload redacted Signaculum logs
+        if: failure() && steps.redact-signaculum-logs.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signaculum-diagnostics
+          path: ${{ runner.temp }}/signaculum-diagnostics/*.log
+          retention-days: 3
+          if-no-files-found: ignore
 
   zitadel:
     name: Zitadel end to end

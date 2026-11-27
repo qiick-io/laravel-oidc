@@ -272,7 +272,7 @@ function followSignaculumRedirects(Client $browser, string $url, int $maximumHop
         $currentUrl = $absoluteLocation;
     }
 
-    throw new RuntimeException('Signaculum redirect loop while following '.$url);
+    throw new RuntimeException('Signaculum exceeded the maximum number of redirects.');
 }
 
 /**
@@ -308,6 +308,7 @@ function loginAtSignaculum(
     ]);
 
     $nextLocation = $loginResponse->getHeaderLine('Location');
+    $loginStatus = $loginResponse->getStatusCode();
 
     if ($totpSecret !== null && $totpSecret !== '') {
         $challengeUrl = $nextLocation !== ''
@@ -327,13 +328,11 @@ function loginAtSignaculum(
             ],
         ]);
         $nextLocation = $challengeResponse->getHeaderLine('Location');
+        $loginStatus = $challengeResponse->getStatusCode();
     }
 
     if ($nextLocation === '') {
-        throw new RuntimeException(
-            'Signaculum login did not redirect (status '.$loginResponse->getStatusCode().'): '
-            .substr((string) $loginResponse->getBody(), 0, 400),
-        );
+        throw new RuntimeException("Signaculum login did not redirect (HTTP {$loginStatus}).");
     }
 
     $afterLogin = followSignaculumRedirects($browser, absoluteSignaculumUrl($nextLocation, $issuer.'/login'));
@@ -344,8 +343,7 @@ function loginAtSignaculum(
 
     if (! str_starts_with($afterLogin['location'], 'http://localhost/auth/oidc/callback')) {
         throw new RuntimeException(
-            'Signaculum did not redirect to the package callback. Last location: '
-            .$afterLogin['location'].' body: '.substr($afterLogin['body'], 0, 500),
+            "Signaculum did not redirect to the package callback (HTTP {$afterLogin['status']}).",
         );
     }
 
@@ -494,8 +492,9 @@ it('ends the Signaculum session through RP-initiated logout and consumes a back-
         (string) $this->get('/auth/oidc/redirect')->headers->get('Location'),
     );
 
-    expect($afterIdpLogout['final_url'].' '.$afterIdpLogout['location'].' '.$afterIdpLogout['body'])
-        ->toMatch('/login|Log in|email/i');
+    $requiresLogin = preg_match('/login|Log in|email/i', $afterIdpLogout['final_url'].' '.$afterIdpLogout['location'].' '.$afterIdpLogout['body']) === 1;
+
+    expect($requiresLogin)->toBeTrue("Signaculum did not require a fresh login (HTTP {$afterIdpLogout['status']}).");
 });
 
 it('passes oidc:configure against Signaculum', function (): void {
