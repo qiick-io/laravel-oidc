@@ -65,7 +65,7 @@ final class FrontChannelLogoutController
             sessionId: $sessionId,
             tokenId: null,
             expiresAt: null,
-            channel: 'frontchannel',
+            channel: LogoutTokenData::FrontChannel,
         ));
 
         $issuerOrigin = $this->issuerOrigin($issuer);

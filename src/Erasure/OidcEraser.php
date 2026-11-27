@@ -11,6 +11,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
+use Qiick\Oidc\Data\LogoutTokenData;
 use Qiick\Oidc\Events\SubjectErasedEvent;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
 use Qiick\Oidc\Models\UserIdentity;
@@ -165,7 +166,7 @@ final readonly class OidcEraser
 
         foreach ($linkedRevocations as $revocation) {
             // A front-channel key derives from the SID and is erased with it.
-            $hasReplayEvidence = $revocation->channel === 'backchannel' && $revocation->replay_key !== null;
+            $hasReplayEvidence = $revocation->channel === LogoutTokenData::BackChannel && $revocation->replay_key !== null;
             $shouldDelete = $mode === self::DELETE && ! $hasReplayEvidence;
             $counts[$shouldDelete ? 'deleted' : 'anonymised']++;
 

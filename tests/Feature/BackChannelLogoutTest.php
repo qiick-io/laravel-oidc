@@ -8,6 +8,7 @@ use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use Qiick\Oidc\Data\IdentitySessionData;
@@ -60,16 +61,41 @@ it('accepts a valid logout_token without session or CSRF token', function (): vo
         ->assertHeader('Cache-Control', 'no-store, private');
 });
 
-it('rate limits back-channel requests before processing the logout token', function (): void {
-    for ($attempt = 0; $attempt < 60; $attempt++) {
-        $this->post('/auth/oidc/backchannel-logout')->assertBadRequest();
-    }
-
-    postLogoutToken($this, $this->identityProvider)->assertTooManyRequests()->assertHeader('Retry-After');
+it('rate limits only rejected back-channel requests and allows a valid token on the same IP', function (): void {
+    Config::set('oidc.backchannel_logout.rate_limit', 2);
+    Log::spy();
+    $this->post('/auth/oidc/backchannel-logout')->assertBadRequest();
+    $this->post('/auth/oidc/backchannel-logout', ['logout_token' => 'invalid'])->assertBadRequest();
+    $this->post('/auth/oidc/backchannel-logout', ['logout_token' => 'also-invalid'])->assertTooManyRequests()
+        ->assertHeader('Retry-After')
+        ->assertHeader('Cache-Control', 'no-store, private')
+        ->assertExactJson(['error' => 'too_many_requests']);
     expect(OidcLogoutRevocation::query()->count())->toBe(0);
+    Log::shouldHaveReceived('warning')->once();
+
+    postLogoutToken($this, $this->identityProvider)->assertOk();
 
     $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.20']);
-    postLogoutToken($this, $this->identityProvider)->assertOk();
+    $this->post('/auth/oidc/backchannel-logout')->assertBadRequest();
+});
+
+it('accepts an IdP burst of 100 valid back-channel tokens within one minute', function (): void {
+    $this->freezeTime();
+
+    for ($notification = 1; $notification <= 100; $notification++) {
+        postLogoutToken($this, $this->identityProvider, ['jti' => 'burst-'.$notification])->assertOk();
+    }
+
+    expect(OidcLogoutRevocation::query()->count())->toBe(100);
+});
+
+it('disables back-channel rejection rate limiting when the limit is null', function (): void {
+    Config::set('oidc.backchannel_logout.rate_limit', null);
+    $this->freezeTime();
+
+    for ($attempt = 0; $attempt < 61; $attempt++) {
+        $this->post('/auth/oidc/backchannel-logout')->assertBadRequest();
+    }
 });
 
 it('ends the local session created by the logged-out IdP session on its next request', function (): void {

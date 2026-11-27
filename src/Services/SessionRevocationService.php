@@ -39,8 +39,8 @@ final readonly class SessionRevocationService
 
     /**
      * Persist the revocation, then warm the cache and dispatch
-     * OidcLogoutReceivedEvent. Repeated front-channel notices for the same
-     * session acknowledge the stored logout without restarting its lifetime.
+     * OidcLogoutReceivedEvent. A front-channel notice for an active
+     * revocation acknowledges it without restarting its lifetime.
      *
      * @throws InvalidTokenException when the logout token jti was already used
      */
@@ -52,12 +52,22 @@ final readonly class SessionRevocationService
             $logoutToken->tokenId !== null => hash('sha256', $logoutToken->tokenId),
             // A non-hex prefix separates SID keys from every signed JTI digest
             // and SHA-224 leaves room for it in the existing 64-character column.
-            $logoutToken->channel === 'frontchannel' && $logoutToken->sessionId !== null => 'front:'.hash('sha224', $logoutToken->sessionId),
+            $logoutToken->channel === LogoutTokenData::FrontChannel && $logoutToken->sessionId !== null => 'front:'.hash('sha224', $logoutToken->sessionId),
             default => null,
         };
+        $hasFrontChannelReplayKey = $logoutToken->tokenId === null && $replayKey !== null;
 
         try {
-            DB::transaction(function () use ($logoutToken, $receivedAt, $expiresAt, $replayKey): void {
+            DB::transaction(function () use ($logoutToken, $receivedAt, $expiresAt, $replayKey, $hasFrontChannelReplayKey): void {
+                if ($hasFrontChannelReplayKey) {
+                    // Use a new row ID so an overlapping prune of the expired row
+                    // cannot delete the renewed revocation.
+                    OidcLogoutRevocation::query()->where('issuer', $logoutToken->issuer)
+                        ->where('replay_key', $replayKey)
+                        ->where('expires_at', '<=', $receivedAt)
+                        ->delete();
+                }
+
                 OidcLogoutRevocation::query()->create([
                     'issuer' => $logoutToken->issuer,
                     'sid' => $logoutToken->sessionId,
@@ -69,9 +79,9 @@ final readonly class SessionRevocationService
                     'received_at' => $receivedAt,
                     'expires_at' => Date::createFromTimestamp($expiresAt),
                 ]);
-            });
+            }, attempts: 3);
         } catch (UniqueConstraintViolationException) {
-            if ($logoutToken->tokenId === null && $replayKey !== null) {
+            if ($hasFrontChannelReplayKey) {
                 return;
             }
 

@@ -94,6 +94,7 @@ it('refuses an empty logout_token and logs why a logout was refused', function (
     // An app may drop ConvertEmptyStringsToNull: the empty token must still
     // be refused before any discovery fetch.
     $this->withoutMiddleware(ConvertEmptyStringsToNull::class);
+    $this->withServerVariables(['REMOTE_ADDR' => null]);
 
     $this->post('/auth/oidc/backchannel-logout', ['logout_token' => ''])
         ->assertStatus(400)

@@ -37,18 +37,16 @@ Route::middleware(is_array($browserMiddleware) ? $browserMiddleware : ['web'])->
 
 if ($shouldRegister('oidc.backchannel-logout')) {
     Route::post('backchannel-logout', BackChannelLogoutController::class)
-        // An IdP's server traffic has a budget independent of browser requests.
-        ->middleware('throttle:60,1,oidc-backchannel-logout:')
         ->name('oidc.backchannel-logout');
 }
 
 if ($shouldRegister('oidc.logged-out')) {
     // Throttled like front-channel logout: every unmatched state logs a warning.
-    Route::middleware(['web', 'throttle:60,1'])->get('logged-out', PostLogoutReturnController::class)->name('oidc.logged-out');
+    Route::middleware(['web', 'throttle:60,1,oidc-logged-out:'])->get('logged-out', PostLogoutReturnController::class)->name('oidc.logged-out');
 }
 
 if ($shouldRegister('oidc.frontchannel-logout')) {
     Route::get('frontchannel-logout', FrontChannelLogoutController::class)
-        ->middleware('throttle:60,1')
+        ->middleware('throttle:60,1,oidc-frontchannel-logout:')
         ->name('oidc.frontchannel-logout');
 }
