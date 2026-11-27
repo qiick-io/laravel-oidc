@@ -37,6 +37,8 @@ Route::middleware(is_array($browserMiddleware) ? $browserMiddleware : ['web'])->
 
 if ($shouldRegister('oidc.backchannel-logout')) {
     Route::post('backchannel-logout', BackChannelLogoutController::class)
+        // An IdP's server traffic has a budget independent of browser requests.
+        ->middleware('throttle:60,1,oidc-backchannel-logout:')
         ->name('oidc.backchannel-logout');
 }
 

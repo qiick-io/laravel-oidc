@@ -164,7 +164,8 @@ final readonly class OidcEraser
             ->get();
 
         foreach ($linkedRevocations as $revocation) {
-            $hasReplayEvidence = $revocation->replay_key !== null;
+            // A front-channel key derives from the SID and is erased with it.
+            $hasReplayEvidence = $revocation->channel === 'backchannel' && $revocation->replay_key !== null;
             $shouldDelete = $mode === self::DELETE && ! $hasReplayEvidence;
             $counts[$shouldDelete ? 'deleted' : 'anonymised']++;
 
@@ -182,7 +183,13 @@ final readonly class OidcEraser
             if ($shouldDelete) {
                 $row->delete();
             } else {
-                $row->update(['sub' => null, 'sid' => null, 'jti' => null, 'metadata' => null]);
+                $row->update([
+                    'sub' => null,
+                    'sid' => null,
+                    'jti' => null,
+                    'replay_key' => $hasReplayEvidence ? $revocation->replay_key : null,
+                    'metadata' => null,
+                ]);
             }
         }
     }

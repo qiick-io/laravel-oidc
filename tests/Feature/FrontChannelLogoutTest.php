@@ -6,9 +6,11 @@ use Illuminate\Auth\GenericUser;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\Event;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Data\IdentitySessionData;
 use Qiick\Oidc\Data\ProviderConfigurationData;
+use Qiick\Oidc\Events\OidcLogoutReceivedEvent;
 use Qiick\Oidc\Exceptions\OidcNotConfiguredException;
 use Qiick\Oidc\Http\Controllers\FrontChannelLogoutController;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
@@ -55,6 +57,35 @@ it('revokes the IdP session from iss and sid when front-channel logout is on', f
         )))
         ->get('/probe')
         ->assertSeeText('guest');
+});
+
+it('acknowledges a repeated front-channel logout without extending it or dispatching another event', function (): void {
+    Event::fake([OidcLogoutReceivedEvent::class]);
+    Config::set('oidc.frontchannel_logout.enabled', true);
+    $logoutUrl = '/auth/oidc/frontchannel-logout?'.http_build_query(['iss' => $this->identityProvider->issuer, 'sid' => 'front-sid-1']);
+
+    $this->get($logoutUrl)->assertOk();
+    $originalExpiry = OidcLogoutRevocation::query()->sole()->expires_at;
+
+    $this->travel(1)->seconds();
+    $this->get($logoutUrl)->assertOk()->assertHeader('Cache-Control', 'no-store, private');
+
+    $revocation = OidcLogoutRevocation::query()->sole();
+    expect($revocation->replay_key)->not->toBeNull()
+        ->and($revocation->expires_at->equalTo($originalExpiry))->toBeTrue();
+    Event::assertDispatchedTimes(OidcLogoutReceivedEvent::class, 1);
+});
+
+it('keeps front-channel SID keys separate from signed back-channel JTI keys', function (): void {
+    Config::set('oidc.frontchannel_logout.enabled', true);
+    $sessionId = 'front-sid-1';
+
+    $this->get('/auth/oidc/frontchannel-logout?'.http_build_query(['iss' => $this->identityProvider->issuer, 'sid' => $sessionId]))->assertOk();
+    $this->post('/auth/oidc/backchannel-logout', [
+        'logout_token' => $this->identityProvider->sign($this->identityProvider->logoutTokenClaims(['jti' => $sessionId]), ['typ' => 'logout+jwt']),
+    ])->assertOk();
+
+    expect(OidcLogoutRevocation::query()->distinct()->count('replay_key'))->toBe(2);
 });
 
 it('refuses front-channel logout without both iss and sid', function (string $query): void {

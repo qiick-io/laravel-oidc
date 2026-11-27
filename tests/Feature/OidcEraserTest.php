@@ -104,6 +104,21 @@ it('preserves the anonymised identity and revocation rows without any link back 
         ->and($user->fresh())->not->toBeNull();
 });
 
+it('clears the front-channel replay key when anonymising a corroborated SID', function (): void {
+    $user = localUser();
+    $identity = linkIdentity($user);
+    $revoker = app(SessionRevocationService::class);
+    $revoker->revoke(new LogoutTokenData($identity->issuer, $identity->subject, 'corroborated-sid', 'signed-token'));
+    $revoker->revoke(new LogoutTokenData($identity->issuer, null, 'corroborated-sid', channel: 'frontchannel'));
+    $frontChannelRevocation = OidcLogoutRevocation::query()->where('channel', 'frontchannel');
+
+    expect($frontChannelRevocation->sole()->replay_key)->not->toBeNull();
+
+    app(OidcEraser::class)->erase((string) $user->id, (string) Str::uuid(), OidcEraser::ANONYMISE);
+
+    expect($frontChannelRevocation->sole()->only(['sid', 'replay_key']))->toBe(['sid' => null, 'replay_key' => null]);
+});
+
 it('scrubs database error messages and rolls back erasure writes', function (): void {
     $user = localUser();
     $identity = linkIdentity($user);

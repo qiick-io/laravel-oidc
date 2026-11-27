@@ -60,6 +60,18 @@ it('accepts a valid logout_token without session or CSRF token', function (): vo
         ->assertHeader('Cache-Control', 'no-store, private');
 });
 
+it('rate limits back-channel requests before processing the logout token', function (): void {
+    for ($attempt = 0; $attempt < 60; $attempt++) {
+        $this->post('/auth/oidc/backchannel-logout')->assertBadRequest();
+    }
+
+    postLogoutToken($this, $this->identityProvider)->assertTooManyRequests()->assertHeader('Retry-After');
+    expect(OidcLogoutRevocation::query()->count())->toBe(0);
+
+    $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.20']);
+    postLogoutToken($this, $this->identityProvider)->assertOk();
+});
+
 it('ends the local session created by the logged-out IdP session on its next request', function (): void {
     postLogoutToken($this, $this->identityProvider, ['sid' => 'fake-session-1'])->assertOk();
 

@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release for its isolated IdP HTTP stack. Update products pinned to
   Outbound 0.1 before upgrading OIDC.
 
+### Security
+
+- Back-channel logout limits requests to 60 per minute per sender IP. Repeated
+  front-channel logout notices acknowledge the existing row without extending
+  it or dispatching a second event (#83).
+
 ## [1.0.0-beta.8] - 2026-11-26
 
 ### Upgrade notes

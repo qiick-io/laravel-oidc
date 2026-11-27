@@ -23,8 +23,8 @@ use Throwable;
  *
  * Source of truth is `oidc_logout_revocations` (standards review M10). The
  * cache is only an accelerator: a miss never means "not revoked", and a
- * failed table read fails closed (treated as revoked). Unique (issuer, jti)
- * is the durable BCL §2.6 replay check.
+ * failed table read fails closed (treated as revoked). A unique key per
+ * issuer enforces BCL §2.6 replay protection and FCL §2 idempotence.
  *
  * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
@@ -38,10 +38,9 @@ final readonly class SessionRevocationService
     ) {}
 
     /**
-     * Persist the revocation, then warm the cache. A duplicate (issuer, jti)
-     * is a replay and is refused. Dispatches OidcLogoutReceivedEvent once the
-     * row is committed and cached, so a listener never logs a logout that was
-     * not stored.
+     * Persist the revocation, then warm the cache and dispatch
+     * OidcLogoutReceivedEvent. Repeated front-channel notices for the same
+     * session acknowledge the stored logout without restarting its lifetime.
      *
      * @throws InvalidTokenException when the logout token jti was already used
      */
@@ -49,15 +48,22 @@ final readonly class SessionRevocationService
     {
         $receivedAt = Date::now();
         $expiresAt = $this->expiresAt($receivedAt->getTimestamp(), $logoutToken->expiresAt);
+        $replayKey = match (true) {
+            $logoutToken->tokenId !== null => hash('sha256', $logoutToken->tokenId),
+            // A non-hex prefix separates SID keys from every signed JTI digest
+            // and SHA-224 leaves room for it in the existing 64-character column.
+            $logoutToken->channel === 'frontchannel' && $logoutToken->sessionId !== null => 'front:'.hash('sha224', $logoutToken->sessionId),
+            default => null,
+        };
 
         try {
-            DB::transaction(function () use ($logoutToken, $receivedAt, $expiresAt): void {
+            DB::transaction(function () use ($logoutToken, $receivedAt, $expiresAt, $replayKey): void {
                 OidcLogoutRevocation::query()->create([
                     'issuer' => $logoutToken->issuer,
                     'sid' => $logoutToken->sessionId,
                     'sub' => $logoutToken->subject,
                     'jti' => $logoutToken->tokenId,
-                    'replay_key' => $logoutToken->tokenId === null ? null : hash('sha256', $logoutToken->tokenId),
+                    'replay_key' => $replayKey,
                     // Callers set backchannel or frontchannel; the DB default is backchannel.
                     'channel' => $logoutToken->channel,
                     'received_at' => $receivedAt,
@@ -65,6 +71,10 @@ final readonly class SessionRevocationService
                 ]);
             });
         } catch (UniqueConstraintViolationException) {
+            if ($logoutToken->tokenId === null && $replayKey !== null) {
+                return;
+            }
+
             throw new InvalidTokenException('logout_token [jti] was already used.');
         }
 
