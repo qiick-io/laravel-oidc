@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release for its isolated IdP HTTP stack. Update products pinned to
   Outbound 0.1 before upgrading OIDC.
 
+### Security
+
+- Back-channel logout limits rejected requests per sender IP, with a default of
+  600 per minute (`oidc.backchannel_logout.rate_limit`). Valid logout requests
+  are accepted throughout a burst. A repeated front-channel logout acknowledges
+  an active revocation once and creates a fresh revocation after expiry (#83).
+
 ## [1.0.0-beta.8] - 2026-11-26
 
 ### Upgrade notes

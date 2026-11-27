@@ -6,9 +6,11 @@ use Illuminate\Auth\GenericUser;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\Event;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Data\IdentitySessionData;
 use Qiick\Oidc\Data\ProviderConfigurationData;
+use Qiick\Oidc\Events\OidcLogoutReceivedEvent;
 use Qiick\Oidc\Exceptions\OidcNotConfiguredException;
 use Qiick\Oidc\Http\Controllers\FrontChannelLogoutController;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
@@ -27,6 +29,19 @@ beforeEach(function (): void {
 it('answers 404 for front-channel logout while the flag is off', function (): void {
     $this->get('/auth/oidc/frontchannel-logout?iss='.urlencode($this->identityProvider->issuer).'&sid=s1')
         ->assertNotFound();
+});
+
+it('keeps the browser logout limits separate from each other and other app throttles', function (): void {
+    Route::middleware('throttle:1,1')->get('/app-rate-limited', fn () => 'ok');
+    $this->freezeTime();
+
+    for ($requestNumber = 1; $requestNumber <= 60; $requestNumber++) {
+        $this->get('/auth/oidc/frontchannel-logout')->assertNotFound();
+    }
+
+    $this->get('/auth/oidc/frontchannel-logout')->assertTooManyRequests();
+    $this->get('/auth/oidc/logged-out')->assertRedirect('/');
+    $this->get('/app-rate-limited')->assertOk();
 });
 
 it('revokes the IdP session from iss and sid when front-channel logout is on', function (): void {
@@ -55,6 +70,64 @@ it('revokes the IdP session from iss and sid when front-channel logout is on', f
         )))
         ->get('/probe')
         ->assertSeeText('guest');
+});
+
+it('acknowledges a repeated front-channel logout without extending it or dispatching another event', function (): void {
+    Event::fake([OidcLogoutReceivedEvent::class]);
+    Config::set('oidc.frontchannel_logout.enabled', true);
+    $logoutUrl = '/auth/oidc/frontchannel-logout?'.http_build_query(['iss' => $this->identityProvider->issuer, 'sid' => 'front-sid-1']);
+
+    $this->get($logoutUrl)->assertOk();
+    $originalExpiry = OidcLogoutRevocation::query()->sole()->expires_at;
+
+    $this->travel(1)->seconds();
+    $this->get($logoutUrl)->assertOk()->assertHeader('Cache-Control', 'no-store, private');
+
+    $revocation = OidcLogoutRevocation::query()->sole();
+    expect($revocation->replay_key)->not->toBeNull()
+        ->and($revocation->expires_at->equalTo($originalExpiry))->toBeTrue();
+    Event::assertDispatchedTimes(OidcLogoutReceivedEvent::class, 1);
+});
+
+it('records a fresh front-channel revocation when the matching row expired before pruning', function (): void {
+    Event::fake([OidcLogoutReceivedEvent::class]);
+    Config::set('oidc.frontchannel_logout.enabled', true);
+    $issuer = $this->identityProvider->issuer;
+    $otherIssuer = 'https://another-provider.example.test';
+    $logoutUrl = '/auth/oidc/frontchannel-logout?'.http_build_query(['iss' => $issuer, 'sid' => 'front-sid-1']);
+
+    $this->get($logoutUrl)->assertOk();
+    $originalRevocation = OidcLogoutRevocation::query()->sole();
+    $originalExpiry = $originalRevocation->expires_at;
+    $this->get('/auth/oidc/frontchannel-logout?'.http_build_query(['iss' => $issuer, 'sid' => 'front-sid-2']))->assertOk();
+    Config::set('oidc.issuer', $otherIssuer);
+    $this->get('/auth/oidc/frontchannel-logout?'.http_build_query(['iss' => $otherIssuer, 'sid' => 'front-sid-1']))->assertOk();
+    Config::set('oidc.issuer', $issuer);
+
+    $this->travelTo($originalExpiry->copy()->addSecond());
+    $this->get($logoutUrl)->assertOk();
+
+    $revocation = OidcLogoutRevocation::query()->where('issuer', $issuer)->where('sid', 'front-sid-1')->sole();
+    expect($revocation->received_at->isAfter($originalExpiry))->toBeTrue()
+        ->and($revocation->expires_at->isAfter($revocation->received_at))->toBeTrue()
+        ->and($revocation->getKey())->not->toBe($originalRevocation->getKey())
+        ->and(OidcLogoutRevocation::query()->count())->toBe(3);
+    Event::assertDispatchedTimes(OidcLogoutReceivedEvent::class, 4);
+});
+
+it('keeps front-channel SID keys separate from signed back-channel JTI keys', function (): void {
+    Config::set('oidc.frontchannel_logout.enabled', true);
+    $sessionId = 'front-sid-1';
+
+    $this->get('/auth/oidc/frontchannel-logout?'.http_build_query(['iss' => $this->identityProvider->issuer, 'sid' => $sessionId]))->assertOk();
+    $this->post('/auth/oidc/backchannel-logout', [
+        'logout_token' => $this->identityProvider->sign($this->identityProvider->logoutTokenClaims(['jti' => $sessionId]), ['typ' => 'logout+jwt']),
+    ])->assertOk();
+
+    $frontChannelRevocation = OidcLogoutRevocation::query()->where('channel', 'frontchannel')->sole();
+
+    expect($frontChannelRevocation->replay_key)->toStartWith('front:')
+        ->and(OidcLogoutRevocation::query()->distinct()->count('replay_key'))->toBe(2);
 });
 
 it('refuses front-channel logout without both iss and sid', function (string $query): void {

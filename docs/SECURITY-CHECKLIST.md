@@ -55,6 +55,8 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 | SEC-45 | The revocation check runs after the session starts and before `auth` | OIDC Back-Channel Logout §2.7 | `BackChannelLogoutTest › does not let a revoked session reach a route behind auth`; `› orders its session check after the session starts and before auth` |
 | SEC-46 | Front-channel logout: off by default; needs both `iss` and `sid`; `iss` is the configured issuer; only the issuer origin may frame it | OIDC Front-Channel Logout §2–3 | `FrontChannelLogoutTest › answers 404 for front-channel logout while the flag is off`; `› refuses front-channel logout without both iss and sid`; `› refuses a front-channel iss that is not the configured issuer`; `› lets only the issuer origin frame the endpoint` |
 | SEC-47 | RP-initiated logout return: a random `state` in an HttpOnly, SameSite=Lax cookie; the landing page comes from config only | RP-Initiated Logout §2–3 | `PostLogoutReturnTest › sends a random state and returns to the package route by default`; `› redirects to the configured landing page when the state matches, and drops the cookie`; `› still redirects, with a warning, when the state does not check out` |
+| SEC-48 | Back-channel logout rate-limits rejections per sender IP while continuing to accept valid tokens | Logout availability and resource exhaustion | `BackChannelLogoutTest › rate limits only rejected back-channel requests and allows a valid token on the same IP`; `› accepts an IdP burst of 100 valid back-channel tokens within one minute` |
+| SEC-49 | Duplicate active front-channel revocations are idempotent, expired rows can be replaced, and signed JTIs have their own namespace | OIDC Front-Channel Logout §2 | `FrontChannelLogoutTest › acknowledges a repeated front-channel logout without extending it or dispatching another event`; `› records a fresh front-channel revocation when the matching row expired before pruning`; `› keeps front-channel SID keys separate from signed back-channel JTI keys` |
 
 ## Server-side requests (SSRF)
 
@@ -65,3 +67,9 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 | SEC-52 | Response bodies are size-capped; IdP errors never echo a body | resource exhaustion, information leak | `IdentityProviderHttpOutboundTest › refuses an oversized JSON response through the size limit`; `DiscoveryTest › surfaces an HTTP error without the response body` |
 | SEC-53 | Browser endpoints from discovery use https and carry no credentials | OIDC Discovery §3 | `DiscoveryTest › refuses browser endpoints with an unsafe scheme`; `OidcOutboundIsolationTest › refuses browser endpoints with credentials through DiscoveryService from the container` |
 | SEC-54 | Installing `qiick/laravel-outbound` cannot loosen the package's SSRF guard or timeouts | standards review | `OidcOutboundIsolationTest › refuses a loopback IdP when OutboundServiceProvider registers after OIDC with private hosts open` |
+
+## Published configuration
+
+| ID | Check | Spec | Tests |
+| --- | --- | --- | --- |
+| SEC-60 | Missing nested settings use shipped defaults and an invalid published value stops boot with the full key | Fleet F1 | `PublishedConfigDefaultsTest › fills an empty published section while keeping explicitly empty lists and null overrides`; `› fills missing nested keys from an older configuration cache`; `› reports the full key when a present config value is invalid at boot` |

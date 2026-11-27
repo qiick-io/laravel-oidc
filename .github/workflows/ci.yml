@@ -188,13 +188,7 @@ jobs:
 
       - name: Real-transport Pest
         if: needs.package-matrix.outputs.docs-only != 'true'
-        run: vendor/bin/pest --group=real-transport
-
-      - name: Stop php -S servers
-        if: always() && needs.package-matrix.outputs.docs-only != 'true'
-        run: |
-          # Real-transport starts php -S per test; kill any leftover listeners.
-          pkill -f 'php -S 127.0.0.1:' || true
+        run: vendor/bin/pest --group=real-transport --fail-on-empty-test-suite
 
   # Per-class mutation gate over every class with logic in src/ (packages 1.0
   # checklist item 3): one pest --mutate per class, split round-robin across
