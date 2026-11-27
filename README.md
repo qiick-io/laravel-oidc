@@ -408,6 +408,8 @@ vendor/bin/pest --group=zitadel
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md). Report vulnerabilities privately, as described in [SECURITY.md](./SECURITY.md). Every security check, with its spec and the tests that refuse a bad value, is listed in [`docs/SECURITY-CHECKLIST.md`](./docs/SECURITY-CHECKLIST.md).
 
+The package passes the OpenID Foundation conformance suite's relying-party plans (Basic, Config, RP-initiated, back-channel and front-channel logout). Results, the local harness and the certification path are in [`docs/conformance/openid.md`](./docs/conformance/openid.md).
+
 ## License
 
 MIT. See [LICENSE](./LICENSE).
