@@ -14,7 +14,7 @@ use Qiick\Oidc\Services\SsoOnlyModeService;
  * checked and before the session is touched, so throwing here leaves the user
  * signed out.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class EnforceSsoOnlyListener
 {

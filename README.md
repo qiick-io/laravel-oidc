@@ -13,7 +13,7 @@
 [![Laravel](https://img.shields.io/badge/Laravel-12%20%7C%2013-FF2D20?logo=laravel&logoColor=white)](./composer.json)
 [![Version](https://img.shields.io/badge/version-1.0.0--beta.8-orange.svg)](./CHANGELOG.md)
 
-> **Status:** `1.0.0-beta.8`. Pre-release: APIs and config may still change before `1.0.0`. See [CHANGELOG](./CHANGELOG.md) Upgrade notes. The public API that `1.0.0` freezes, and the deprecation policy after it, are in [`docs/PUBLIC-API.md`](./docs/PUBLIC-API.md).
+> **Status:** `1.0.0-beta.8`. Pre-release: APIs and config may still change before `1.0.0`. See [CHANGELOG](./CHANGELOG.md) Upgrade notes. The public API that `1.0.0` freezes, and the deprecation policy after it, are in [`docs/public-api.md`](./docs/public-api.md).
 
 `qiick/laravel-oidc` is an OpenID Connect client for Laravel apps: PKCE, `id_token` validation, logout, role mapping. It works with any standard identity provider: Keycloak, Zitadel, Authentik, Microsoft Entra ID, Google Workspace or Signaculum. It is the shared SSO login of the [qiick](https://qiick.io) apps and replaces the OIDC client that Externa and Excubia App each carry today.
 
@@ -53,7 +53,7 @@ Apps that use [Laravel Boost](https://github.com/laravel/boost) also get the pac
 
 ## Configuration
 
-Every key in `config/oidc.php` has an env var. They are defaults: an app can override them at runtime from its own settings (for example a settings table edited in an admin UI).
+The environment variables below configure common settings. The [public API inventory](./docs/public-api.md#configuration-and-environment) lists all keys and environment variables. An app can also supply provider settings from its own repository.
 
 | Env var | Config key | Default | Meaning |
 | --- | --- | --- | --- |
@@ -374,14 +374,16 @@ What the package defends against, and what it leaves to the app and the IdP. Dec
 | Forged or replayed login response | `state` checked and single-use per pending login (at most five per session, ten minutes each); PKCE `S256` on every login (RFC 7636); `nonce` bound to the `id_token` (OIDC Core 3.1.3.7); RFC 9207 `iss` checked whenever present, and required when the IdP advertises it. |
 | Forged or substituted `id_token` | Signature through the IdP's JWKS with an allowlist of algorithms (never `none` or HMAC), RSA keys of 2048 bits or more, EC keys on their own curve; `iss`, `aud`, `azp`, `exp`, `iat`, `at_hash`, `auth_time` against `max_age`; a `crit` header is refused. |
 | Substituted userinfo | Its `sub` must equal the `id_token` `sub` (OIDC Core 5.3.4). A claim in the `id_token` always wins over userinfo, and `amr`, `acr`, `auth_time`, `sid`, `azp` and `nbf` are never taken from userinfo. |
-| Account takeover through email | Auto-link is off by default and needs `email_verified: true`; one user links to at most one identity per issuer (unique key), and concurrent first logins cannot link twice. |
-| MFA bypass | Trust in IdP MFA is off by default. An explicitly trusted provider must return a signed `amr` or `acr` from the app's allowlist and satisfy any requested `acr`. The local challenge protects users who enabled Fortify TOTP voluntarily. If a required challenge cannot start, OIDC refuses the login and logs the reason. |
+| Account takeover through email | Auto-link is off by default and needs `email_verified: true` with the default verification policy. Enable it only for an IdP that controls email ownership. A unique key allows each local user to link at most one identity per issuer, including concurrent first logins. |
+| MFA bypass | Trust in IdP MFA is off by default. Once the app opts in, the provider must return a signed `amr` or `acr` from the app's allowlist and satisfy any requested `acr`. Fortify prompts users who enabled TOTP voluntarily when signed proof is absent. If a required local challenge cannot start, OIDC refuses the login and logs the reason with a request identifier. |
 | A logout that is lost | Back-channel and front-channel logouts are stored in `oidc_logout_revocations` before the endpoint answers. **The table is the source of truth; the cache is only an accelerator**, so `cache:clear`, eviction or one cache per server never loses a logout. A failed table read ends the session (fail closed). |
-| Replayed `logout_token` | Unique `(issuer, jti)`: a second use is refused. |
-| Session theft from storage | The `id_token` kept for logout is encrypted with the app key; access and refresh tokens are not stored. An unknown session payload version ends the session. |
+| Forged front-channel logout | The feature is off by default. The issuer must match the configured issuer. The matching `sid` is the sole proof of the browser notice. Someone who obtains a valid SID can terminate the local sessions tied to it. The effect is limited to session denial of service. |
+| Replayed `logout_token` | The unique `(issuer, replay_key)` index prevents reuse of the signed token's `jti` for its validation window. Front-channel revocations use a separate key namespace. |
+| Suppression of legitimate back-channel logout | The per-sender-IP limit counts only rejected requests. Once a sender exceeds the rejection limit, further rejections return `429` and suppress their diagnostic messages. Valid signed logouts remain accepted during bursts. Set Laravel's `TrustProxies` to the actual reverse proxies to attribute rejected requests to the correct sender. |
+| Session theft from storage | The package encrypts the stored `id_token` with the app key even when Laravel's `SESSION_ENCRYPT` is `false`. Enable `SESSION_ENCRYPT` in the host app to encrypt the entire stored session, including other session data. An unknown OIDC payload version ends the session. |
 | SSRF through discovery | Every server-side call (discovery, JWKS, token, userinfo) goes through `qiick/laravel-outbound`: https only, private, loopback and metadata addresses refused (unless `oidc.http.allow_private_hosts`, which still blocks metadata), the resolved address pinned, response size and time capped. |
 | Open redirect after logout | The post-logout return route redirects only to `oidc.logout.redirect_to` from config, and checks the logout `state` cookie. |
-| Lock-out by a broken IdP | SSO-only mode always keeps break-glass accounts (role plus confirmed second factor), and turning SSO off restores local login. |
+| Lock-out by a broken IdP | Break-glass accounts have a configured role and confirmed second factor. Apps with custom login callbacks apply the [break-glass policy](#sso-only-mode-and-break-glass) in each callback. Turning SSO off restores local login. |
 | Secrets in logs | Tokens, codes, secrets and full claim sets are never logged; the client secret is never printed by `oidc:configure`. |
 
 **Out of scope, left to the app or the IdP:**
@@ -424,7 +426,7 @@ vendor/bin/pest --group=zitadel
 
 ## Contributing and security
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Report vulnerabilities privately, as described in [SECURITY.md](./SECURITY.md). Every security check, with its spec and the tests that refuse a bad value, is listed in [`docs/SECURITY-CHECKLIST.md`](./docs/SECURITY-CHECKLIST.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Report vulnerabilities privately, as described in [SECURITY.md](./SECURITY.md). Every security check, with its spec and the tests that refuse a bad value, is listed in [`docs/security-checklist.md`](./docs/security-checklist.md).
 
 The package passes the OpenID Foundation conformance suite's relying-party plans (Basic, Config, RP-initiated, back-channel and front-channel logout). Results, the local harness and the certification path are in [`docs/conformance/openid.md`](./docs/conformance/openid.md).
 

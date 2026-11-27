@@ -43,12 +43,14 @@ it('creates every enriched user_identities column', function (): void {
 });
 
 it('assigns a UUID v7 public_id and defaults format_version to 1 on create', function (): void {
-    $identity = linkIdentity(localUser());
+    $identity = linkIdentity(localUser())->refresh();
 
     expect($identity->public_id)->not->toBeEmpty()
         ->and(Str::isUuid($identity->public_id))->toBeTrue()
         ->and(Str::isUuid($identity->public_id, 7))->toBeTrue()
-        ->and($identity->format_version)->toBe(1);
+        ->and($identity->format_version)->toBe(1)
+        ->and($identity->subject_type)->toBeNull()
+        ->and($identity->provider_key)->toBeNull();
 });
 
 it('casts link snapshots, last login auth metadata and timestamps', function (): void {

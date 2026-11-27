@@ -15,7 +15,7 @@ use Illuminate\Database\Eloquent\Model;
  * Countable) means no secret; any other value counts as a secret (fail
  * closed for the challenge).
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 trait ChecksTwoFactorSecretTrait
 {

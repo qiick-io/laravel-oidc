@@ -23,7 +23,7 @@ use Throwable;
  * random `kid` values (for example on the public back-channel logout endpoint)
  * cannot make the app hammer the IdP.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class JwksService
 {

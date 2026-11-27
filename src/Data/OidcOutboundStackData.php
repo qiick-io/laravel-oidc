@@ -12,7 +12,7 @@ use Qiick\Outbound\Ssrf\UrlGuardOptions;
 /**
  * The OIDC-private outbound stack: never the shared outbound container bindings.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class OidcOutboundStackData
 {

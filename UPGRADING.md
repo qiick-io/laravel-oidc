@@ -1,6 +1,6 @@
 # Upgrading
 
-What an app has to do for each pre-release, newest first. The [CHANGELOG](./CHANGELOG.md) lists every change; this page says what to act on. The public API that `1.0.0` freezes is in [`docs/PUBLIC-API.md`](./docs/PUBLIC-API.md).
+What an app has to do for each pre-release, newest first. The [CHANGELOG](./CHANGELOG.md) lists every change; this page says what to act on. The public API that `1.0.0` freezes is in [`docs/public-api.md`](./docs/public-api.md).
 
 ## From any beta to 1.0.0-beta.8, in one pass
 
@@ -73,7 +73,8 @@ before switching users over, particularly with a custom challenge contract.
 - **`oidc:import-legacy-subjects`:** the issuer comes from the bound `ProviderConfigurationRepositoryContract`, never `oidc.issuer`. While SSO is not configured, pass `--issuer`. `--dry-run` now works before the package migration.
 - **Logout route throttle:** `GET /auth/oidc/logged-out` allows 60 requests a minute.
 - **Logout event:** `OidcLogoutReceivedEvent` is dispatched for every stored logout; listen to it for the app's activity log.
-- **Code that builds internal classes by hand** (prefer the container; they are `@internal`, see `docs/PUBLIC-API.md`): `AuthorizationCodeFlowService` takes `leewaySeconds`, `isRequestedAcrRequired`, `cache` and `isArrayCacheAllowed`; `SessionRevocationService` takes the event dispatcher and `leewaySeconds`; `FortifySecondFactorChallengeService` takes optional Fortify class names (test hooks). Removed: `IdentityProviderHttpService::UnlimitedTimeoutSeconds`, `IdentitySessionService::PENDING_SECONDS`, `RoleMappingService::ALWAYS_FORBIDDEN_ROLES`; `JwtValidatorService::SUPPORTED_ALGORITHMS` is now `JwtValidatorService::supportedAlgorithms()`.
+- Apps that construct `AuthorizationCodeFlowService` pass `leewaySeconds`, `isRequestedAcrRequired`, `cache` and `isArrayCacheAllowed`. `FortifySecondFactorChallengeService` accepts optional Fortify class names for test adapters.
+- Internal services are resolved through the container. `SessionRevocationService` now receives the event dispatcher and `leewaySeconds`. `IdentityProviderHttpService::UnlimitedTimeoutSeconds`, `IdentitySessionService::PENDING_SECONDS` and `RoleMappingService::ALWAYS_FORBIDDEN_ROLES` were removed. `JwtValidatorService::supportedAlgorithms()` replaces `JwtValidatorService::SUPPORTED_ALGORITHMS`.
 
 ### Post-logout return route
 
