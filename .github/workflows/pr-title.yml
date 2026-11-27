@@ -1,0 +1,16 @@
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    uses: qiick-io/app-ui/.github/workflows/pr-title.yml@94753d4fb73913f6b5a3a5d0a685357b70829391 # develop after #295

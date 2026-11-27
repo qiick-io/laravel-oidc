@@ -1,6 +1,7 @@
 {
-    "$comment": "qiick standards pack: https://github.com/qiick-io/app-ui/tree/v0.15.0/standards. Sync: node <app-ui>/scripts/sync-standards.mjs --target .",
-    "ref": "v0.15.0",
+    "$comment": "qiick standards pack: https://github.com/qiick-io/app-ui/tree/94753d4fb73913f6b5a3a5d0a685357b70829391/standards. Sync: node <app-ui>/scripts/sync-standards.mjs --target .",
+    "ref": "94753d4fb73913f6b5a3a5d0a685357b70829391",
     "php": true,
+    "package": true,
     "erasure": true
 }
