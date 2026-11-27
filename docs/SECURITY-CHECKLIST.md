@@ -41,6 +41,7 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 | SEC-32 | Auto-link and JIT need a verified email; one identity per user and issuer, also under concurrent logins | OIDC Core §5.1, standards review | `SsoLoginTest › never auto-links or provisions from an unverified email`; `› does not auto-link a user already linked to another identity of the same issuer`; `› refuses an auto-link that loses the race to a concurrent link of the same user`; `› does not treat LIKE wildcards in an email as a match` |
 | SEC-33 | MFA counts only from a signed `amr` / `acr`; a requested `acr` not returned does not count (or refuses) | RFC 8176, OIDC Core §2 | `MultiFactorTest › runs the app second factor when the IdP did not prove MFA`; `StepUpAuthenticationTest › proves MFA through the requested acr only when the IdP returns it`; `› refuses a missing or lower acr when require_requested_acr is on` |
 | SEC-34 | Inactive users are refused; SSO-only mode keeps local login for break-glass accounts only | design §4 | `SsoLoginTest › refuses inactive users`; `SsoOnlyModeTest › keeps local login only for break-glass accounts`; `› refuses password logins through Auth::attempt() for everyone but break-glass accounts` |
+| SEC-35 | An active Fortify TOTP still requires a challenge after SSO when the user enrolled voluntarily, unless the signed ID token proves MFA | design §4, RFC 8176 | `FortifySecondFactorChallengeTest › SEC-35 enforces self-enrolled TOTP at the OIDC callback unless signed MFA satisfies it` |
 
 ## Session and logout
 

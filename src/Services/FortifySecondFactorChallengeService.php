@@ -16,9 +16,8 @@ use Symfony\Component\HttpFoundation\Response;
 /**
  * Default second factor: Laravel Fortify's two-factor challenge, started the
  * way Fortify's own login pipeline starts it (`login.id` and `login.remember`
- * in the session, then the `two-factor.login` route). The package does not
- * depend on Fortify: without it, or without a confirmed TOTP secret on the
- * user, there is nothing to challenge.
+ * in the session, then the `two-factor.login` route). A self-enrolled second
+ * factor carries over to SSO even when the app does not require enrollment.
  */
 final readonly class FortifySecondFactorChallengeService implements SecondFactorChallengeContract
 {
@@ -39,7 +38,7 @@ final readonly class FortifySecondFactorChallengeService implements SecondFactor
 
     public function isRequired(Model&Authenticatable $user): bool
     {
-        return $this->isRequiredByDefault;
+        return $this->isRequiredByDefault || $this->hasConfirmedFortifySecondFactor($user);
     }
 
     public function challenge(Request $request, Model&Authenticatable $user, bool $shouldRemember): ?Response
