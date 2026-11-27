@@ -7,6 +7,8 @@ namespace Qiick\Oidc\Services;
 use Firebase\JWT\JWK;
 use Firebase\JWT\Key;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Support\Facades\Date;
+use OpenSSLAsymmetricKey;
 use Qiick\Oidc\Data\DiscoveryDocumentData;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Exceptions\InvalidTokenException;
@@ -20,11 +22,11 @@ use Throwable;
  * (OIDC Core 10.1.1). Refetches are rate limited by a cooldown, so tokens with
  * random `kid` values (for example on the public back-channel logout endpoint)
  * cannot make the app hammer the IdP.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class JwksService
 {
-    private const array KEY_TYPES_BY_ALGORITHM_PREFIX = ['RS' => 'RSA', 'PS' => 'RSA', 'ES' => 'EC'];
-
     public function __construct(
         private IdentityProviderHttpService $identityProviderHttp,
         private CacheRepository $cache,
@@ -38,10 +40,21 @@ final readonly class JwksService
      */
     public function key(DiscoveryDocumentData $discovery, ?string $keyId, string $algorithm): Key
     {
-        $cacheKey = 'oidc:jwks:'.hash('sha256', $discovery->jwksUri);
+        $cacheKey = sprintf('oidc:jwks:%s', hash('sha256', $discovery->jwksUri));
         $cachedKeys = $this->cache->get($cacheKey);
         $publishedKeys = is_array($cachedKeys) ? $cachedKeys : $this->fetchAndCache($discovery, $cacheKey);
-        $matchingKey = $this->findKey($publishedKeys, $keyId, $algorithm);
+
+        try {
+            $matchingKey = $this->findKey($publishedKeys, $keyId, $algorithm);
+        } catch (InvalidTokenException $ambiguousKeyId) {
+            // A cached set with the kid twice must not block logins until the
+            // cache expires once the IdP fixes it: refetch, within the cooldown.
+            if (! is_array($cachedKeys) || ! $this->mayRefetch($cacheKey)) {
+                throw $ambiguousKeyId;
+            }
+
+            $matchingKey = $this->findKey($this->fetchAndCache($discovery, $cacheKey), $keyId, $algorithm);
+        }
 
         if ($matchingKey === null && is_array($cachedKeys) && $this->mayRefetch($cacheKey)) {
             $matchingKey = $this->findKey($this->fetchAndCache($discovery, $cacheKey), $keyId, $algorithm);
@@ -61,11 +74,30 @@ final readonly class JwksService
             throw new InvalidTokenException('The matching JWKS key uses an unsupported curve.');
         }
 
+        $this->assertRsaKeyIsLongEnough($parsedKey);
+
         return $parsedKey;
     }
 
     /**
-     * @return list<array<string, mixed>>
+     * RSA keys need at least 2048 bits (RFC 7518 §3.3 and §3.5). php-jwt
+     * checks it for RS* but not for PS256, so the package checks every RSA
+     * key itself.
+     *
+     * @throws InvalidTokenException
+     */
+    private function assertRsaKeyIsLongEnough(Key $parsedKey): void
+    {
+        $keyMaterial = $parsedKey->getKeyMaterial();
+        $keyDetails = $keyMaterial instanceof OpenSSLAsymmetricKey ? openssl_pkey_get_details($keyMaterial) : false;
+
+        if (is_array($keyDetails) && $keyDetails['type'] === OPENSSL_KEYTYPE_RSA && $keyDetails['bits'] < 2048) {
+            throw new InvalidTokenException('The matching JWKS key is an RSA key shorter than 2048 bits.');
+        }
+    }
+
+    /**
+     * @return array<array-key, mixed>
      *
      * @throws IdentityProviderRequestException
      */
@@ -78,25 +110,32 @@ final readonly class JwksService
             throw new IdentityProviderRequestException('The JWKS has no [keys] array.');
         }
 
-        /** @var list<array<string, mixed>> $validKeys */
-        $validKeys = array_values(array_filter($publishedKeys, is_array(...)));
+        // Cached as published: findKey() skips any entry that is not a key object.
+        $this->cache->put($cacheKey, $publishedKeys, $this->cacheSeconds);
 
-        $this->cache->put($cacheKey, $validKeys, $this->cacheSeconds);
-
-        return $validKeys;
+        return $publishedKeys;
     }
 
     /**
-     * Picks the signing key for the token. Encryption keys (`use: enc`), keys
-     * of the wrong type and keys pinned to another `alg` are skipped. A token
-     * without `kid` is accepted only when exactly one candidate is left.
+     * Picks the signing key for the token. Skipped: encryption keys (`use:
+     * enc`), keys whose `key_ops` lacks `verify` (RFC 7517 §4.3), keys of the
+     * wrong type, EC keys on another curve than the algorithm's (RFC 7518
+     * §3.4) and keys pinned to another `alg`. A token without `kid` is
+     * accepted only when exactly one candidate is left; a `kid` that names
+     * several candidates is ambiguous and refused (fail closed).
      *
      * @param  array<array-key, mixed>  $publishedKeys
      * @return array<string, mixed>|null
+     *
+     * @throws InvalidTokenException when the token's kid names several keys
      */
     private function findKey(array $publishedKeys, ?string $keyId, string $algorithm): ?array
     {
-        $expectedKeyType = self::KEY_TYPES_BY_ALGORITHM_PREFIX[substr($algorithm, 0, 2)] ?? null;
+        $expectedKeyType = match (substr($algorithm, 0, 2)) {
+            'RS', 'PS' => 'RSA',
+            'ES' => 'EC',
+            default => null,
+        };
         $candidates = [];
 
         foreach ($publishedKeys as $publishedKey) {
@@ -104,8 +143,9 @@ final readonly class JwksService
                 continue;
             }
 
-            $isSigningKey = ($publishedKey['use'] ?? 'sig') === 'sig';
-            $hasExpectedType = ($publishedKey['kty'] ?? null) === $expectedKeyType;
+            $keyOperations = $publishedKey['key_ops'] ?? ['verify'];
+            $isSigningKey = ($publishedKey['use'] ?? 'sig') === 'sig' && is_array($keyOperations) && in_array('verify', $keyOperations, true);
+            $hasExpectedType = ($publishedKey['kty'] ?? null) === $expectedKeyType && $this->hasCurveOf($publishedKey, $algorithm);
             $hasCompatibleAlgorithm = ! isset($publishedKey['alg']) || $publishedKey['alg'] === $algorithm;
             $hasMatchingKeyId = $keyId === null || ($publishedKey['kid'] ?? null) === $keyId;
 
@@ -119,7 +159,28 @@ final readonly class JwksService
             return null;
         }
 
+        if (count($candidates) > 1) {
+            throw new InvalidTokenException("The JWKS publishes the kid [{$keyId}] more than once.");
+        }
+
         return $candidates[0] ?? null;
+    }
+
+    /**
+     * ES256 is defined on P-256 and ES384 on P-384 only (RFC 7518 §3.4);
+     * other algorithms carry no curve.
+     *
+     * @param  array<array-key, mixed>  $publishedKey
+     */
+    private function hasCurveOf(array $publishedKey, string $algorithm): bool
+    {
+        $expectedCurve = match ($algorithm) {
+            'ES256' => 'P-256',
+            'ES384' => 'P-384',
+            default => null,
+        };
+
+        return $expectedCurve === null || ($publishedKey['crv'] ?? null) === $expectedCurve;
     }
 
     /**
@@ -127,6 +188,6 @@ final readonly class JwksService
      */
     private function mayRefetch(string $cacheKey): bool
     {
-        return $this->cache->add($cacheKey.':refetch', true, $this->refetchCooldownSeconds);
+        return $this->cache->add("{$cacheKey}:refetch", Date::now()->getTimestamp(), $this->refetchCooldownSeconds);
     }
 }

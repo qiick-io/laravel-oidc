@@ -20,6 +20,8 @@ use Symfony\Component\HttpFoundation\Response;
  * logs the user out of the default guard (which also cycles the remember
  * token), invalidates the session and lets the request continue as a guest,
  * so the app's own `auth` middleware decides where to send the user.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class EnsureOidcSessionIsActiveMiddleware
 {
@@ -39,9 +41,13 @@ final readonly class EnsureOidcSessionIsActiveMiddleware
         }
 
         $session = $request->session();
+        $hasStoredIdentity = $session->has(IdentitySessionService::SESSION_KEY);
         $identity = $this->identitySession->current($session);
 
-        if ($identity !== null && $this->sessionRevocation->isRevoked($identity)) {
+        // Fail closed (M4): a stored payload that cannot be read (unknown
+        // format_version, corrupt shape) ends the session the same way a
+        // revocation does, so the login never silently loses BCL coverage.
+        if ($hasStoredIdentity && ($identity === null || $this->sessionRevocation->isRevoked($identity))) {
             $guard = $this->auth->guard();
 
             if ($guard instanceof StatefulGuard) {

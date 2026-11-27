@@ -14,6 +14,7 @@ enum LoginRefusalReasonEnum: string
     case AccountNotLinked = 'account_not_linked';
     case LinkedToAnotherIdentity = 'linked_to_another_identity';
     case EmailMissing = 'email_missing';
+    case EmailNotReleased = 'email_not_released';
     case EmailNotVerified = 'email_not_verified';
     case DomainNotAllowed = 'domain_not_allowed';
     case InactiveUser = 'inactive_user';
@@ -29,6 +30,7 @@ enum LoginRefusalReasonEnum: string
             self::AccountNotLinked => 'An account with this email exists but is not linked to SSO. Ask an admin to link it.',
             self::LinkedToAnotherIdentity => 'This account is already linked to a different SSO identity.',
             self::EmailMissing => 'SSO login failed: missing email claim.',
+            self::EmailNotReleased => 'SSO login failed: the identity provider did not share an email address. Ask an admin to check the SSO settings.',
             self::EmailNotVerified => 'SSO login requires a verified email from the identity provider.',
             self::DomainNotAllowed => 'Registration is restricted to allowed email domains.',
             self::InactiveUser => 'This account is inactive.',

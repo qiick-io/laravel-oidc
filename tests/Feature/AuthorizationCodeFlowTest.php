@@ -2,8 +2,11 @@
 
 declare(strict_types=1);
 
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Session\Session;
 use Illuminate\Http\Client\Request as HttpRequest;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Http;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
@@ -118,14 +121,90 @@ it('refuses a callback without state, with an unknown state, or from another bro
         ->and($identityProvider->tokenRequestCount)->toBe(0);
 });
 
-it('accepts each state once, even after a failed callback', function (): void {
+it('refuses a replay of a callback that succeeded', function (): void {
     $identityProvider = FakeIdentityProvider::fake();
     $session = browserSession();
     $callbackUrl = $identityProvider->authorize(startLogin($session));
 
     callback($callbackUrl, $session);
 
-    expect(fn () => callback($callbackUrl, $session))->toThrow(InvalidCallbackException::class, 'state');
+    expect(fn () => callback($callbackUrl, $session))->toThrow(InvalidCallbackException::class, 'The authorization response has a missing or unknown state.');
+});
+
+it('accepts each state once, even after a callback the IdP answered with an error', function (): void {
+    // The parallel session copy still holds the pending login, so only the
+    // used-state marker can refuse the replay.
+    FakeIdentityProvider::fake();
+    $session = browserSession();
+    $state = queryParameters(startLogin($session))['state'];
+    $parallelSession = clone $session;
+    $deniedCallbackUrl = 'http://localhost/auth/oidc/callback?error=access_denied&state='.$state;
+
+    expect(fn () => callback($deniedCallbackUrl, $session))->toThrow(InvalidCallbackException::class, 'access_denied')
+        ->and(fn () => callback($deniedCallbackUrl, $parallelSession))->toThrow(InvalidCallbackException::class, 'state was already used');
+});
+
+it('accepts each state once across requests that read the session before either wrote it', function (): void {
+    // Two parallel callbacks with one state each load the session before
+    // either saves it, so both still hold the pending login.
+    $identityProvider = FakeIdentityProvider::fake();
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+    $parallelSession = clone $session;
+
+    callback($callbackUrl, $session);
+
+    expect(fn () => callback($callbackUrl, $parallelSession))->toThrow(InvalidCallbackException::class, 'state was already used')
+        ->and($identityProvider->tokenRequestCount)->toBe(1);
+});
+
+it('refuses the callback when the state cannot be recorded as used', function (): void {
+    Cache::extend('failing', fn (): CacheRepository => Cache::repository(new class extends ArrayStore
+    {
+        public function add($key, $value, $seconds): bool
+        {
+            throw new RuntimeException('Cache is down.');
+        }
+    }));
+    config()->set('cache.stores.failing', ['driver' => 'failing']);
+    config()->set('oidc.cache.store', 'failing');
+    $identityProvider = FakeIdentityProvider::fake();
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+
+    expect(fn () => callback($callbackUrl, $session))->toThrow(InvalidCallbackException::class, 'could not be recorded as used')
+        ->and($identityProvider->tokenRequestCount)->toBe(0);
+});
+
+it('refuses the per-request array cache outside tests, since it cannot make a state single-use', function (): void {
+    $identityProvider = FakeIdentityProvider::fake();
+    config()->set('oidc.cache.store', 'array');
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+    app()->detectEnvironment(fn (): string => 'production');
+
+    expect(fn () => callback($callbackUrl, $session))->toThrow(InvalidCallbackException::class, 'array')
+        ->and($identityProvider->tokenRequestCount)->toBe(0);
+});
+
+it('records the used state per issuer for as long as a pending login lives', function (): void {
+    $identityProvider = FakeIdentityProvider::fake();
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+
+    callback($callbackUrl, $session);
+
+    expect(Cache::get('oidc:state:'.hash('sha256', $identityProvider->issuer."\n".queryParameters($callbackUrl)['state'])))->toBeTrue();
+});
+
+it('accepts a shared cache store outside tests', function (): void {
+    $identityProvider = FakeIdentityProvider::fake();
+    config()->set('oidc.cache.store', 'database');
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+    app()->detectEnvironment(fn (): string => 'production');
+
+    expect(callback($callbackUrl, $session)->subject)->toBe('fake-subject-1');
 });
 
 it('keeps parallel logins from two tabs apart', function (): void {
@@ -211,3 +290,44 @@ it('refuses a token response without an id_token', function (): void {
 
     completeLogin($identityProvider);
 })->throws(IdentityProviderRequestException::class, 'no id_token');
+
+it('reports a malformed IdP error code as unknown', function (): void {
+    FakeIdentityProvider::fake();
+    $session = browserSession();
+    $state = queryParameters(startLogin($session))['state'];
+
+    expect(fn () => callback("http://localhost/auth/oidc/callback?state={$state}&error[]=access_denied", $session))
+        ->toThrow(InvalidCallbackException::class, 'The IdP refused the login (unknown).');
+});
+
+it('refuses a callback with an empty code', function (): void {
+    FakeIdentityProvider::fake();
+    $session = browserSession();
+    $state = queryParameters(startLogin($session))['state'];
+
+    callback("http://localhost/auth/oidc/callback?state={$state}&code=", $session);
+})->throws(InvalidCallbackException::class, 'no code');
+
+it('reads an empty sid as no IdP session', function (): void {
+    expect(completeLogin(FakeIdentityProvider::fake(), ['sid' => ''])->sessionId)->toBeNull();
+});
+
+it('refuses a pending login exactly when it expires', function (): void {
+    $identityProvider = FakeIdentityProvider::fake();
+    Date::setTestNow(Date::now()->startOfSecond());
+    $session = browserSession();
+    $callbackUrl = $identityProvider->authorize(startLogin($session));
+
+    Date::setTestNow(Date::now()->addSeconds(600));
+
+    callback($callbackUrl, $session);
+})->throws(InvalidCallbackException::class, 'too long');
+
+it('keeps only the five newest pending logins', function (): void {
+    $identityProvider = FakeIdentityProvider::fake();
+    $session = browserSession();
+    $callbackUrls = array_map(fn (): string => $identityProvider->authorize(startLogin($session)), range(1, 6));
+
+    expect(fn () => callback($callbackUrls[0], $session))->toThrow(InvalidCallbackException::class, 'missing or unknown state')
+        ->and(callback($callbackUrls[1], $session)->subject)->toBe('fake-subject-1');
+});

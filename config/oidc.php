@@ -196,26 +196,58 @@ return [
          */
         'request_acr_values' => null,
 
+        /*
+         * Sent as `max_age` (seconds) to ask the IdP for a recent login. When
+         * it is sent, the id_token must carry `auth_time`, and a login older
+         * than max_age plus `id_token.leeway` is refused (OIDC Core 3.1.2.1,
+         * 3.1.3.7 step 13). Null sends nothing.
+         */
+        'max_age' => null,
+
+        /*
+         * When the login asked for an `acr` (acr_values or the claims
+         * parameter), refuse an id_token whose `acr` is missing or not one of
+         * the requested values. Off by default: such a login then only counts
+         * as "MFA not proven" and the app's own second factor runs.
+         */
+        'require_requested_acr' => false,
+
     ],
 
     /*
      * Where the IdP sends the browser after RP-initiated logout. Null means
-     * `{APP_URL}/`. It must be registered at the IdP as a post-logout
-     * redirect URI, or the IdP shows its own confirmation page instead.
+     * the package route `{APP_URL}/auth/oidc/logged-out`, which checks the
+     * logout `state` and then redirects to `logout.redirect_to`. It must be
+     * registered at the IdP as a post-logout redirect URI (`oidc:configure`
+     * prints it). An explicit URI here skips the state check.
      */
     'post_logout_redirect_uri' => null,
+
+    'logout' => [
+
+        /*
+         * Where the post-logout return route sends the browser. Taken from
+         * config only, never from the request.
+         */
+        'redirect_to' => '/',
+
+    ],
 
     /*
      * Fetch the userinfo endpoint after the code exchange and merge its claims
      * under the id_token claims (the signed id_token wins on any conflict).
-     * Turn off for an IdP that puts every claim in the id_token.
+     * Turn off only for an IdP that puts every claim in the id_token. Keep it
+     * on for Signaculum: it releases the profile and email claims at userinfo
+     * only (OIDC Core 5.4), so without userinfo every login that needs an
+     * email is refused with `email_not_released`.
      */
     'userinfo' => true,
 
     /*
      * The package registers its routes under this prefix: `GET {prefix}/redirect`,
-     * `GET {prefix}/callback` and `POST {prefix}/backchannel-logout`. The path
-     * matches the routes Externa and Excubia App already use.
+     * `GET {prefix}/callback`, `POST {prefix}/backchannel-logout` and (when
+     * enabled) `GET {prefix}/frontchannel-logout`. The path matches the routes
+     * Externa and Excubia App already use.
      */
     'routes' => [
 
@@ -224,10 +256,16 @@ return [
         'prefix' => 'auth/oidc',
 
         /*
-         * Middleware of the redirect and callback routes. The back-channel
-         * logout route never gets a session or CSRF middleware.
+         * Middleware of the redirect and callback routes. Logout endpoints
+         * never get a session or CSRF middleware.
          */
         'middleware' => ['web', 'guest'],
+
+        /*
+         * Named package routes the app registers itself (for example
+         * ['oidc.callback']). Every other package route still registers (S4).
+         */
+        'except' => [],
 
     ],
 
@@ -235,9 +273,26 @@ return [
 
         /*
          * How long a back-channel logout is remembered, in seconds. It must
-         * cover the longest local session. Null uses `session.lifetime`.
+         * cover the longest OIDC session. Null uses `session.lifetime`.
          */
         'revocation_ttl' => null,
+
+        /*
+         * App-selected ceiling for durable logout records in seconds (default 30 days).
+         * Choose it to cover the session lifetime and the longest accepted logout replay window.
+         */
+        'max_retention_seconds' => 2_592_000,
+
+    ],
+
+    /*
+     * Front-channel logout (OIDC Front-Channel Logout 1.0). Off by default:
+     * back-channel covers server sessions; turn on only when the IdP is
+     * registered with frontchannel_logout_session_required (S3).
+     */
+    'frontchannel_logout' => [
+
+        'enabled' => (bool) env('OIDC_FRONTCHANNEL_LOGOUT', false),
 
     ],
 
@@ -297,7 +352,23 @@ return [
 
     'http' => [
 
-        'timeout' => 10,
+        /*
+         * Per-hop timeout for IdP calls (seconds). `0` means no practical limit
+         * (mapped to a 24h ceiling so outbound's ≥1s contract still holds).
+         */
+        'timeout' => (int) env('OIDC_HTTP_TIMEOUT', 10),
+
+        /*
+         * TCP connect timeout for IdP calls (seconds). `0` means no practical
+         * limit (same ceiling as timeout). Defaults to 10s as before.
+         */
+        'connect_timeout' => (int) env('OIDC_HTTP_CONNECT_TIMEOUT', 10),
+
+        /*
+         * Cap on IdP response bodies (discovery, JWKS, token, userinfo).
+         * Enforced by qiick/laravel-outbound's PinnedHttpClient.
+         */
+        'max_response_bytes' => (int) env('OIDC_MAX_RESPONSE_BYTES', 1_048_576),
 
         /*
          * Docker and lab setups where the app reaches the IdP under another
@@ -310,9 +381,10 @@ return [
         'server_origin' => env('OIDC_SERVER_ORIGIN'),
 
         /*
-         * The SSRF guard refuses private, loopback and link-local hosts and
-         * plain http. Turn this on only for an IdP on a private network or
-         * in local QA. Cloud metadata hosts stay blocked either way.
+         * Mapped onto qiick/laravel-outbound UrlGuardOptions: when true, private
+         * / loopback / link-local hosts and plain http are allowed together.
+         * Cloud metadata hosts stay blocked either way. Prefer the OIDC key
+         * over OUTBOUND_ALLOW_PRIVATE_HOSTS for this package.
          */
         'allow_private_hosts' => (bool) env('OIDC_ALLOW_PRIVATE_HOSTS', false),
 

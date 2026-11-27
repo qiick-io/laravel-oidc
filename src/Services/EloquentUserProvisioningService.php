@@ -33,9 +33,11 @@ final readonly class EloquentUserProvisioningService implements UserProvisioning
         /** @var Model&Authenticatable $user */
         $user = new $modelClass;
         $user->forceFill([
-            'name' => $fullName !== null && $fullName !== '' ? $fullName : Str::before($email, '@'),
+            // A PersonNameData full name is never empty, so null means no name claims at all.
+            'name' => $fullName ?? Str::before($email, '@'),
             'email' => $email,
-            'password' => Hash::make(Str::random(64)),
+            // Unusable: SSO users sign in through the IdP, never with this password.
+            'password' => Hash::make(Str::password()),
             'email_verified_at' => Date::now(),
         ])->save();
 

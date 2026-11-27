@@ -1,0 +1,73 @@
+# Overlay for the OpenID Foundation suite's docker-compose-localtest.yml: runs the
+# laravel-oidc harness app as the relying party under test, plus Chromium and a runner.
+#
+#   LARAVEL_OIDC_DIR   absolute path of this package checkout (a directory named laravel-oidc)
+#   RP_APP_DIR         absolute path of the harness app (a sibling directory, see docs)
+#   RESULTS_DIR        absolute path where plan exports and evidence land
+#   RP_ALIAS           alias of the plan being run (rp-basic, rp-config, rp-logout, ...)
+services:
+    # The suite's sample OP is not needed for RP tests.
+    oidcc-provider:
+        image: busybox:1.36
+        entrypoint: ['sleep', 'infinity']
+        ports: !reset []
+        volumes: !reset []
+
+    server:
+        depends_on: !override [mongodb]
+
+    chrome:
+        image: selenium/standalone-chromium:latest
+        shm_size: 1gb
+        environment:
+            - SE_NODE_MAX_SESSIONS=2
+            - SE_BROWSER_ARGS_HEADLESS=--headless=new
+            - SE_BROWSER_ARGS_NO_SANDBOX=--no-sandbox
+            - SE_BROWSER_ARGS_DISABLE_DEV_SHM_USAGE=--disable-dev-shm-usage
+
+    runner:
+        image: python:3.12-slim
+        volumes:
+            - .:/conformance-suite
+            - ${LARAVEL_OIDC_DIR}:/laravel-oidc:ro
+            - ${RESULTS_DIR}:/results
+        environment:
+            CONFORMANCE_DEV_MODE: '1'
+            CONFORMANCE_SERVER: https://nginx:8443/
+            CONFORMANCE_SERVER_MTLS: https://nginx:8444/
+            SELENIUM_REMOTE_URL: http://chrome:4444/wd/hub
+            PYTHONUNBUFFERED: '1'
+        depends_on: [nginx, chrome]
+        entrypoint: ['/bin/sh', '-c', 'pip install --no-cache-dir httpx pyparsing selenium >/tmp/pip.log && sleep infinity']
+
+    rp:
+        image: php:8.4-cli
+        working_dir: /srv/rp-app
+        volumes:
+            - ${RP_APP_DIR}:/srv/rp-app
+            - ${LARAVEL_OIDC_DIR}:/srv/laravel-oidc:ro
+        environment:
+            OIDC_ENABLED: 'true'
+            OIDC_ISSUER: https://nginx:8443/test/a/${RP_ALIAS}/
+            OIDC_CLIENT_ID: rp-conformance-client
+            OIDC_CLIENT_SECRET: rp-conformance-secret-0000000000000001
+            # The suite's certificate is issued to localhost: the RP calls the suite through a
+            # local forward to nginx and trusts that certificate, instead of skipping TLS checks.
+            OIDC_DISCOVERY_BASE: https://localhost:8443/test/a/${RP_ALIAS}/
+            OIDC_SERVER_ORIGIN: https://localhost:8443
+            OIDC_ALLOW_PRIVATE_HOSTS: 'true'
+            OIDC_FRONTCHANNEL_LOGOUT: 'true'
+        depends_on: [nginx]
+        entrypoint:
+            - /bin/sh
+            - -c
+            - |
+                set -e
+                command -v socat >/dev/null || (apt-get update -qq && apt-get install -y -qq socat >/dev/null)
+                socat TCP-LISTEN:8443,fork,reuseaddr TCP:nginx:8443 &
+                until php -r '$$context = stream_context_create(["ssl" => ["capture_peer_cert" => true, "verify_peer" => false, "verify_peer_name" => false]]); $$socket = @stream_socket_client("ssl://localhost:8443", $$errorNumber, $$errorMessage, 5, STREAM_CLIENT_CONNECT, $$context); if (! $$socket) { exit(1); } openssl_x509_export(stream_context_get_params($$socket)["options"]["ssl"]["peer_certificate"], $$pem); file_put_contents("/tmp/suite.pem", $$pem);'; do sleep 2; done
+                cat /etc/ssl/certs/ca-certificates.crt /tmp/suite.pem > /tmp/ca.pem
+                php artisan migrate --force -q
+                php seed.php
+                # php -S keeps the container environment; `artisan serve` would drop the OIDC_* variables.
+                cd public && exec php -d curl.cainfo=/tmp/ca.pem -d openssl.cafile=/tmp/ca.pem -d variables_order=EGPCS -S 0.0.0.0:8000 ../vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php

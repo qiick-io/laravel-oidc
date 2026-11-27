@@ -18,5 +18,6 @@ return [
     'suffixes' => [
         'Console' => 'Command',
         'Repositories' => 'Repository',
+        'Factories' => 'Factory',
     ],
 ];

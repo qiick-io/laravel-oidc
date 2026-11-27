@@ -13,21 +13,28 @@ use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Contracts\Foundation\CachesConfiguration;
 use Illuminate\Contracts\Http\Kernel as HttpKernelContract;
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
+use InvalidArgumentException;
 use Qiick\Oidc\Console\ConfigureOidcCommand;
 use Qiick\Oidc\Console\ImportLegacySubjectsCommand;
+use Qiick\Oidc\Console\PruneLogoutRevocationsCommand;
 use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
 use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
 use Qiick\Oidc\Contracts\RoleSynchronizationContract;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
+use Qiick\Oidc\Contracts\UserClaimSynchronizationContract;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
+use Qiick\Oidc\Erasure\OidcEraser;
+use Qiick\Oidc\Factories\OidcOutboundStackFactory;
 use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
 use Qiick\Oidc\Listeners\EnforceSsoOnlyListener;
 use Qiick\Oidc\Listeners\PromotePendingIdentityListener;
+use Qiick\Oidc\Models\OidcLogoutRevocation;
 use Qiick\Oidc\Repositories\ConfigProviderConfigurationRepository;
 use Qiick\Oidc\Services\AuthorizationCodeFlowService;
 use Qiick\Oidc\Services\BackChannelLogoutService;
@@ -40,8 +47,8 @@ use Qiick\Oidc\Services\IdTokenValidatorService;
 use Qiick\Oidc\Services\JwksService;
 use Qiick\Oidc\Services\JwtValidatorService;
 use Qiick\Oidc\Services\MultiFactorClaimService;
+use Qiick\Oidc\Services\NullUserClaimSynchronizationService;
 use Qiick\Oidc\Services\OidcLoginService;
-use Qiick\Oidc\Services\RemoteUrlGuardService;
 use Qiick\Oidc\Services\RoleBreakGlassPolicyService;
 use Qiick\Oidc\Services\RoleMappingService;
 use Qiick\Oidc\Services\SessionRevocationService;
@@ -49,15 +56,18 @@ use Qiick\Oidc\Services\SpatieRoleSynchronizationService;
 use Qiick\Oidc\Services\SsoOnlyModeService;
 use Qiick\Oidc\Services\UserinfoService;
 use Qiick\Oidc\Services\UserLinkingService;
+use Qiick\Outbound\Ssrf\DnsHostResolver;
 
 /**
  * Registers the package in a Laravel app. Auto-discovered through
  * `extra.laravel.providers` in composer.json.
  *
  * Services are bound, not shared, so each resolution reads the current config
- * (an app can change the OIDC settings at runtime from its settings UI). The
- * SSRF guard is the exception: it is shared so tests and the fake IdP can swap
- * its DNS resolver.
+ * (an app can change the OIDC settings at runtime from its settings UI).
+ *
+ * IdP HTTP SSRF / pinning / timeouts are built by {@see OidcOutboundStackFactory}
+ * privately, so alphabetical package discovery cannot let outbound rebind them.
+ * Tests swap DNS through {@see OidcOutboundStackFactory::HostResolverBinding}.
  *
  * An app that keeps OIDC settings in its database binds its own
  * ProviderConfigurationRepositoryContract after this provider.
@@ -66,41 +76,55 @@ final class OidcServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->mergeConfigFrom(__DIR__.'/../../config/oidc.php', 'oidc');
+        $this->mergeConfigDefaults();
 
         $this->app->bind(ProviderConfigurationRepositoryContract::class, ConfigProviderConfigurationRepository::class);
 
-        $this->app->singleton(RemoteUrlGuardService::class, fn (Application $app): RemoteUrlGuardService => new RemoteUrlGuardService(
-            isPrivateHostAllowed: $this->config($app)->boolean('oidc.http.allow_private_hosts'),
-            hostResolver: RemoteUrlGuardService::resolveWithSystemDns(...),
-        ));
+        $this->app->bind(OidcOutboundStackFactory::HostResolverBinding, DnsHostResolver::class);
 
-        $this->app->bind(IdentityProviderHttpService::class, fn (Application $app): IdentityProviderHttpService => new IdentityProviderHttpService(
+        $this->app->bind(OidcOutboundStackFactory::class, fn (Application $app): OidcOutboundStackFactory => new OidcOutboundStackFactory(
             http: $app->make(HttpFactory::class),
-            remoteUrlGuard: $app->make(RemoteUrlGuardService::class),
-            timeoutSeconds: $this->config($app)->integer('oidc.http.timeout', 10),
+            config: $this->config($app),
+            hostResolver: $app->make(OidcOutboundStackFactory::HostResolverBinding),
         ));
 
-        $this->app->bind(DiscoveryService::class, fn (Application $app): DiscoveryService => new DiscoveryService(
-            identityProviderHttp: $app->make(IdentityProviderHttpService::class),
-            remoteUrlGuard: $app->make(RemoteUrlGuardService::class),
-            cache: $this->cacheStore($app),
-            cacheSeconds: $this->config($app)->integer('oidc.cache.discovery_ttl', 21600),
-            discoveryBase: $this->optionalString($app, 'oidc.http.discovery_base'),
-            serverOrigin: $this->optionalString($app, 'oidc.http.server_origin'),
-        ));
+        $this->app->bind(IdentityProviderHttpService::class, function (Application $app): IdentityProviderHttpService {
+            $stack = $app->make(OidcOutboundStackFactory::class)->make();
+
+            return new IdentityProviderHttpService(
+                pinnedHttp: $stack->pinnedHttp,
+                urlGuardOptions: $stack->urlGuardOptions,
+                timeoutSeconds: $this->config($app)->integer('oidc.http.timeout'),
+                connectTimeoutSeconds: $this->config($app)->integer('oidc.http.connect_timeout'),
+                maxResponseBytes: max(1, $this->config($app)->integer('oidc.http.max_response_bytes')),
+            );
+        });
+
+        $this->app->bind(DiscoveryService::class, function (Application $app): DiscoveryService {
+            $stack = $app->make(OidcOutboundStackFactory::class)->make();
+
+            return new DiscoveryService(
+                identityProviderHttp: $app->make(IdentityProviderHttpService::class),
+                remoteUrlGuard: $stack->remoteUrlGuard,
+                urlGuardOptions: $stack->urlGuardOptions,
+                cache: $this->cacheStore($app),
+                cacheSeconds: $this->config($app)->integer('oidc.cache.discovery_ttl'),
+                discoveryBase: $this->optionalString($app, 'oidc.http.discovery_base'),
+                serverOrigin: $this->optionalString($app, 'oidc.http.server_origin'),
+            );
+        });
 
         $this->app->bind(JwksService::class, fn (Application $app): JwksService => new JwksService(
             identityProviderHttp: $app->make(IdentityProviderHttpService::class),
             cache: $this->cacheStore($app),
-            cacheSeconds: $this->config($app)->integer('oidc.cache.jwks_ttl', 3600),
-            refetchCooldownSeconds: $this->config($app)->integer('oidc.cache.jwks_refetch_cooldown', 30),
+            cacheSeconds: $this->config($app)->integer('oidc.cache.jwks_ttl'),
+            refetchCooldownSeconds: $this->config($app)->integer('oidc.cache.jwks_refetch_cooldown'),
         ));
 
         $this->app->bind(JwtValidatorService::class, fn (Application $app): JwtValidatorService => new JwtValidatorService(
             jwks: $app->make(JwksService::class),
             allowedAlgorithms: $this->stringList($app, 'oidc.id_token.algorithms'),
-            leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway', 60),
+            leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway'),
             trustedAudiences: $this->stringList($app, 'oidc.id_token.trusted_audiences'),
         ));
 
@@ -111,6 +135,10 @@ final class OidcServiceProvider extends ServiceProvider
             idTokenValidator: $app->make(IdTokenValidatorService::class),
             userinfo: $app->make(UserinfoService::class),
             shouldFetchUserinfo: $this->config($app)->boolean('oidc.userinfo', true),
+            leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway'),
+            isRequestedAcrRequired: $this->config($app)->boolean('oidc.mfa.require_requested_acr', false),
+            cache: $this->cacheStore($app),
+            isArrayCacheAllowed: $app->runningUnitTests(),
         ));
 
         $this->app->bind(UserProvisioningContract::class, EloquentUserProvisioningService::class);
@@ -127,6 +155,8 @@ final class OidcServiceProvider extends ServiceProvider
         ));
 
         $this->app->bind(RoleSynchronizationContract::class, SpatieRoleSynchronizationService::class);
+
+        $this->app->bind(UserClaimSynchronizationContract::class, NullUserClaimSynchronizationService::class);
 
         $this->app->bind(RoleMappingService::class, fn (Application $app): RoleMappingService => new RoleMappingService(
             roleSynchronization: $app->make(RoleSynchronizationContract::class),
@@ -149,6 +179,7 @@ final class OidcServiceProvider extends ServiceProvider
         $this->app->bind(OidcLoginService::class, fn (Application $app): OidcLoginService => new OidcLoginService(
             userLinking: $app->make(UserLinkingService::class),
             roleMapping: $app->make(RoleMappingService::class),
+            userClaimSynchronization: $app->make(UserClaimSynchronizationContract::class),
             multiFactorClaims: $app->make(MultiFactorClaimService::class),
             secondFactorChallenge: $app->make(SecondFactorChallengeContract::class),
             identitySession: $app->make(IdentitySessionService::class),
@@ -172,7 +203,15 @@ final class OidcServiceProvider extends ServiceProvider
 
         $this->app->bind(SessionRevocationService::class, fn (Application $app): SessionRevocationService => new SessionRevocationService(
             cache: $this->cacheStore($app),
-            revocationSeconds: $this->revocationSeconds($app),
+            revocationSeconds: OidcLogoutRevocation::maximumConfiguredLifetimeSeconds(),
+            events: $app->make(Dispatcher::class),
+            leewaySeconds: $this->config($app)->integer('oidc.id_token.leeway'),
+        ));
+
+        $this->app->bind(OidcEraser::class, fn (Application $app): OidcEraser => new OidcEraser(
+            cache: $this->cacheStore($app),
+            events: $app->make(Dispatcher::class),
+            cacheStoreName: $this->optionalString($app, 'oidc.cache.store') ?? $app->make(CacheManager::class)->getDefaultDriver(),
         ));
 
         $this->app->bind(BackChannelLogoutService::class, fn (Application $app): BackChannelLogoutService => new BackChannelLogoutService(
@@ -180,12 +219,60 @@ final class OidcServiceProvider extends ServiceProvider
             discovery: $app->make(DiscoveryService::class),
             jwtValidator: $app->make(JwtValidatorService::class),
             sessionRevocation: $app->make(SessionRevocationService::class),
-            cache: $this->cacheStore($app),
         ));
+    }
+
+    /**
+     * Laravel's mergeConfigFrom() fills only top-level keys, so an app that
+     * published config/oidc.php before a nested key existed (for example
+     * `http.connect_timeout` or `mfa.max_age`) would read null for it. The
+     * package defaults are merged into nested arrays too, so every key always
+     * has a value. Lists (scopes, algorithms, role maps) are the app's own
+     * choice and are never merged with the defaults.
+     */
+    private function mergeConfigDefaults(): void
+    {
+        if ($this->app instanceof CachesConfiguration && $this->app->configurationIsCached()) {
+            return;
+        }
+
+        $config = $this->config($this->app);
+        $configured = $config->get('oidc', []);
+
+        /** @var array<string, mixed> $defaults */
+        $defaults = require __DIR__.'/../../config/oidc.php';
+
+        $config->set('oidc', $this->withDefaults($defaults, is_array($configured) ? $configured : []));
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $defaults
+     * @param  array<array-key, mixed>  $configured
+     * @return array<array-key, mixed>
+     */
+    private function withDefaults(array $defaults, array $configured): array
+    {
+        foreach ($defaults as $key => $defaultValue) {
+            if (! array_key_exists($key, $configured)) {
+                $configured[$key] = $defaultValue;
+            } elseif (is_array($defaultValue) && ! array_is_list($defaultValue) && is_array($configured[$key]) && ! array_is_list($configured[$key])) {
+                $configured[$key] = $this->withDefaults($defaultValue, $configured[$key]);
+            }
+        }
+
+        return $configured;
     }
 
     public function boot(): void
     {
+        if ($this->config($this->app)->boolean('oidc.enabled') && ! OidcLogoutRevocation::isSessionLifetimeCovered()) {
+            throw new InvalidArgumentException(sprintf(
+                'session.lifetime exceeds oidc.backchannel_logout.max_retention_seconds (%d minutes versus %d seconds). Lower session.lifetime or raise the revocation retention ceiling.',
+                $this->config($this->app)->integer('session.lifetime'),
+                OidcLogoutRevocation::maximumRetentionSeconds(),
+            ));
+        }
+
         $this->app->make(Dispatcher::class)->listen(Login::class, PromotePendingIdentityListener::class);
         $this->app->make(Dispatcher::class)->listen(Validated::class, EnforceSsoOnlyListener::class);
 
@@ -219,27 +306,16 @@ final class OidcServiceProvider extends ServiceProvider
                 __DIR__.'/../../config/oidc.php' => config_path('oidc.php'),
             ], 'oidc-config');
 
-            $this->commands([ConfigureOidcCommand::class, ImportLegacySubjectsCommand::class]);
+            $this->commands([
+                ConfigureOidcCommand::class,
+                ImportLegacySubjectsCommand::class,
+                PruneLogoutRevocationsCommand::class,
+            ]);
 
             $this->publishesMigrations([
                 __DIR__.'/../../database/migrations' => database_path('migrations'),
             ], 'oidc-migrations');
         }
-    }
-
-    /**
-     * Back-channel logouts must outlive the longest local session. Null in
-     * the config means the app's `session.lifetime` (minutes).
-     */
-    private function revocationSeconds(Application $app): int
-    {
-        $configuredSeconds = $this->config($app)->get('oidc.backchannel_logout.revocation_ttl');
-
-        if (is_int($configuredSeconds) && $configuredSeconds > 0) {
-            return $configuredSeconds;
-        }
-
-        return max(1, $this->config($app)->integer('session.lifetime', 120)) * 60;
     }
 
     /**

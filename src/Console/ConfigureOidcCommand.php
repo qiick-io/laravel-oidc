@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Qiick\Oidc\Console;
 
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\FileStore;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Route;
 use Qiick\Oidc\Contracts\BreakGlassPolicyContract;
@@ -24,8 +27,11 @@ use Qiick\Oidc\Services\JwtValidatorService;
  * section 4, "Agent-first").
  *
  * It reads the current settings, overridden by the options, then checks the
- * discovery document, the JWKS, the signing algorithms, the redirect and
- * logout URIs and, in SSO-only mode, that a break-glass account exists. It
+ * discovery document and the capabilities it advertises, the JWKS, the
+ * signing algorithms, the redirect and logout URIs, that `app.timezone` is
+ * UTC, that the cache store can make each login state single-use, the
+ * front-channel logout setup when it is on and, in SSO-only mode,
+ * that a break-glass account exists. It
  * prints the URIs to register at the IdP. With `--write-env` it writes the
  * settings to `.env`, only when no check failed. `--json` prints a machine
  * readable report. The exit code is 0 without failures, 1 otherwise.
@@ -48,6 +54,14 @@ final class ConfigureOidcCommand extends Command
      */
     private array $results = [];
 
+    /**
+     * The IdP's advertised capabilities (standards review S5), for the JSON
+     * report; null until discovery succeeded.
+     *
+     * @var array<string, bool|list<string>|null>|null
+     */
+    private ?array $capabilities = null;
+
     public function handle(
         ProviderConfigurationRepositoryContract $configurationRepository,
         DiscoveryService $discovery,
@@ -62,10 +76,14 @@ final class ConfigureOidcCommand extends Command
 
             if ($discoveryDocument !== null) {
                 $this->checkSigningKeys($identityProviderHttp, $discoveryDocument);
+                $this->checkCapabilities($discoveryDocument);
             }
 
             $this->checkClient($configuration);
             $this->checkRedirectUri($configuration->redirectUri);
+            $this->checkTimezone();
+            $this->checkCacheStore();
+            $this->checkFrontChannelLogout();
             $this->checkBreakGlass($breakGlassPolicy);
         }
 
@@ -139,8 +157,8 @@ final class ConfigureOidcCommand extends Command
 
     private function checkSigningKeys(IdentityProviderHttpService $identityProviderHttp, DiscoveryDocumentData $discoveryDocument): void
     {
-        $allowedAlgorithms = array_values(array_intersect(JwtValidatorService::SUPPORTED_ALGORITHMS, $this->configuredStrings('oidc.id_token.algorithms')));
-        $commonAlgorithms = array_values(array_intersect($allowedAlgorithms, $discoveryDocument->idTokenSigningAlgorithms));
+        $allowedAlgorithms = array_intersect(JwtValidatorService::supportedAlgorithms(), $this->configuredStrings('oidc.id_token.algorithms'));
+        $commonAlgorithms = array_intersect($allowedAlgorithms, $discoveryDocument->idTokenSigningAlgorithms);
 
         if ($commonAlgorithms === []) {
             $this->record('algorithms', 'failure', 'The IdP signs id_tokens with '.implode(', ', $discoveryDocument->idTokenSigningAlgorithms)
@@ -169,6 +187,58 @@ final class ConfigureOidcCommand extends Command
         );
     }
 
+    /**
+     * Reports what the IdP advertises (DISC §3, BCL §2.1, FCL §3). Optional
+     * metadata is never fatal: a missing capability is at most a warning.
+     */
+    private function checkCapabilities(DiscoveryDocumentData $discoveryDocument): void
+    {
+        $this->capabilities = [
+            'frontchannel_logout_supported' => $discoveryDocument->isFrontChannelLogoutSupported,
+            'frontchannel_logout_session_supported' => $discoveryDocument->isFrontChannelLogoutSessionSupported,
+            'backchannel_logout_supported' => $discoveryDocument->isBackChannelLogoutSupported,
+            'backchannel_logout_session_supported' => $discoveryDocument->isBackChannelLogoutSessionSupported,
+            'acr_values_supported' => $discoveryDocument->acrValuesSupported,
+            'claims_parameter_supported' => $discoveryDocument->isClaimsParameterSupported,
+        ];
+
+        if (! $discoveryDocument->isBackChannelLogoutSupported) {
+            $this->record('back-channel logout', 'warning', 'The IdP does not advertise backchannel_logout_supported: a logout at the IdP may not end local sessions.');
+        } elseif (! $discoveryDocument->isBackChannelLogoutSessionSupported) {
+            $this->record('back-channel logout', 'warning', 'The IdP does not advertise backchannel_logout_session_supported: its logout tokens carry no sid, so each logout ends every session of the user.');
+        } else {
+            $this->record('back-channel logout', 'ok', 'The IdP sends back-channel logout tokens with sid.');
+        }
+
+        if (Config::boolean('oidc.frontchannel_logout.enabled')) {
+            $isFrontChannelUsable = $discoveryDocument->isFrontChannelLogoutSupported && $discoveryDocument->isFrontChannelLogoutSessionSupported;
+
+            $this->record(
+                'front-channel support',
+                $isFrontChannelUsable ? 'ok' : 'warning',
+                $isFrontChannelUsable
+                    ? 'The IdP supports front-channel logout with iss and sid.'
+                    : 'oidc.frontchannel_logout.enabled is on but the IdP does not advertise frontchannel_logout_supported and frontchannel_logout_session_supported.',
+            );
+        }
+
+        $requestedAcrValues = Config::get('oidc.mfa.request_acr_values');
+
+        if (! is_string($requestedAcrValues) || $requestedAcrValues === '' || $discoveryDocument->acrValuesSupported === null) {
+            return;
+        }
+
+        $unsupportedAcrValues = array_diff(explode(' ', $requestedAcrValues), $discoveryDocument->acrValuesSupported);
+
+        $this->record(
+            'acr values',
+            $unsupportedAcrValues === [] ? 'ok' : 'warning',
+            $unsupportedAcrValues === []
+                ? 'The IdP advertises every requested acr value.'
+                : 'oidc.mfa.request_acr_values asks for '.implode(', ', $unsupportedAcrValues).', which the IdP does not list in acr_values_supported.',
+        );
+    }
+
     private function checkClient(ProviderConfigurationData $configuration): void
     {
         $this->record(
@@ -184,7 +254,8 @@ final class ConfigureOidcCommand extends Command
     {
         $scheme = parse_url($redirectUri, PHP_URL_SCHEME);
         $host = parse_url($redirectUri, PHP_URL_HOST);
-        $isLocalHost = in_array($host, ['localhost', '127.0.0.1', '::1'], true) || (is_string($host) && str_ends_with($host, '.test'));
+        // parse_url() keeps the brackets around an IPv6 host.
+        $isLocalHost = in_array($host, ['localhost', '127.0.0.1', '[::1]'], true) || (is_string($host) && str_ends_with($host, '.test'));
 
         if (! is_string($host) || ! in_array($scheme, ['http', 'https'], true)) {
             $this->record('redirect uri', 'failure', "[{$redirectUri}] is not an absolute URL. Set APP_URL or oidc.redirect_uri.");
@@ -199,6 +270,56 @@ final class ConfigureOidcCommand extends Command
         }
 
         $this->record('redirect uri', 'ok', $redirectUri);
+    }
+
+    /**
+     * The package stores `last_login_at`, `last_auth_time_at` and the logout
+     * revocation times as plain `timestamp` columns, which carry no zone, and
+     * reads them back in `app.timezone` (standards review M7 and R5). Only
+     * UTC keeps them comparable across apps and with the IdP's epoch claims.
+     */
+    private function checkTimezone(): void
+    {
+        $timezone = Config::string('app.timezone');
+
+        if ($timezone === 'UTC') {
+            $this->record('timezone', 'ok', 'app.timezone is UTC.');
+
+            return;
+        }
+
+        $this->record('timezone', 'warning', "app.timezone is {$timezone}; the package expects UTC in its timestamp columns, so set it to UTC.");
+    }
+
+    /**
+     * Each callback consumes its `state` with an atomic add on the OIDC cache
+     * store. The array store forgets it after every request, so outside the
+     * app's tests the callback refuses every login with it; several app
+     * servers need a store they share.
+     */
+    private function checkCacheStore(): void
+    {
+        $configuredStore = Config::get('oidc.cache.store');
+        $storeName = is_string($configuredStore) && $configuredStore !== '' ? $configuredStore : Config::string('cache.default');
+
+        $store = Cache::store($storeName)->getStore();
+
+        if ($store instanceof ArrayStore) {
+            // runningUnitTests() is APP_ENV=testing: a staging app with that env would pass the callback check too.
+            app()->runningUnitTests()
+                ? $this->record('cache store', 'warning', "Cache store [{$storeName}] uses the array driver, accepted only because APP_ENV is testing. Any deployed app needs a shared store (database, redis).")
+                : $this->record('cache store', 'failure', "Cache store [{$storeName}] uses the array driver, which forgets each login state at once: every SSO callback is refused. Set oidc.cache.store to a shared store (database, redis).");
+
+            return;
+        }
+
+        if ($store instanceof FileStore) {
+            $this->record('cache store', 'warning', "Cache store [{$storeName}] uses the file driver, which each app server keeps on its own disk: with several servers a login state could be used once per server. Use a shared store (database, redis) there.");
+
+            return;
+        }
+
+        $this->record('cache store', 'ok', "Cache store [{$storeName}]: each login state is consumed there once. With several app servers, use a store they share (database, redis).");
     }
 
     /**
@@ -224,6 +345,33 @@ final class ConfigureOidcCommand extends Command
     }
 
     /**
+     * Front-channel logout is opt-in (OIDC Front-Channel Logout 1.0, standards
+     * review S3). When it is on, the IdP must append `iss` and `sid` to the
+     * URI (FCL §2, `frontchannel_logout_session_required`), or the endpoint
+     * refuses every call with 400.
+     */
+    private function checkFrontChannelLogout(): void
+    {
+        if (! Config::boolean('oidc.frontchannel_logout.enabled')) {
+            return;
+        }
+
+        if (! $this->isFrontChannelLogoutReady()) {
+            $this->record('front-channel logout', 'failure', 'oidc.frontchannel_logout.enabled is on but the oidc.frontchannel-logout route is not registered.');
+
+            return;
+        }
+
+        $this->record('front-channel logout', 'ok', 'Register '.route('oidc.frontchannel-logout')
+            .' as the front-channel logout URI with "front-channel logout session required" (frontchannel_logout_session_required), so the IdP sends iss and sid.');
+    }
+
+    private function isFrontChannelLogoutReady(): bool
+    {
+        return Config::boolean('oidc.frontchannel_logout.enabled') && Route::has('oidc.frontchannel-logout');
+    }
+
+    /**
      * @return array<string, string>
      */
     private function urisToRegister(ProviderConfigurationData $configuration): array
@@ -232,6 +380,7 @@ final class ConfigureOidcCommand extends Command
             'redirect_uri' => $configuration->redirectUri,
             'post_logout_redirect_uri' => $configuration->postLogoutRedirectUri,
             'backchannel_logout_uri' => Route::has('oidc.backchannel-logout') ? route('oidc.backchannel-logout') : null,
+            'frontchannel_logout_uri' => $this->isFrontChannelLogoutReady() ? route('oidc.frontchannel-logout') : null,
         ], fn (?string $uri): bool => $uri !== null);
     }
 
@@ -300,11 +449,12 @@ final class ConfigureOidcCommand extends Command
     private function report(bool $hasFailure, array $urisToRegister): void
     {
         if ($this->option('json')) {
-            $this->line((string) json_encode([
+            $this->line(json_encode([
                 'ok' => ! $hasFailure,
                 'checks' => $this->results,
                 'register_at_identity_provider' => $urisToRegister,
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+                'identity_provider_capabilities' => $this->capabilities,
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
 
             return;
         }

@@ -15,17 +15,14 @@ use Qiick\Oidc\Data\IdentitySessionData;
  * Call remember() right after Auth::login() and the session regeneration, so
  * the identity lives in the new session id. Laravel copies session data on
  * regenerate() and drops it on invalidate(), which is the lifecycle wanted.
+ *
+ * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
  */
 final readonly class IdentitySessionService
 {
     public const string SESSION_KEY = 'oidc.identity';
 
     public const string PENDING_SESSION_KEY = 'oidc.pending_identity';
-
-    /**
-     * How long an identity waits for the app's second factor, in seconds.
-     */
-    public const int PENDING_SECONDS = 600;
 
     public function remember(Session $session, AuthenticatedIdentityData $identity): void
     {
@@ -42,7 +39,8 @@ final readonly class IdentitySessionService
     {
         $session->put(self::PENDING_SESSION_KEY, [
             'user_id' => $userId,
-            'expires_at' => Date::now()->getTimestamp() + self::PENDING_SECONDS,
+            // The app's second factor gets ten minutes.
+            'expires_at' => Date::now()->addMinutes(10)->getTimestamp(),
             'identity' => $this->identitySession($identity)->toArray(),
         ]);
     }
@@ -50,6 +48,11 @@ final readonly class IdentitySessionService
     /**
      * Turns the pending identity into the session identity when the signed-in
      * user is the one who passed the SSO login. Any other login just drops it.
+     *
+     * The callback time stays the session's `authenticated_at`: a `sub`-only
+     * back-channel logout received while the app's challenge was pending
+     * revokes every session authenticated at or before it (BCL §2.6), so a
+     * fresher timestamp here would let the user out-run that logout.
      */
     public function promotePending(Session $session, int|string $userId): void
     {
@@ -65,11 +68,11 @@ final readonly class IdentitySessionService
             return;
         }
 
+        // An identity that no longer reads (APP_KEY rotated during the
+        // challenge) is still stored: the session middleware then ends the
+        // session instead of leaving a login without back-channel coverage.
         $identity = IdentitySessionData::fromArray($pending['identity'] ?? null);
-
-        if ($identity !== null) {
-            $session->put(self::SESSION_KEY, [...$identity->toArray(), 'authenticated_at' => Date::now()->getTimestamp()]);
-        }
+        $session->put(self::SESSION_KEY, $identity?->toArray() ?? 'unreadable');
     }
 
     private function identitySession(AuthenticatedIdentityData $identity): IdentitySessionData
@@ -80,6 +83,10 @@ final readonly class IdentitySessionService
             sessionId: $identity->sessionId,
             idToken: $identity->idToken,
             authenticatedAt: Date::now()->getTimestamp(),
+            formatVersion: IdentitySessionData::FORMAT_VERSION,
+            acr: $identity->acr(),
+            amr: $identity->amr(),
+            authTime: $identity->authTime(),
         );
     }
 
@@ -88,7 +95,15 @@ final readonly class IdentitySessionService
      */
     public function current(Session $session): ?IdentitySessionData
     {
-        return IdentitySessionData::fromArray($session->get(self::SESSION_KEY));
+        $identity = IdentitySessionData::fromArray($session->get(self::SESSION_KEY));
+
+        // Upgrade on read: a version 1 payload from beta.6 holds the raw
+        // id_token, so it is rewritten encrypted the first time it is read.
+        if ($identity?->formatVersion === 1) {
+            $session->put(self::SESSION_KEY, $identity->toArray());
+        }
+
+        return $identity;
     }
 
     public function forget(Session $session): void

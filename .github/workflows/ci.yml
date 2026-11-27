@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   tests:
@@ -76,6 +76,135 @@ jobs:
       - name: Pest
         run: vendor/bin/pest
 
+      - run: node tests/Erasure/run.mjs
+
+  # Keep a dedicated 0.2 check. The default matrix can select Outbound 1.x
+  # once a stable tag is available.
+  outbound-0-2:
+    name: Pest on laravel-outbound 0.2
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: '8.4'
+          coverage: none
+          extensions: curl, intl
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: |
+          composer require --no-interaction --no-update "qiick/laravel-outbound:^0.2.0-beta.4"
+          composer update --no-interaction --prefer-dist --with-all-dependencies
+          composer show qiick/laravel-outbound | grep -E '^versions'
+
+      - name: PHPStan
+        run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+
+      - name: Pest
+        run: vendor/bin/pest
+
+  real-transport:
+    name: Real transport Guzzle ${{ matrix.guzzle }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - guzzle: '7.8'
+            prefer: lowest
+          - guzzle: '8.5'
+            prefer: stable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: '8.4'
+          coverage: none
+          extensions: curl, intl
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: |
+          # Packagist advisories block older Guzzle 7 installs; this job exists
+          # to exercise that line under real curl, so advisory blocking is off here only.
+          composer config audit.block-insecure false
+          composer require --dev --no-interaction --no-update "orchestra/testbench:^11.0"
+          composer require --no-interaction --no-update "illuminate/support:^13.0" "illuminate/http:^13.0" "illuminate/cache:^13.0"
+          composer require --no-interaction --no-update "guzzlehttp/guzzle:^${{ matrix.guzzle }}"
+          if [ "${{ matrix.prefer }}" = "lowest" ]; then
+            composer update --no-interaction --prefer-dist --prefer-lowest --with-all-dependencies
+          else
+            composer update --no-interaction --prefer-dist --with-all-dependencies
+          fi
+          composer show guzzlehttp/guzzle | head -5
+
+      - name: Real-transport Pest
+        run: vendor/bin/pest --group=real-transport
+
+      - name: Stop php -S servers
+        if: always()
+        run: |
+          # Real-transport starts php -S per test; kill any leftover listeners.
+          pkill -f 'php -S 127.0.0.1:' || true
+
+  # Per-class mutation gate over every class with logic in src/ (packages 1.0
+  # checklist item 3): one pest --mutate per class, split round-robin across
+  # parallel shards so no job runs near its timeout. The shard count is the
+  # matrix length only (strategy.job-total): add a leg before the longest
+  # shard passes 30 minutes.
+  mutation-shards:
+    name: Mutation (shard ${{ matrix.shard }}/${{ strategy.job-total }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with:
+          php-version: '8.4'
+          coverage: pcov
+          extensions: curl, intl
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: |
+          composer require --dev --no-interaction --no-update "orchestra/testbench:^11.0"
+          composer require --no-interaction --no-update "illuminate/support:^13.0" "illuminate/http:^13.0" "illuminate/cache:^13.0"
+          composer update --no-interaction --prefer-dist --with-all-dependencies
+
+      - name: Pest mutate per class
+        env:
+          MUTATE_SHARD: ${{ matrix.shard }}
+          MUTATE_SHARDS: ${{ strategy.job-total }}
+        run: bash scripts/mutate-per-class.sh
+
+  # One stable check name over every shard, for branch protection: it fails
+  # unless every shard succeeded (a cancelled or skipped shard fails it too).
+  mutate:
+    name: Mutation (per-class ≥95%)
+    needs: mutation-shards
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every shard passed
+        run: test "${{ needs.mutation-shards.result }}" = "success"
+
   # The identity key (issuer, subject) is case-sensitive, and the MySQL family's
   # default collations are not: the suite runs on each server engine the package
   # supports, not only on in-memory SQLite.
@@ -123,6 +252,8 @@ jobs:
         with:
           php-version: '8.4'
           coverage: none
+          # tests/Concurrency forks real processes; without pcntl they would skip.
+          extensions: pcntl, posix
           tools: composer:v2
 
       - name: Install dependencies
@@ -294,7 +425,7 @@ jobs:
 
   # The qiick standards pack (agent files, architecture test) must match app-ui.
   standards:
-    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@v0.11.0
+    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@0d97ae1429a856411c76e6de1ec258cae0eabab6 # v0.15.0
     with:
       standards: true
       registry: false

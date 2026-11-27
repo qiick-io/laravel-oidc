@@ -7,6 +7,135 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- OIDC requires `qiick/laravel-outbound` v0.2.0-beta.4 or a compatible 1.x
+  release for its isolated IdP HTTP stack. Update products pinned to
+  Outbound 0.1 before upgrading OIDC.
+
+## [1.0.0-beta.8] - 2026-11-26
+
+### Upgrade notes
+
+- Recreate the package tables to pick up nullable identity ownership and the logout replay fingerprint. Durable revocations cover the app's configured session lifetime, within a configurable ceiling that defaults to 30 days. Schedule logout pruning hourly. See [UPGRADING.md](./UPGRADING.md#100-beta8-from-100-beta7).
+- Keep `OIDC_ALLOW_PRIVATE_HOSTS=true` if the IdP is on a private network.
+
+### Added
+
+- The fleet-standard `OidcEraser` explicitly deletes or anonymises OIDC identity and attributable logout data and reports aggregate counts after commit (#84).
+
+### Fixed
+
+- Private IdPs work with `OIDC_ALLOW_PRIVATE_HOSTS=true` on `qiick/laravel-outbound` v0.2.0-beta.2. Private hosts are blocked by default, and cloud metadata stays blocked with the opt-in enabled (#104).
+- Apps with OIDC disabled can boot with a local session lifetime longer than the OIDC retention ceiling. The runtime check ends OIDC sessions when the ledger cannot cover their configured lifetime. Erasure reports count retained, unattributable SID cache entries with the `cache_ttl` reason.
+
+## [1.0.0-beta.7] - 2026-11-25
+
+### Upgrade notes
+
+- **Read `UPGRADING.md`, "From any beta to 1.0.0-beta.7, in one pass".** In short: recreate the package tables, register `{APP_URL}/auth/oidc/logged-out` at the IdP, point `oidc.cache.store` at a store every app server shares, schedule `oidc:prune-logout-revocations`, run `oidc:configure`.
+- **`qiick/laravel-outbound` `^0.2` is accepted besides `^0.1`** (`^0.1 || ^0.2`), so an app can take outbound 0.2. Outbound 0.2 has its own upgrade notes (its webhook tables, stricter config validation, Guzzle 7.12 or later); the parts this package uses (`RemoteUrlGuard`, `PinnedHttpClient`, `UrlGuardOptions`) behave the same, and CI runs the suite on both lines.
+- **`oidc:import-legacy-subjects` takes the issuer from the bound `ProviderConfigurationRepositoryContract`, not from `oidc.issuer`, and needs `--issuer` while SSO is not configured.** An app with database settings no longer stamps imported identities with a stale config issuer that logins never use (#38). A deploy step that ran the import with SSO still off adds `--issuer`.
+- `SessionRevocationService` takes the clock leeway as a fourth constructor argument (`leewaySeconds`); the service provider passes `oidc.id_token.leeway`. `GET /auth/oidc/logged-out` is throttled to 60 requests a minute.
+- **Each login `state` is now consumed on `oidc.cache.store` (the app's default store when null).** With several app servers that store must be shared (database, redis); the array driver makes every SSO callback fail outside the app's tests, and `oidc:configure` reports it as a failure. `AuthorizationCodeFlowService` takes two more constructor arguments (`cache`, `isArrayCacheAllowed`); the service provider passes them.
+- **A login that asked for an `acr` (`oidc.mfa.request_acr_values`, `acr_values` or the `claims` parameter) and got none of the requested values no longer counts as MFA, even with `amr=mfa`**: the app's second factor runs (or, with `oidc.mfa.require_requested_acr`, the login is refused).
+- `AuthorizationCodeFlowService` takes two more constructor arguments (`leewaySeconds`, `isRequestedAcrRequired`); the service provider passes them, an app that builds it by hand must too. `redirect()` throws `InvalidArgumentException` for a `max_age` that is not a whole number of seconds, 0 or more.
+- `IdentityProviderHttpService::UnlimitedTimeoutSeconds` is removed (the class is internal); `oidc.http.timeout = 0` still means a 24-hour ceiling.
+- **Register `{APP_URL}/auth/oidc/logged-out` at the IdP as a post-logout redirect URI.** It is the new default `oidc.post_logout_redirect_uri`; `oidc:configure` prints it. See `UPGRADING.md`.
+- `IdentitySessionService::PENDING_SECONDS` is removed; the pending SSO identity still waits ten minutes for the app's second factor.
+- **Recreate beta databases (`php artisan migrate:fresh`).** `user_identities` now has a unique `(user_id, issuer)` key instead of a plain index. A database that already holds two identities of one issuer for the same user cannot take the new key; keep one of them before recreating.
+- `RoleMappingService::ALWAYS_FORBIDDEN_ROLES` is removed (the class is internal); `super-admin` is still never granted or revoked by role mapping.
+- `JwtValidatorService::SUPPORTED_ALGORITHMS` is replaced by `JwtValidatorService::supportedAlgorithms()`, with the same list.
+
+### Security
+
+- A blank two-factor secret (an `AsStringable` cast of an empty or whitespace string, an empty array) no longer counts as a second factor: break-glass detection could otherwise treat a user without TOTP as protected. The Fortify challenge and the break-glass policy now share one check, which still counts any other cast value as a secret (fail closed).
+- A back-channel logout row is kept until the token's `exp` plus the larger of 120 seconds and `oidc.id_token.leeway`: with a leeway above two minutes, pruning could delete the row while the validator still accepted the token, letting a replay through. A fractional `exp` is rounded up instead of being ignored (the row then lived only the revocation lifetime).
+- The authorization response `state` is single-use across requests and servers (RFC 6749 §10.12, RFC 9700 §4.7): the callback consumes it with an atomic add on the OIDC cache store before the code exchange. Removing it from the session alone let two parallel callbacks that loaded the session before either saved it both pass the check, leaving only the IdP's single-use code to stop the second. A cache that does not answer refuses the login (fail closed).
+- RP-initiated logout sends a random `state` and the new return route `GET /auth/oidc/logged-out` (`oidc.logged-out`) checks it against a ten-minute HttpOnly, SameSite=Lax cookie (Secure over https) before redirecting to `oidc.logout.redirect_to`, taken from config only (standards review S7). A missing or wrong state is logged and still redirects. An explicit post-logout URI skips the check.
+- A signed token whose payload holds a number JSON cannot carry back (`exp: 1e999`) is refused as an invalid token instead of failing with a 500.
+- A cached JWKS that published the token's `kid` twice no longer blocks logins until `oidc.cache.jwks_ttl`: the set is refetched once per refetch cooldown, so logins recover as soon as the IdP fixes it.
+- `sub`, `sid` and `jti` longer than 255 characters are refused in back-channel and front-channel logout, and `oidc:import-legacy-subjects` reports such a legacy subject as a conflict, instead of MySQL truncating or refusing the value (OIDC Core 2 caps `sub` at 255).
+- The `id_token` kept in the session for RP-initiated logout is encrypted with the app key (standards review S6). The session payload moves to `format_version` 2; version 1 payloads written by beta.6 are still read, so upgrading signs nobody out, and are rewritten encrypted the first time they are read. A pending identity that no longer reads when the app's second factor completes ends the session instead of signing the user in without back-channel coverage. A version 2 `id_token` that does not decrypt ends the session (fail closed). Rotating `APP_KEY` without listing the old key in `APP_PREVIOUS_KEYS` therefore signs SSO users out.
+- A `sub`-only back-channel logout received while the app's second factor was pending no longer stops matching once the challenge completes: promotion keeps the callback time as the session's `authenticated_at`.
+- Auto-link can no longer link one user to two identities of the same issuer under concurrent callbacks: unique `(user_id, issuer)` decides and the loser is refused with `linked_to_another_identity`. `oidc:import-legacy-subjects` reports such a user as a conflict instead of failing on the key.
+- `aud` shaped as a JSON object is refused in `id_token` and `logout_token` (OIDC Core §2: a string or an array of strings).
+- RSA keys shorter than 2048 bits are refused for every RSA algorithm (RFC 7518 §3.3 and §3.5); php-jwt checked it for `RS*` but not for `PS256`.
+- `PS256` signatures must use a salt as long as the hash (RFC 7518 §3.5): phpseclib accepts any salt length by default, so validation turns that off for the duration of the check and restores the previous setting.
+- An EC key verifies only the algorithm of its curve: `ES256` on P-256, `ES384` on P-384 (RFC 7518 §3.4).
+- A token with a `crit` header is refused, since the package understands no JWS extension (RFC 7515 §4.1.11).
+- A JWKS that publishes the token's `kid` twice for the same key type is refused instead of using the first key.
+- A JWKS key with `key_ops` is used only when it lists `verify` (RFC 7517 §4.3).
+- `aud` shaped as a JSON object is refused in `id_token` and `logout_token` (OIDC Core §2: a string or an array of strings), including an object with numeric keys such as `{"0": "client"}`, which decodes to a PHP list: the JSON type is checked before decoding to arrays.
+- The loser of two concurrent first logins of the same (issuer, `sub`) signs in as the user the winner linked, instead of being refused with a wrong reason (`linked_to_another_identity` or `account_not_linked`). An inactive user is still refused.
+- `oidc:import-legacy-subjects` inserts with `insertOrIgnore`, so a login that links the user or the `sub` during the import is reported as already linked or as a conflict instead of failing the command.
+- The logout revocation cache now expires with the row it mirrors (an absolute expiry instead of a computed TTL), and every cache path is covered by tests, so `SessionRevocationService` needs no mutation-testing exemptions.
+
+### Added
+
+- Concurrency tests with two real processes and database connections (`tests/Concurrency`, run on PostgreSQL, MySQL and MariaDB, skipped on SQLite): a `jti` delivered twice at once is stored once, two first logins of one `sub` provision one user, two subjects racing to auto-link one user link only one, and two logins meeting an unknown `kid` refetch the JWKS once.
+- `DiscoveryDocumentData` carries the IdP's advertised capabilities: front-channel and back-channel logout (with their session flags), `acr_values_supported` and `claims_parameter_supported`. Absent or malformed values take the spec default (`false`, or `null` for the list); a discovery document cached by an older release still loads (standards review S5).
+- `oidc:configure` warns when the IdP does not advertise back-channel logout with `sid`, front-channel logout with `iss` and `sid` while it is on, or a requested `acr` value, and its JSON report lists the capabilities under `identity_provider_capabilities`.
+- `oidc:configure` lists `frontchannel_logout_uri` among the URIs to register when `oidc.frontchannel_logout.enabled` is on, explains that the IdP client needs `frontchannel_logout_session_required`, and fails when the flag is on but the route is not registered (standards review S3).
+- `phpseclib/phpseclib` (`^3.0.58`) is a dependency, so `PS256` `id_token`s are verified instead of always failing closed: `firebase/php-jwt` needs it for RSASSA-PSS, and the package already listed `PS256` as supported. `firebase/php-jwt` now needs `^7.1.1`, the first release with PS256.
+- The fake IdP signs with P-384 keys (`rotateSigningKey(keyType: 'EC', curve: 'P-384')`) and publishes them for `ES384`; every supported algorithm now has an end-to-end verification test.
+- `OidcLogoutReceivedEvent` (channel, issuer, subject, SHA-256 of `sid`) is dispatched for every stored back-channel and front-channel logout, so products can log it (standards review S8). `SessionRevocationService` takes the event dispatcher as a third constructor argument; the service provider passes it. The event is dispatched after the revocation is stored and cached; a listener that throws is logged and does not fail the logout.
+- `oidc.mfa.max_age` (and a per-login `max_age` passed to `redirect()`) is sent as `max_age`; the id_token must then carry `auth_time` no older than max_age plus the leeway (OIDC Core 3.1.2.1, 3.1.3.7 step 13). `ProviderConfigurationData` gains a trailing optional `maxAge` (standards review S2).
+- The `acr` a login asked for (`acr_values` or the `claims` parameter) is checked against the id_token: a missing or other `acr` counts as "MFA not proven" (the app's second factor runs), or refuses the login with `oidc.mfa.require_requested_acr`. `AuthenticatedIdentityData` gains a trailing optional `isRequestedAuthenticationContextMet` (standards review S2).
+- `oidc:configure` warns when `app.timezone` is not `UTC`, and the README documents that the package's timestamps are UTC (standards review M7).
+
+### Changed
+
+- `oidc:configure` warns on the array cache store when `APP_ENV` is `testing` (the only case the callback accepts it) and on the file store, which each app server keeps to itself.
+- The back-channel logout `jti` cache pre-check is removed: the unique `(issuer, jti)` key already refuses a replay with the same answer, so the pre-check only duplicated it. `BackChannelLogoutService` no longer takes a cache store.
+- A role claim that mixes role names and Zitadel-style role keys (`["admin", {"member": {…}}]`) now maps both instead of only the names. A string value under a string key (`{"display": "admin"}`) is no longer read as a role name.
+- `FortifySecondFactorChallengeService` takes the Fortify class and two-factor trait names as trailing optional constructor arguments (defaults unchanged), so the default challenge is tested without Fortify installed.
+
+### Fixed
+
+- `oidc:import-legacy-subjects --dry-run` works before the package migration: without the `user_identities` table it counts every subject as new and says so. A real import still needs the table and now fails with a clear message instead of a database error (#39).
+- The RP-initiated logout state cookie is scoped to the return route as the browser sees it, so an app served under a sub-path (`APP_URL=https://host/app`) gets it back instead of logging a mismatch on every logout.
+- Front-channel logout answers 400 instead of 500 when an app repository says SSO is enabled but cannot build its configuration.
+- `GET /auth/oidc/logged-out` is rate limited like front-channel logout, so an unauthenticated client cannot flood the log with state-mismatch warnings.
+- A login whose id_token and userinfo carry no email is refused with the new reason `email_not_released` ("the identity provider did not share an email address") instead of `email_missing`, which now means only an email that is not valid. The userinfo call stays the documented path for IdPs such as Signaculum that release the profile and email claims at userinfo only (OIDC Core 5.4); the `oidc.userinfo` config comment says so (#64).
+- A `config/oidc.php` published before a nested key existed (for example `http.connect_timeout`, `http.max_response_bytes` or a new `mfa.*` key) now gets the package default for that key: the service provider merges the defaults into nested arrays, since Laravel's `mergeConfigFrom()` fills only top-level keys. Lists such as `scopes` stay the app's own.
+- `oidc:configure` treats an `http://[::1]` redirect URI as local instead of warning about plain http on a public host.
+
+### Documentation
+
+- `UPGRADING.md` covers every beta: a one-pass path from any beta to beta.7, then what each version from beta.1 on asks of an app.
+- README: a threat model section (what the package defends against and what it leaves to the app and the IdP) and the list of fields for an app's settings UI, basic and advanced, with where each one is read (standards review S10).
+- `docs/PUBLIC-API.md` lists `oidc.mfa.max_age`, `oidc.mfa.require_requested_acr`, `oidc.logout.redirect_to` and the `oidc.logged-out` route; `JwksService`, `JwtValidatorService`, `BackChannelLogoutService`, `IdentitySessionService`, `IdentitySessionData`, `MultiFactorClaimService` and `Models\Concerns\GuardsIdByDefaultTrait` are marked `@internal`; an architecture test fails when a class is neither listed nor internal; the README links the page.
+- `docs/SECURITY-CHECKLIST.md`: every security check with a stable ID (`SEC-01` …), the spec section behind it and the tests that prove a bad value is refused.
+- `docs/PUBLIC-API.md` lists the public API that 1.0.0 freezes (classes, config keys, env vars, routes, commands, events, tables) and the deprecation policy; internal classes carry `@internal`.
+- README brought up to beta.6: version, the `oidc_logout_revocations` table as the source of truth with the prune schedule, front-channel logout setup, `oidc.routes.except`, and the supported `id_token` algorithms.
+- Dependency register `docs/dependencies.md`: one row per runtime `composer.json` `require` entry with constraint rationale, usage, maintainer, license, known risk and an in-package exit plan.
+
+## [1.0.0-beta.6] - 2026-11-22
+
+### Upgrade notes
+
+- **Requires `qiick/laravel-outbound:^0.1`.** Server-side IdP calls (discovery, JWKS, token, userinfo) now go through outbound's `RemoteUrlGuard` and `PinnedHttpClient`. The local `RemoteUrlGuardService` is removed. Public config keys are unchanged: `oidc.http.allow_private_hosts` / `OIDC_ALLOW_PRIVATE_HOSTS` still allow private hosts and plain http together; cloud metadata stays blocked. Optional `oidc.http.max_response_bytes` / `OIDC_MAX_RESPONSE_BYTES` (default 1 MiB) caps IdP response bodies. `oidc.http.timeout=0` still means no practical limit; optional `oidc.http.connect_timeout` defaults to 10s. See `UPGRADING.md`.
+- **Recreate beta databases (`php artisan migrate:fresh`).** The package is not stable yet, so schema changes edit or add `create_…` migrations instead of forward alters. This release:
+  - enriches `2026_11_05_000000_create_user_identities_table` with public id, link/email snapshots, last-login auth metadata, `format_version` and `metadata` (#57);
+  - adds `2026_11_22_000000_create_oidc_logout_revocations_table` for durable back-/front-channel logout `jti` storage (#60).
+  Existing installs that already ran an older create migration will not pick up those columns or the new table from a plain `migrate`. Fresh installs are fine. Apps that published the migrations (`vendor:publish --tag=oidc-migrations`) publish again after updating.
+
+### Added
+
+- Enriched `user_identities` create migration and model casts for public id, link method, email/username/name snapshots, last-login `auth_time` / `acr` / `amr` / `id_token` alg, `format_version` and `metadata` (#57).
+- SSO login writes those identity columns and calls `UserClaimSynchronizationContract` after role mapping (#58).
+- Versioned SSO session payload (`format_version` 1 with `acr` / `amr` / `auth_time`); unknown versions fail closed and end the local session (#59).
+- Durable `oidc_logout_revocations` store: unique `(issuer, jti)`, fail-closed table reads, cache as accelerator only, `oidc:prune-logout-revocations` (#60).
+- `at_hash` validation against the access token when present on the `id_token` (OIDC Core 3.1.3.8 / 3.2.2.9) (#61).
+- `oidc.routes.except` to skip selected package routes, and optional `GET …/frontchannel-logout` behind `oidc.frontchannel_logout.enabled` (#62).
+- Real-transport Pest group against `php -S` on Guzzle 7 and 8 (CI job `real-transport`).
+- Per-class mutation gate for `IdentityProviderHttpService`, `DiscoveryService` and `OidcOutboundStackFactory` (≥95%, no `--covered-only`).
+
+### Changed
+
+- **SSRF and pinned HTTP are delegated to `qiick/laravel-outbound`.** Behaviour is not loosened: every previous SSRF refusal remains a refusal, CONNECT_TO pinning remains, redirects stay off on the IdP path, and outbound adds response size limits plus cross-origin redirect credential stripping when redirects are opted in (tests cover the wire). OIDC builds its own guard / client privately so `OutboundServiceProvider` cannot override IdP SSRF or timeouts. NAT64, 6to4 and Teredo are always blocked (see `UPGRADING.md`).
+
 ## [1.0.0-beta.5] - 2026-11-22
 
 ### Upgrade notes
@@ -107,7 +236,10 @@ First public beta of `qiick/laravel-oidc`: a generic OpenID Connect client for L
 
 - PHP `^8.3`, Laravel 12 and 13 (`illuminate/support`, `illuminate/http`, `illuminate/cache`), `firebase/php-jwt` `^7.0`, `guzzlehttp/guzzle` `^7.8 || ^8.0` (Guzzle 8 allowed since #10; Laravel 13 accepts it, Laravel 12 stays on Guzzle 7).
 
-[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.5...HEAD
+[Unreleased]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.8...HEAD
+[1.0.0-beta.8]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.7...v1.0.0-beta.8
+[1.0.0-beta.7]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.6...v1.0.0-beta.7
+[1.0.0-beta.6]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.5...v1.0.0-beta.6
 [1.0.0-beta.5]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.4...v1.0.0-beta.5
 [1.0.0-beta.4]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.3...v1.0.0-beta.4
 [1.0.0-beta.3]: https://github.com/qiick-io/laravel-oidc/compare/v1.0.0-beta.2...v1.0.0-beta.3

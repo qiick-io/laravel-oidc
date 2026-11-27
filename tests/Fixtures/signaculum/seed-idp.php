@@ -123,7 +123,8 @@ $plainSecret = $client->plainSecret;
 $client->forceFill([
     'is_first_party' => true,
     'grant_types' => ['authorization_code', 'refresh_token'],
-    'post_logout_redirect_uris' => [$postLogoutRedirectUri],
+    // The package's own return route (the default since S7) and the explicit URI the tests use.
+    'post_logout_redirect_uris' => array_values(array_unique([$postLogoutRedirectUri, 'http://localhost/auth/oidc/logged-out'])),
     'backchannel_logout_uri' => $backchannelUri,
     'is_backchannel_logout_session_required' => true,
 ])->save();
