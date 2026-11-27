@@ -102,8 +102,8 @@ The package registers these routes under `oidc.routes.prefix` (`auth/oidc`). An 
 | --- | --- | --- | --- |
 | `GET /auth/oidc/redirect` | `oidc.redirect` | `web`, `guest` | The SSO button: sends the browser to the IdP. |
 | `GET /auth/oidc/callback` | `oidc.callback` | `web`, `guest` | The redirect URI to register at the IdP. |
-| `POST /auth/oidc/backchannel-logout` | `oidc.backchannel-logout` | none | The back-channel logout URI to register at the IdP. |
-| `GET /auth/oidc/frontchannel-logout` | `oidc.frontchannel-logout` | `throttle:60,1` | The front-channel logout URI; answers 404 unless `oidc.frontchannel_logout.enabled`. |
+| `POST /auth/oidc/backchannel-logout` | `oidc.backchannel-logout` | none | The back-channel logout URI to register at the IdP. The endpoint limits rejected requests per sender IP. |
+| `GET /auth/oidc/frontchannel-logout` | `oidc.frontchannel-logout` | `throttle:60,1,oidc-frontchannel-logout:` | The front-channel logout URI; answers 404 unless `oidc.frontchannel_logout.enabled`. |
 
 Point your SSO button at `route('oidc.redirect')`. The callback validates everything (see the protocol profile), finds or creates the local user, logs them in on the default guard, regenerates the session and redirects to `redirect()->intended(config('oidc.home'))`. On failure it redirects to `oidc.login_url` with a message under the `email` key: a refusal says why (inactive user, no linked account, ...), and a protocol or IdP failure shows a generic message and logs the technical one.
 
@@ -214,6 +214,8 @@ The package registers `POST /auth/oidc/backchannel-logout` (route `oidc.backchan
 - with `sid`, only the sessions that came from that IdP session;
 - with `sub` alone, every session of the user authenticated at or before the logout.
 
+Rejected requests count toward `oidc.backchannel_logout.rate_limit` (600 per minute per sender IP by default, `null` disables it). Further rejections from that IP return `429` with `Retry-After` and omit the diagnostic log message. Every valid logout still runs during a burst. Behind a reverse proxy, configure Laravel's `TrustProxies` with the actual proxy addresses so rejected requests are counted against the sender's IP.
+
 **The table is the source of truth; the cache is only an accelerator.** A cache hit ends the session at once, but a cache miss is never read as "not revoked": only the table answers that, so `cache:clear`, eviction or a cache per server never loses a logout. If the table cannot be read, the session is treated as revoked (fail closed) and the error is logged.
 
 A logout row, including one with only a session ID, stays active for at least the Laravel `session.lifetime` in effect when it is written. The row can live longer to satisfy `oidc.backchannel_logout.revocation_ttl` or to cover the logout token's expiry plus the greater of 120 seconds and the JWT clock leeway. The application chooses its database retention ceiling through `oidc.backchannel_logout.max_retention_seconds`. It defaults to 30 days. Increase it only to cover longer sessions or replay windows required by the application. With `oidc.enabled=true`, the package refuses to boot if `session.lifetime` exceeds the ceiling. The runtime session check also ends OIDC sessions if their configured lifetime exceeds the ceiling, including when a custom provider repository enables SSO. The logout endpoint refuses tokens whose replay window exceeds the ceiling. Each cache entry expires within 24 hours, and the database can still revoke a session after its cache entry expires. Schedule the prune command hourly to remove rows after their retention window.
@@ -235,6 +237,8 @@ Off by default. Back-channel logout already ends server sessions; front-channel 
 3. Let the response be framed by the IdP. The endpoint sends `Content-Security-Policy: frame-ancestors <issuer origin>` and `Cache-Control: no-store`; an app middleware that forces `X-Frame-Options: DENY` or `frame-ancestors 'none'` on every response must skip this route.
 
 The endpoint needs both `iss` and `sid`, requires `iss` to equal the configured issuer exactly, and records the logout in the same table with `channel = frontchannel`, so the middleware ends the session as for back-channel logout. It uses no session cookie (a cross-site iframe does not send a `SameSite=lax` cookie) and is rate limited.
+
+Repeated notices for the same issuer and SID return success while the revocation is active. A notice after expiry creates a fresh revocation even if pruning has yet to run. The unique `(issuer, replay_key)` index makes active notices idempotent across servers. The front-channel SID digest has its own namespace, so a signed back-channel token can still record a separate revocation.
 
 ### Erasing a user's OIDC data
 
@@ -286,6 +290,7 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.userinfo` | `true` | Merge the userinfo claims into the identity. |
 | `oidc.routes.enabled` / `prefix` / `middleware` | `true` / `auth/oidc` / `['web', 'guest']` | The package routes; `middleware` applies to redirect and callback. |
 | `oidc.routes.except` | `[]` | Names of package routes the app registers itself (for example `['oidc.callback']`); every other package route is still registered. |
+| `oidc.backchannel_logout.rate_limit` | `600` | Rejected requests per minute per sender IP. Null disables the limit. |
 | `oidc.backchannel_logout.revocation_ttl` | `null` | Optional minimum retention in seconds. Null uses the app's session lifetime. |
 | `oidc.backchannel_logout.max_retention_seconds` | `2592000` | App-selected database retention ceiling in seconds. It must cover `session.lifetime` converted from minutes and the longest accepted logout replay window. |
 | `oidc.frontchannel_logout.enabled` (`OIDC_FRONTCHANNEL_LOGOUT`) | `false` | Turns on the front-channel logout endpoint, see above. |
@@ -376,7 +381,7 @@ What the package defends against, and what it leaves to the app and the IdP. Dec
 
 - A compromised IdP or a stolen IdP signing key: the package trusts what the IdP signs.
 - The app's own login, second factor and session hardening (cookie flags, session lifetime, `APP_KEY` rotation with `APP_PREVIOUS_KEYS`).
-- Rate limiting of the redirect, callback and back-channel routes (the front-channel route has its own limit): add `throttle` to `oidc.routes.middleware` or the app's route group if needed. A forged `logout_token` costs one signature check and at most one JWKS refetch per cooldown.
+- Rate limiting of the login redirect and callback routes: add `throttle` to `oidc.routes.middleware` or the app's route group if needed.
 - Schedule `oidc:prune-logout-revocations` hourly so expired rows can be removed on the next successful run.
 - Clock drift beyond `oidc.id_token.leeway` and an `app.timezone` other than `UTC`.
 
