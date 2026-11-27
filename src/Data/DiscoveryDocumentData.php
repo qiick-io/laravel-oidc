@@ -16,7 +16,7 @@ namespace Qiick\Oidc\Data;
  * They are trailing and optional, so a discovery document cached by an older
  * release still rebuilds.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class DiscoveryDocumentData
 {

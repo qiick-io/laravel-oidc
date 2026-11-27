@@ -1,6 +1,6 @@
 # Public API and deprecation policy
 
-This is the public API of `qiick/laravel-oidc` that `1.0.0` freezes (packages 1.0 checklist, items 14 and 16). Everything listed here follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and the deprecation policy below. Everything else is internal: a class marked `@internal` can change or disappear in any release, and apps must not construct, extend or call it. An architecture test (`tests/Arch/PackageArchitectureTest.php`) fails when a class in `src/` is neither listed here nor marked `@internal`.
+This is the public API of `qiick/laravel-oidc` that `1.0.0` freezes (packages 1.0 checklist, items 14 and 16). Everything listed here follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and the deprecation policy below. A class marked `@internal` can change or disappear in any release. `tests/Arch/PublicApiTest.php` checks class classification, config keys, environment variables and named routes against this page.
 
 ## Classes
 
@@ -55,10 +55,21 @@ A key added in a minor release always has a default, and a config file published
 
 ## Routes, commands, events and tables
 
-- Route names under `oidc.routes.prefix` (`auth/oidc`): `oidc.redirect`, `oidc.callback`, `oidc.backchannel-logout`, `oidc.frontchannel-logout`, `oidc.logged-out`, with their paths and HTTP methods.
+| Name | Method | Default URI |
+| --- | --- | --- |
+| `oidc.redirect` | `GET` | `/auth/oidc/redirect` |
+| `oidc.callback` | `GET` | `/auth/oidc/callback` |
+| `oidc.backchannel-logout` | `POST` | `/auth/oidc/backchannel-logout` |
+| `oidc.frontchannel-logout` | `GET` | `/auth/oidc/frontchannel-logout` |
+| `oidc.logged-out` | `GET` | `/auth/oidc/logged-out` |
+
+`oidc.routes.prefix` changes the path prefix. `oidc.routes.except` excludes individual routes by name so an app can register its own handler. `oidc.routes.enabled` controls registration of all five routes. The front-channel endpoint returns `404` unless the feature is enabled.
+
 - Commands: `oidc:configure` (`--issuer`, `--client-id`, `--client-secret`, `--write-env`, `--json`, and the JSON report keys), `oidc:import-legacy-subjects` (`--column`, `--issuer`, `--dry-run`), `oidc:prune-logout-revocations` (`--chunk`).
 - Events: the five event classes above, with their public properties.
 - Tables: `user_identities` and `oidc_logout_revocations`, as created by the package migrations. After `1.0.0` the migrations are forward-only and additive.
+- Reserved identity columns: `user_identities.subject_type` and `user_identities.provider_key` default to `NULL`. Package login and import leave them `NULL` until the [multi-provider registry work (L4)](./decisions/2026-11-22-defer-provider-registry.md).
+- Back-channel protocol errors: HTTP `400` with `error: invalid_request` and `error_description`.
 - Session keys (`oidc.identity`, `oidc.pending_identity`, `oidc.pending_logins`) and cache keys are internal.
 
 ## Deprecation policy

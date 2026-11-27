@@ -22,7 +22,7 @@ use Illuminate\Support\Facades\Crypt;
  * that does not decrypt, so the middleware can end the session instead of
  * silently dropping revocability.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class IdentitySessionData
 {

@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Route;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
@@ -35,6 +36,7 @@ function rememberedIdToken(): string
 }
 
 it('stores the id_token encrypted and reads it back in clear', function (): void {
+    Config::set('session.encrypt', false);
     linkIdentity(localUser(), 'user-42');
     ssoLogin($this, fakeProvider(), ['sub' => 'user-42'])->assertRedirect('/');
 

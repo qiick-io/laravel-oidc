@@ -13,7 +13,7 @@ use Qiick\Oidc\Services\IdentitySessionService;
  * the challenge signs the user in, the parked SSO identity becomes the
  * session identity.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class PromotePendingIdentityListener
 {

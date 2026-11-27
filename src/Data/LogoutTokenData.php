@@ -11,7 +11,7 @@ namespace Qiick\Oidc\Data;
  * session ends, with `sub` alone every session of the user ends. Trailing
  * fields feed the durable `oidc_logout_revocations` row (M10).
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class LogoutTokenData
 {

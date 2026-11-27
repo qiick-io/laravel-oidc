@@ -22,7 +22,7 @@ use Qiick\Oidc\Exceptions\InvalidTokenException;
  * The nonce binds the token to the browser session that started the login,
  * so a token captured elsewhere cannot be replayed into another session.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 final readonly class IdTokenValidatorService
 {

@@ -12,7 +12,7 @@ namespace Qiick\Oidc\Models\Concerns;
  * replaces a `protected $guarded = ['id']` declaration that a subclass would
  * otherwise have to repeat to change.
  *
- * @internal Not part of the public API (docs/PUBLIC-API.md); it can change in any release.
+ * @internal Not part of the public API (docs/public-api.md); it can change in any release.
  */
 trait GuardsIdByDefaultTrait
 {
