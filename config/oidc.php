@@ -269,6 +269,9 @@ return [
 
     'backchannel_logout' => [
 
+        /* Rejected requests per minute per sender IP. Null disables the limit. */
+        'rate_limit' => 600,
+
         /*
          * How long a back-channel logout is remembered, in seconds. It must
          * cover the longest OIDC session. Null uses `session.lifetime`.
