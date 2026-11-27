@@ -19,6 +19,12 @@ Then read the sections of the versions you skip: they list the behaviour changes
 
 ## Unreleased
 
+- IdP MFA is opt-in. Existing `amr_values` or `acr_values` lists only take
+  effect after you set `oidc.mfa.trust_provider = true`. Confirm the values
+  against the configured IdP before enabling trust.
+- When a user needs local MFA, a `SecondFactorChallengeContract::challenge()`
+  result of `null` now refuses and logs the login. Enroll users before
+  requiring MFA or bind a challenge that can complete the configured policy.
 - Update `qiick/laravel-outbound` and the application lockfile. OIDC requires
   `^0.2.0-beta.4 || ^1.0` for its isolated IdP HTTP stack. If your
   application pins Outbound 0.1, update that constraint and follow

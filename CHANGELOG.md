@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
-- SSO now preserves a user's self-enrolled Fortify TOTP even when `oidc.mfa.required` is off. Signed IdP MFA still satisfies the challenge (#42).
+- SSO preserves a user's self-enrolled Fortify TOTP even when `oidc.mfa.required` is off. IdP MFA requires explicit trust and configured claims. A required local challenge that cannot start now refuses and logs the SSO login (#42).
 - OIDC requires `qiick/laravel-outbound` v0.2.0-beta.4 or a compatible 1.x
   release for its isolated IdP HTTP stack. Update products pinned to
   Outbound 0.1 before upgrading OIDC.

@@ -90,7 +90,12 @@ it('takes max_age from the authorization request over the configured one', funct
 });
 
 it('proves MFA through the requested acr only when the IdP returns it', function (array $claims, bool $isProven): void {
-    $identityProvider = FakeIdentityProvider::fake(configOverrides: ['mfa.request_acr_values' => 'urn:qiick:loa:mfa']);
+    $identityProvider = FakeIdentityProvider::fake(configOverrides: [
+        'mfa.trust_provider' => true,
+        'mfa.amr_values' => ['mfa'],
+        'mfa.acr_values' => ['urn:qiick:loa:mfa'],
+        'mfa.request_acr_values' => 'urn:qiick:loa:mfa',
+    ]);
 
     $identity = stepUpLogin($identityProvider, ['acr_values' => 'urn:qiick:loa:mfa'], $claims);
 
@@ -102,7 +107,7 @@ it('proves MFA through the requested acr only when the IdP returns it', function
 ]);
 
 it('keeps amr proving MFA when no acr was requested', function (): void {
-    $identityProvider = FakeIdentityProvider::fake();
+    $identityProvider = FakeIdentityProvider::fake(configOverrides: ['mfa.trust_provider' => true, 'mfa.amr_values' => ['mfa']]);
 
     expect(isMultiFactorProven(stepUpLogin($identityProvider, claims: ['amr' => ['mfa']])))->toBeTrue();
 });
@@ -118,7 +123,11 @@ it('refuses a missing or lower acr when require_requested_acr is on', function (
 ]);
 
 it('accepts any requested acr when require_requested_acr is on', function (): void {
-    $identityProvider = FakeIdentityProvider::fake(configOverrides: ['mfa.require_requested_acr' => true, 'mfa.acr_values' => ['silver']]);
+    $identityProvider = FakeIdentityProvider::fake(configOverrides: [
+        'mfa.require_requested_acr' => true,
+        'mfa.trust_provider' => true,
+        'mfa.acr_values' => ['silver'],
+    ]);
 
     $identity = stepUpLogin($identityProvider, ['acr_values' => 'gold silver'], ['acr' => 'silver']);
 
@@ -206,7 +215,7 @@ it('lets a login without a requested acr through when require_requested_acr is o
 });
 
 it('counts only string amr values, as RFC 8176 defines them', function (): void {
-    $identityProvider = FakeIdentityProvider::fake(configOverrides: ['mfa.amr_values' => ['1']]);
+    $identityProvider = FakeIdentityProvider::fake(configOverrides: ['mfa.trust_provider' => true, 'mfa.amr_values' => ['1']]);
 
     expect(isMultiFactorProven(stepUpLogin($identityProvider, claims: ['amr' => [1]])))->toBeFalse()
         ->and(isMultiFactorProven(stepUpLogin($identityProvider, claims: ['amr' => ['1']])))->toBeTrue();

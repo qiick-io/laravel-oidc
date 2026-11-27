@@ -18,6 +18,7 @@ enum LoginRefusalReasonEnum: string
     case EmailNotVerified = 'email_not_verified';
     case DomainNotAllowed = 'domain_not_allowed';
     case InactiveUser = 'inactive_user';
+    case SecondFactorUnavailable = 'second_factor_unavailable';
 
     /**
      * English default message, safe to show to the user. Wording follows
@@ -34,6 +35,7 @@ enum LoginRefusalReasonEnum: string
             self::EmailNotVerified => 'SSO login requires a verified email from the identity provider.',
             self::DomainNotAllowed => 'Registration is restricted to allowed email domains.',
             self::InactiveUser => 'This account is inactive.',
+            self::SecondFactorUnavailable => 'A required second factor could not be started. Contact your administrator.',
         };
     }
 }

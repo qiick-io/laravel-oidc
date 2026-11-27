@@ -10,10 +10,12 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\Log;
 use LogicException;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
 use Qiick\Oidc\Contracts\UserClaimSynchronizationContract;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
+use Qiick\Oidc\Enums\LoginRefusalReasonEnum;
 use Qiick\Oidc\Events\OidcLoginSucceededEvent;
 use Qiick\Oidc\Exceptions\LoginRefusedException;
 use Symfony\Component\HttpFoundation\Response;
@@ -24,8 +26,8 @@ use Symfony\Component\HttpFoundation\Response;
  * 2. record last-login auth metadata from the validated id_token (M2);
  * 3. apply the role mapping, so the first request already has the IdP roles;
  * 4. optionally synchronise profile claims (S9; no-op by default);
- * 5. when the app requires 2FA and the IdP did not prove MFA (`amr` / `acr`),
- *    hand over to the app's own second factor instead of signing in;
+ * 5. when the app requires 2FA and the trusted IdP did not prove MFA,
+ *    hand over to the app's second factor or refuse login if it cannot start;
  * 6. otherwise log in on the default guard, regenerate the session id
  *    (session fixation), keep the identity for logout and announce it.
  *
@@ -73,11 +75,16 @@ final readonly class OidcLoginService
         if ($this->secondFactorChallenge->isRequired($user) && ! $this->multiFactorClaims->isSatisfied($identity)) {
             $challenge = $this->secondFactorChallenge->challenge($request, $user, $this->shouldRemember);
 
-            if ($challenge !== null) {
-                $this->identitySession->rememberPending($request->session(), $identity, $this->userKey($user));
+            if ($challenge === null) {
+                $reason = LoginRefusalReasonEnum::SecondFactorUnavailable;
+                Log::warning('OIDC login refused because the required second-factor challenge is unavailable.', ['reason' => $reason->value]);
 
-                return $challenge;
+                throw new LoginRefusedException($reason);
             }
+
+            $this->identitySession->rememberPending($request->session(), $identity, $this->userKey($user));
+
+            return $challenge;
         }
 
         $guard = $this->auth->guard();

@@ -8,6 +8,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\Log;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
 use Qiick\Oidc\Services\BackChannelLogoutService;
 use Qiick\Oidc\Services\FortifySecondFactorChallengeService;
@@ -60,20 +61,33 @@ it('signs in directly when the app does not require 2FA', function (): void {
 it('accepts MFA proven by the IdP', function (array $configOverrides, array $claims): void {
     bindAppSecondFactor();
 
-    ssoLogin($this, fakeProvider($configOverrides), $claims)->assertRedirect('/');
+    ssoLogin($this, fakeProvider(['mfa.trust_provider' => true, ...$configOverrides]), $claims)->assertRedirect('/');
 
     expect(auth()->id())->toBe($this->user->id);
 })->with([
-    'amr mfa (RFC 8176)' => [[], ['amr' => ['pwd', 'mfa']]],
+    'amr mfa (RFC 8176)' => [['mfa.amr_values' => ['mfa']], ['amr' => ['pwd', 'mfa']]],
     'amr otp when accepted' => [['mfa.amr_values' => ['otp', 'hwk']], ['amr' => ['pwd', 'otp']]],
     'acr when accepted' => [['mfa.acr_values' => ['gold']], ['acr' => 'gold']],
-    'signaculum acr mfa (default)' => [[], ['acr' => 'urn:qiick:loa:mfa']],
+    'configured Signaculum acr' => [['mfa.acr_values' => ['urn:qiick:loa:mfa']], ['acr' => 'urn:qiick:loa:mfa']],
+]);
+
+it('requires local MFA until the app opts in and configures accepted IdP claims', function (array $configOverrides, array $claims): void {
+    bindAppSecondFactor();
+
+    ssoLogin($this, fakeProvider($configOverrides), $claims)->assertRedirect('/two-factor-challenge');
+
+    $this->assertGuest();
+})->with([
+    'signed AMR by default' => [[], ['amr' => ['mfa']]],
+    'signed ACR by default' => [[], ['acr' => 'urn:qiick:loa:mfa']],
+    'published allowlist without opt-in' => [['mfa.amr_values' => ['mfa']], ['amr' => ['mfa']]],
+    'opt-in without an allowlist' => [['mfa.trust_provider' => true], ['amr' => ['mfa']]],
 ]);
 
 it('runs the app second factor when the IdP did not prove MFA', function (array $claims): void {
     bindAppSecondFactor();
 
-    ssoLogin($this, fakeProvider(['mfa.acr_values' => ['gold']]), $claims)->assertRedirect('/two-factor-challenge');
+    ssoLogin($this, fakeProvider(['mfa.trust_provider' => true, 'mfa.amr_values' => ['mfa'], 'mfa.acr_values' => ['gold']]), $claims)->assertRedirect('/two-factor-challenge');
 
     expect(auth()->check())->toBeFalse()
         ->and(session('login.id'))->toBe($this->user->id)
@@ -89,7 +103,7 @@ it('runs the app second factor when the IdP did not prove MFA', function (array 
 
 it('never trusts amr from the unsigned userinfo response', function (): void {
     bindAppSecondFactor();
-    $identityProvider = fakeProvider();
+    $identityProvider = fakeProvider(['mfa.trust_provider' => true, 'mfa.amr_values' => ['mfa'], 'mfa.acr_values' => ['gold']]);
     $authorizationUrl = (string) $this->get('/auth/oidc/redirect')->headers->get('Location');
 
     $this->get($identityProvider->authorize($authorizationUrl, ['amr' => ['pwd']], ['amr' => ['mfa'], 'acr' => 'gold']))
@@ -121,12 +135,20 @@ it('drops the pending identity when another user signs in or it expired', functi
         ->and(session()->has(IdentitySessionService::PENDING_SESSION_KEY))->toBeFalse();
 })->with(['another user', 'expired']);
 
-it('signs in when the user has no second factor to challenge', function (): void {
+it('refuses and logs a required second factor that cannot be started', function (): void {
     bindAppSecondFactor(hasSecondFactor: false);
+    Log::spy();
 
-    ssoLogin($this, fakeProvider())->assertRedirect('/');
+    ssoLogin($this, fakeProvider())->assertRedirect('/login')->assertSessionHasErrors([
+        'email' => 'A required second factor could not be started. Contact your administrator.',
+    ]);
 
-    expect(auth()->id())->toBe($this->user->id);
+    $this->assertGuest();
+    expect(session()->has(IdentitySessionService::PENDING_SESSION_KEY))->toBeFalse();
+    Log::shouldHaveReceived('warning')->with(
+        'OIDC login refused because the required second-factor challenge is unavailable.',
+        ['reason' => 'second_factor_unavailable'],
+    )->once();
 });
 
 it('asks the IdP for a stronger login when configured', function (): void {

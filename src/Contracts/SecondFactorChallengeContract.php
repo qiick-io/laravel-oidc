@@ -27,9 +27,8 @@ interface SecondFactorChallengeContract
     /**
      * Starts the app's challenge for a user who is not signed in yet. The
      * challenge must end with Auth::login() (the Login event completes the
-     * SSO session). Null when the user has no second factor to challenge:
-     * the package then signs the user in and the app's own enrollment rules
-     * apply, exactly as after a password login.
+     * SSO session). Return null when the challenge cannot be started. When
+     * this contract required MFA, the package logs and refuses that login.
      */
     public function challenge(Request $request, Model&Authenticatable $user, bool $shouldRemember): ?Response;
 }
