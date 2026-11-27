@@ -15,12 +15,16 @@ namespace Qiick\Oidc\Data;
  */
 final readonly class LogoutTokenData
 {
+    public const string BackChannel = 'backchannel';
+
+    public const string FrontChannel = 'frontchannel';
+
     public function __construct(
         public string $issuer,
         public ?string $subject,
         public ?string $sessionId,
         public ?string $tokenId = null,
         public int|float|null $expiresAt = null,
-        public string $channel = 'backchannel',
+        public string $channel = self::BackChannel,
     ) {}
 }

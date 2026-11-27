@@ -383,6 +383,7 @@ beforeEach(function (): void {
     ]);
     Config::set('oidc.mfa', [
         'required' => true,
+        'trust_provider' => true,
         'amr_values' => ['mfa'],
         'acr_values' => ['urn:qiick:loa:mfa'],
         'request_acr_values' => null,

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Qiick\Oidc\Services;
 
+use Closure;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
@@ -49,11 +50,15 @@ final readonly class UserLinkingService
     ) {}
 
     /**
+     * The login service can validate a new user inside the provisioning
+     * transaction, so a refused login rolls back the user, identity and roles.
+     *
+     * @param  (Closure(UserIdentity, Model&Authenticatable): void)|null  $acceptProvisionedUser
      * @return UserIdentity the linked identity, with its user loaded
      *
      * @throws LoginRefusedException
      */
-    public function resolve(AuthenticatedIdentityData $identity): UserIdentity
+    public function resolve(AuthenticatedIdentityData $identity, ?Closure $acceptProvisionedUser = null): UserIdentity
     {
         $linkedIdentity = $this->linkedIdentity($identity);
 
@@ -62,7 +67,7 @@ final readonly class UserLinkingService
         }
 
         try {
-            return $this->linkOrProvision($identity);
+            return $this->linkOrProvision($identity, $acceptProvisionedUser);
         } catch (LoginRefusedException|UniqueConstraintViolationException $exception) {
             // A concurrent first login of the same (issuer, sub) may have
             // linked it after the lookup above: this login is then that
@@ -93,10 +98,12 @@ final readonly class UserLinkingService
     /**
      * Steps 2 to 4 of the class docblock, for an (issuer, sub) not linked yet.
      *
+     * @param  (Closure(UserIdentity, Model&Authenticatable): void)|null  $acceptProvisionedUser
+     *
      * @throws LoginRefusedException
      * @throws UniqueConstraintViolationException when a concurrent login inserted a conflicting row
      */
-    private function linkOrProvision(AuthenticatedIdentityData $identity): UserIdentity
+    private function linkOrProvision(AuthenticatedIdentityData $identity, ?Closure $acceptProvisionedUser): UserIdentity
     {
         if (! $this->isAutoLinkEnabled && ! $this->isJitEnabled) {
             throw new LoginRefusedException(LoginRefusalReasonEnum::NoLinkedUser);
@@ -113,7 +120,7 @@ final readonly class UserLinkingService
             throw new LoginRefusedException(LoginRefusalReasonEnum::NoLinkedUser);
         }
 
-        return $this->provisionUser($identity, $email);
+        return $this->provisionUser($identity, $email, $acceptProvisionedUser);
     }
 
     /**
@@ -153,9 +160,11 @@ final readonly class UserLinkingService
     }
 
     /**
+     * @param  (Closure(UserIdentity, Model&Authenticatable): void)|null  $acceptProvisionedUser
+     *
      * @throws LoginRefusedException
      */
-    private function provisionUser(AuthenticatedIdentityData $identity, string $email): UserIdentity
+    private function provisionUser(AuthenticatedIdentityData $identity, string $email, ?Closure $acceptProvisionedUser): UserIdentity
     {
         $domain = Str::afterLast($email, '@');
 
@@ -163,13 +172,15 @@ final readonly class UserLinkingService
             throw new LoginRefusedException(LoginRefusalReasonEnum::DomainNotAllowed);
         }
 
-        [$user, $linkedIdentity] = DB::transaction(function () use ($identity, $email): array {
+        [$user, $linkedIdentity] = DB::transaction(function () use ($identity, $email, $acceptProvisionedUser): array {
             $user = $this->userProvisioning->provision($identity, $email);
+            $this->assertActive($user);
+            $linkedIdentity = $this->createIdentity($user, $identity, $email, 'jit');
+            $acceptProvisionedUser?->__invoke($linkedIdentity, $user);
 
-            return [$user, $this->createIdentity($user, $identity, $email, 'jit')];
+            return [$user, $linkedIdentity];
         });
 
-        $this->assertActive($user);
         $this->events->dispatch(new OidcUserProvisionedEvent($user, $identity));
 
         return $linkedIdentity;

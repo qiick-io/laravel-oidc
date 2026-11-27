@@ -11,26 +11,26 @@ pest()->extend(PackageTestCase::class);
 
 /**
  * docs/public-api.md freezes the public API at 1.0: every class in src/ is
- * either named there (by its short name, or by a pattern such as
+ * either named in the class inventory (by its relative name or a pattern such as
  * `Console\*Command`) or marked @internal, so a new class has to be placed
  * on one side on purpose.
  */
 it('names every class in the public API list or marks it internal', function (): void {
     $publicApi = (string) file_get_contents(__DIR__.'/../../docs/public-api.md');
-    preg_match_all('/`([A-Za-z\\\\]*\*[A-Za-z]*)`/', $publicApi, $patternMatches);
+    preg_match('/^## Classes\R(.*?)(?=^## |\z)/ms', $publicApi, $sections);
+    preg_match_all('/^\| ([^|\r\n]+) \|/m', $sections[1] ?? '', $classCells);
+    preg_match_all('/`([^`]+)`/', implode("\n", $classCells[1]), $classEntries);
     $listedPatterns = array_map(
-        fn (string $pattern): string => '/^'.str_replace('\\*', '[A-Za-z]+', preg_quote($pattern, '/')).'$/',
-        $patternMatches[1],
+        fn (string $entry): string => '/^'.str_replace('\\*', '[A-Za-z0-9_]+', preg_quote($entry, '/')).'$/',
+        $classEntries[1],
     );
     $sourceDirectory = (string) realpath(__DIR__.'/../../src');
     $unclassifiedClasses = [];
 
     foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($sourceDirectory, FilesystemIterator::SKIP_DOTS)) as $sourceFile) {
         $relativeName = str_replace(['/', '.php'], ['\\', ''], substr($sourceFile->getPathname(), strlen($sourceDirectory) + 1));
-        $shortName = basename($sourceFile->getPathname(), '.php');
         $isInternal = str_contains((string) file_get_contents($sourceFile->getPathname()), '@internal Not part of the public API');
-        $isListed = str_contains($publicApi, $shortName)
-            || array_filter($listedPatterns, fn (string $pattern): bool => preg_match($pattern, $relativeName) === 1) !== [];
+        $isListed = array_filter($listedPatterns, fn (string $pattern): bool => preg_match($pattern, $relativeName) === 1) !== [];
 
         if (! $isInternal && ! $isListed) {
             $unclassifiedClasses[] = $relativeName;

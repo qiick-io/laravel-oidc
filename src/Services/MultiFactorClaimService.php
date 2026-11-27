@@ -7,10 +7,8 @@ namespace Qiick\Oidc\Services;
 use Qiick\Oidc\Data\AuthenticatedIdentityData;
 
 /**
- * Decides whether the IdP says MFA happened during this login: an `amr` value
- * (RFC 8176, for example `mfa`, `otp`, `hwk`) in the accepted list, or an `acr`
- * in the accepted list. Both claims come from the signed id_token (userinfo
- * claims never override them).
+ * Decides whether a trusted IdP proved MFA during this login: a signed
+ * `amr` value (RFC 8176) or `acr` in the app's accepted lists.
  *
  * When the login asked for an `acr` and the IdP did not return one of the
  * requested values, MFA is not proven at all, whatever `amr` says: the IdP
@@ -27,11 +25,12 @@ final readonly class MultiFactorClaimService
     public function __construct(
         private array $acceptedAmrValues,
         private array $acceptedAcrValues,
+        private bool $isProviderTrusted,
     ) {}
 
     public function isSatisfied(AuthenticatedIdentityData $identity): bool
     {
-        if (! $identity->isRequestedAuthenticationContextMet) {
+        if (! $this->isProviderTrusted || ! $identity->isRequestedAuthenticationContextMet) {
             return false;
         }
 

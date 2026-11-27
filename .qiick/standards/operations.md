@@ -2,7 +2,7 @@
 
 # Security, data and operations
 
-What every qiick repo does so a vulnerability can be reported, a leaked secret replaced, a schema changed without downtime, the data restored, a release and its dependencies trusted, a running product watched, personal data accounted for, and an incident handled from a page instead of from memory (fleet conventions F19–F24, F26, F29 and F30, maintainer request of 2026-11-25; F25, F27 and F28 are code conventions, in the conventions rules).
+Operations rules F19–F24, F26 and F29–F34 cover vulnerability reporting, secrets, migrations, backups, releases, observability, privacy, incident response and security verification. F25, F27 and F28 are in the conventions rules.
 
 - **F19 Security policy:** every repo has a `SECURITY.md` (supported versions, how to report, response time) and GitHub private vulnerability reporting switched on, because the policy sends reporters there.
 - **F20 Secrets runbook:** every product has `docs/runbooks/secrets.md`: each secret of `.env.example` and each key file, where it lives, who rotates it, how, what the rotation breaks, and what to do after a leak.
@@ -13,8 +13,12 @@ What every qiick repo does so a vulnerability can be reported, a leaked secret r
 - **F26 Observability with Excubia:** every product requires `qiick/excubia-core` (not `--dev`), keeps an `excubia.json`, schedules `excubia:check` daily, and serves `/health/live` and `/health/ready`; pushing to an `excubia-app` is the operator's choice, configured only through `EXCUBIA_APP_URL` and `EXCUBIA_APP_TOKEN`.
 - **F29 Privacy:** every product keeps `docs/privacy.md`: the personal data it stores (table and column), why, for how long, which processors and outbound destinations receive any of it, and how a person's data is exported and erased. No telemetry, ever, unless the operator turns it on.
 - **F30 Runbooks:** every product keeps `docs/runbooks/deploy.md` (deploy, upgrade and rollback) and `docs/runbooks/incident.md` (first steps, who to tell, what to write down afterwards), next to the secrets and backup runbooks.
+- **F31 Security discovery:** every deployed product and the three marketing sites serve an RFC 9116 `/.well-known/security.txt` with a private reporting contact, an expiry within a year, `Preferred-Languages: en, it`, and a policy link.
+- **F32 Code scanning:** public `qiick-io` repositories run CodeQL and OpenSSF Scorecard weekly and on pushes to `develop`. They use standard hosted runners, display a Scorecard badge and report to GitHub code scanning. PHP uses PHPStan at max and the existing checks.
+- **F33 Release inventory:** every GitHub release attaches a CycloneDX SBOM. Release artefacts that already carry build provenance also carry an SBOM attestation.
+- **F34 ASVS 5.0 L2:** every product uses `docs/asvs.md` as its security checklist. Record a status and evidence for every OWASP ASVS 5.0.0 Level 1 and Level 2 requirement, including why an item does not apply and which qiick package owns any inherited control.
 
-With a `conventions` object in `qiick-standards.json`, the standards drift check runs the static checks of F19, F20, F22–F24, F26, F29 and F30; `migrations-frozen / migrations-frozen` checks F21; `scripts/check-repo-settings.mjs` in app-ui checks that private vulnerability reporting is on. An exception is a `conventions.divergences` entry like any other convention.
+With a `conventions` object in `qiick-standards.json`, the standards drift check runs the static checks of F19, F20, F22–F24, F26, F29, F30 and F34; `migrations-frozen / migrations-frozen` checks F21; `scripts/check-repo-settings.mjs` in app-ui checks that private vulnerability reporting is on. An exception is a `conventions.divergences` entry like any other convention.
 
 ## F19 Security policy and private reporting
 
@@ -154,4 +158,42 @@ A runbook step that turned out wrong during a real deploy or incident is correct
 
 **Checked by.** F30 (_app_): `docs/runbooks/deploy.md` with a **Rollback** section and `docs/runbooks/incident.md` with **First steps** and **After the incident**. Adopting the conventions writes all four runbooks from `standards/templates/`.
 
+## F31 Security discovery
+
+Serve `/.well-known/security.txt` over HTTPS with `Content-Type: text/plain; charset=utf-8`. Keep it in the deployment's public files, reachable before authentication, locale redirects and catch-all routes. Public repositories use the repository's `https://github.com/qiick-io/<repo>/security/advisories/new` for `Contact` and an HTTPS link to its `SECURITY.md` for `Policy`. Use a UTC RFC 3339 timestamp for `Expires`, at most 365 days out, and renew it as a source change. Set `Preferred-Languages: en, it`. See [RFC 9116](https://www.rfc-editor.org/rfc/rfc9116.html).
+
+The three sites with private source repositories, `qiick-website`, `qiick-docs`, and `lucagiardi-website`, use the public app-ui repository's private reporting form and the Websites section of its `SECURITY.md`.
+
+TODO: Add a `security@` mailbox as a second `Contact` once the maintainer sets it up.
+
+**Checked by.** `fleet-security-check.yml` validates the source file and policy, fails on expired or invalid dates, and emits a warning when 30 days or less remain. Run it on pull requests and weekly. Verify the deployed URL by requesting it anonymously and checking for status 200, the UTF-8 content type and the reporting contact. GitHub's [private reporting form](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository) needs the maintainer to enable it on the public repository.
+
+## F32 Code scanning
+
+Call the pinned `codeql.yml` and `scorecard.yml` reusable workflows on pushes to `develop` and weekly. CodeQL analyzes `actions` and `javascript-typescript` where there is JavaScript or TypeScript source. CodeQL [does not support PHP](https://docs.github.com/en/code-security/tutorials/customize-code-scanning/prepare-code-for-analysis). Packages gate on PHPStan at `max` and retain their existing checks. Apps keep their existing PHPStan gate and run a separate advisory `max` pass until they can enforce that level.
+
+Pin every app-ui reusable workflow to a full commit SHA reachable from app-ui's `develop`, `main`, or a published tag. Use that same SHA for any `standards-ref` input. After a squash merge, use the squash commit from the target branch. A pin to the pull request head can stop resolving when GitHub deletes the source branch.
+
+Upload the Scorecard SARIF to GitHub code scanning. Scorecard publishes badge data from the default branch, so include pushes to `main` when it is the default branch. Add the [official Scorecard badge](https://github.com/ossf/scorecard-action#scorecard-badge) to the README. Keep both scans outside the required checks. Use standard GitHub-hosted Ubuntu runners on public `qiick-io` repositories only. Private repositories and the marketing sites are outside F32.
+
+**Checked by.** `fleet-security-check.yml` verifies the public repository's scanner calls, triggers and README badge. The workflow runs show whether GitHub accepted the SARIF and Scorecard published the badge data.
+
+## F33 CycloneDX release inventory
+
+Call `release-sbom.yml` from the GitHub release workflow on `release: published`. It verifies the release tag (F23), checks out the tagged source and attaches `composer.cdx.json` for the Composer project, `npm.cdx.json` for the npm project, or both. Use [cyclonedx/cyclonedx-php-composer](https://github.com/CycloneDX/cyclonedx-php-composer) and [@cyclonedx/cyclonedx-npm](https://github.com/CycloneDX/cyclonedx-node-npm) with pinned versions. Products use the release locks. Libraries without a Composer lock record a release-time production resolution of their manifest.
+
+For an artefact that already has build provenance, also use [`actions/attest-sbom`](https://github.com/actions/attest-sbom) on the same artefact path or digest and the matching CycloneDX JSON. Keep the attestation step next to the provenance step and grant `id-token: write` and `attestations: write` to that job. The maintainer continues to create the tag and publish the GitHub release.
+
+**Checked by.** `fleet-security-check.yml` checks the caller and looks for an SBOM attestation alongside an existing build provenance action. The release job fails if no production inventory can be generated or uploaded.
+
 **Exceptions.** None.
+
+## F34 ASVS 5.0 L2
+
+**Rule.** Use [OWASP ASVS 5.0.0](https://asvs.owasp.org/downloads/) Level 2 as the single product security checklist. Start from the [ASVS register template](https://github.com/qiick-io/app-ui/blob/develop/standards/templates/asvs.md) and keep one row per Level 1 and Level 2 requirement with its versioned OWASP ID. Keep an out-of-scope row with the reason it does not apply. Review affected rows when a surface, runtime setting, dependency or supporting test changes.
+
+Record **Met** when evidence covers the entire requirement, **Partial** when evidence covers part of it, **Not applicable** when the relevant feature or architecture is out of scope, and **Gap** when the requirement lacks a substantiated control. Cite the test name, source file or deployment setting and describe what it proves or what remains to verify. Track each Gap with a GitHub issue titled `[asvs]` and link it in the row. Follow F19 for sensitive details and use a public issue only for safe remediation tracking. A filled register records the current assessment and can contain open gaps.
+
+**Mapping F12.** Map the properties and covering tests in a package's `docs/security-checklist.md` to the corresponding ASVS requirement IDs. Confirm the installed version and that the product's runtime configuration and call sites use the tested path. Name the Composer package in the **Owner package** column and link to its versioned F12 row or named test, along with any product evidence. A package entry can support several ASVS rows, and a row can inherit evidence from multiple packages. Keep **Partial** if the inherited evidence covers only part of the product requirement.
+
+**Checked by.** F34 (_app_) in standards drift checks for `docs/asvs.md`, complete and unique Level 1 and Level 2 IDs, a supported status and non-empty evidence in every row, and an issue reference in every Gap row. Use a GitHub issue URL or a local `#123` reference. Review verifies the issue prefix and whether the evidence and scope justify the status.

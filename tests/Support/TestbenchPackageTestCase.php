@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Qiick\Oidc\Tests\Support;
 
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Application;
+use Illuminate\Support\Facades\Schema;
 use Orchestra\Testbench\Attributes\WithMigration;
 use Orchestra\Testbench\TestCase;
 use Qiick\Oidc\Laravel\OidcServiceProvider;
@@ -25,6 +27,15 @@ abstract class TestbenchPackageTestCase extends TestCase
     protected function getPackageProviders($app): array
     {
         return [OidcServiceProvider::class];
+    }
+
+    /**
+     * Install the host's active flag before Laravel opens the test transaction.
+     * Adding a column inside it implicitly commits on MySQL and MariaDB.
+     */
+    protected function defineDatabaseMigrationsAfterDatabaseRefreshed(): void
+    {
+        Schema::table('users', fn (Blueprint $table) => $table->boolean('is_active')->default(true));
     }
 
     /**

@@ -19,6 +19,36 @@ Then read the sections of the versions you skip: they list the behaviour changes
 
 ## Unreleased
 
+**Before deploying with `oidc.mfa.required = true`:** Users who rely on MFA at
+the IdP and have no local second factor will be refused until you explicitly
+trust the IdP's proof. With `oidc.only = true`, an invalid MFA setup can lock
+out everyone except a working local break-glass account. Verify that account
+before the upgrade.
+
+For an installation already relying on Signaculum for MFA, set these keys in
+the `mfa` section of `config/oidc.php` before deployment:
+
+```php
+'mfa' => [
+    'required' => true,
+    'trust_provider' => true,
+    'amr_values' => ['mfa'],
+    'acr_values' => ['urn:qiick:loa:mfa'],
+    // Keep the other MFA settings from your published config.
+],
+```
+
+For another IdP, confirm the exact signed `amr` or `acr` values it emits for
+MFA before filling the accepted lists. If you require local MFA, clear the
+provider lists and enroll users in Fortify or bind your own working challenge.
+`php artisan oidc:check` exits non-zero when the published lists are ignored or
+required MFA has no usable provider proof or Fortify enrollment. The check
+shares the setup diagnostics with `oidc:configure`. Exercise a real SSO login
+before switching users over, particularly with a custom challenge contract.
+
+- When a user needs local MFA, a `SecondFactorChallengeContract::challenge()`
+  result of `null` refuses and logs the login. A refused JIT login rolls back
+  the new user, identity and role changes on the provisioning connection.
 - Update `qiick/laravel-outbound` and the application lockfile. OIDC requires
   `^0.2.0-beta.4 || ^1.0` for its isolated IdP HTTP stack. If your
   application pins Outbound 0.1, update that constraint and follow
@@ -43,7 +73,8 @@ Then read the sections of the versions you skip: they list the behaviour changes
 - **`oidc:import-legacy-subjects`:** the issuer comes from the bound `ProviderConfigurationRepositoryContract`, never `oidc.issuer`. While SSO is not configured, pass `--issuer`. `--dry-run` now works before the package migration.
 - **Logout route throttle:** `GET /auth/oidc/logged-out` allows 60 requests a minute.
 - **Logout event:** `OidcLogoutReceivedEvent` is dispatched for every stored logout; listen to it for the app's activity log.
-- **Code that builds internal classes by hand** (prefer the container; they are `@internal`, see `docs/public-api.md`): `AuthorizationCodeFlowService` takes `leewaySeconds`, `isRequestedAcrRequired`, `cache` and `isArrayCacheAllowed`; `SessionRevocationService` takes the event dispatcher and `leewaySeconds`; `FortifySecondFactorChallengeService` takes optional Fortify class names (test hooks). Removed: `IdentityProviderHttpService::UnlimitedTimeoutSeconds`, `IdentitySessionService::PENDING_SECONDS`, `RoleMappingService::ALWAYS_FORBIDDEN_ROLES`; `JwtValidatorService::SUPPORTED_ALGORITHMS` is now `JwtValidatorService::supportedAlgorithms()`.
+- Apps that construct `AuthorizationCodeFlowService` pass `leewaySeconds`, `isRequestedAcrRequired`, `cache` and `isArrayCacheAllowed`. `FortifySecondFactorChallengeService` accepts optional Fortify class names for test adapters.
+- Internal services are resolved through the container. `SessionRevocationService` now receives the event dispatcher and `leewaySeconds`. `IdentityProviderHttpService::UnlimitedTimeoutSeconds`, `IdentitySessionService::PENDING_SECONDS` and `RoleMappingService::ALWAYS_FORBIDDEN_ROLES` were removed. `JwtValidatorService::supportedAlgorithms()` replaces `JwtValidatorService::SUPPORTED_ALGORITHMS`.
 
 ### Post-logout return route
 

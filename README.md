@@ -41,10 +41,13 @@ php artisan oidc:configure --issuer=https://idp.example.com/realms/acme --client
 - signing algorithms and JWKS keys, client type, redirect URI;
 - that `app.timezone` is `UTC` (a warning otherwise, see "Timestamps are UTC");
 - that the cache store can make each login `state` single-use (a failure for the array driver outside tests);
+- that IdP MFA allowlists have an explicit trust setting, and that required MFA has trusted claims or usable local Fortify enrollment when using the default challenge;
 - when front-channel logout is on, that its route is registered;
 - in SSO-only mode, that a break-glass account exists.
 
 It prints the URIs to register at the IdP: the redirect URI, the post-logout redirect URI and the back-channel logout URI, plus the front-channel logout URI when front-channel logout is on. `--json` prints a machine-readable report for agents. `--write-env` writes `OIDC_ENABLED`, `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` to `.env`, only when every check passed. The exit code is `0` without failures. The client secret is never printed.
+
+Run `php artisan oidc:check` in the deploy pipeline to validate the active setup without writing `.env` or using option overrides. It exits non-zero on a failed check. A custom second-factor adapter must be verified with a login to exercise its own enrollment rules.
 
 Apps that use [Laravel Boost](https://github.com/laravel/boost) also get the package's agent guidelines (`resources/boost/guidelines/core.blade.php`).
 
@@ -70,7 +73,7 @@ The environment variables below configure common settings. The [public API inven
 | Auto-link (`oidc.auto_link`) | **off** | Opt in per provider. Existing Externa/Excubia installs that always auto-linked must set `OIDC_AUTO_LINK=true` (or their settings UI) after migration if they still need email linking. |
 | Verified email (`oidc.require_verified_email`) | **on** | Auto-link and JIT need `email_verified: true`. Per-provider opt-out for IdPs that never send the claim (Entra ID). |
 | Remember-me for SSO (`oidc.remember`) | **off** | A remember cookie would outlive the IdP session and a back-channel logout. |
-| 2FA after SSO | App challenge when `id_token` lacks accepted `amr` / `acr` | See “Second factor (MFA)” below; release notes must say SSO does not skip the app's 2FA. |
+| 2FA after SSO | The app's challenge runs when required. Trust in IdP MFA is off by default. | Opt in with `oidc.mfa.trust_provider` and configure the accepted claims for the chosen IdP. |
 
 ### Timestamps are UTC
 
@@ -99,8 +102,8 @@ The package registers these routes under `oidc.routes.prefix` (`auth/oidc`). An 
 | --- | --- | --- | --- |
 | `GET /auth/oidc/redirect` | `oidc.redirect` | `web`, `guest` | The SSO button: sends the browser to the IdP. |
 | `GET /auth/oidc/callback` | `oidc.callback` | `web`, `guest` | The redirect URI to register at the IdP. |
-| `POST /auth/oidc/backchannel-logout` | `oidc.backchannel-logout` | none | The back-channel logout URI to register at the IdP. |
-| `GET /auth/oidc/frontchannel-logout` | `oidc.frontchannel-logout` | `throttle:60,1` | The front-channel logout URI; answers 404 unless `oidc.frontchannel_logout.enabled`. |
+| `POST /auth/oidc/backchannel-logout` | `oidc.backchannel-logout` | none | The back-channel logout URI to register at the IdP. The endpoint limits rejected requests per sender IP. |
+| `GET /auth/oidc/frontchannel-logout` | `oidc.frontchannel-logout` | `throttle:60,1,oidc-frontchannel-logout:` | The front-channel logout URI; answers 404 unless `oidc.frontchannel_logout.enabled`. |
 
 Point your SSO button at `route('oidc.redirect')`. The callback validates everything (see the protocol profile), finds or creates the local user, logs them in on the default guard, regenerates the session and redirects to `redirect()->intended(config('oidc.home'))`. On failure it redirects to `oidc.login_url` with a message under the `email` key: a refusal says why (inactive user, no linked account, ...), and a protocol or IdP failure shows a generic message and logs the technical one.
 
@@ -144,9 +147,11 @@ The default `RoleSynchronizationContract` calls spatie/laravel-permission's `has
 
 ### Second factor (MFA)
 
-When the app requires 2FA for a user, an SSO login counts only if the signed `id_token` proves MFA: an `amr` value in `oidc.mfa.amr_values` (default `['mfa']`, RFC 8176), or an `acr` in `oidc.mfa.acr_values` (default `['urn:qiick:loa:mfa']`, Signaculum). Signaculum also emits `urn:qiick:loa:pwd` for password-only logins when `acr` was requested; that value is not accepted as MFA. Otherwise the callback hands over to the app's own challenge instead of signing the user in. The challenge must end with `Auth::login()`, and the package then completes the SSO session (identity for logout). `amr` and `acr` are never taken from the unsigned userinfo response. `amr` is always present on Signaculum id_tokens.
+The app's second factor runs whenever its policy requires one. The default `SecondFactorChallengeContract` also requires it for a user who enabled Fortify TOTP voluntarily, even when `oidc.mfa.required` is `false`. Fortify starts the challenge through `two-factor.login` with `login.id` and `login.remember`. The successful challenge calls `Auth::login()` to complete the SSO session.
 
-The default `SecondFactorChallengeContract` reads `oidc.mfa.required` and starts Laravel Fortify's two-factor challenge (`login.id` / `login.remember` and the `two-factor.login` route) for a user with a confirmed TOTP secret. A user without a second factor is signed in, and the app's own enrollment rules apply, as after a password login. Apps bind their own implementation to read their "2FA required" setting:
+OIDC accepts IdP MFA only when the app opts in with `oidc.mfa.trust_provider = true` and the signed ID token contains a configured `mfa.amr_values` entry (RFC 8176) or an `mfa.acr_values` entry. Both lists are empty by default. Choose the values for the configured provider. Only signed claims count. Set `oidc.mfa.max_age` if the app requires recent authentication before it accepts IdP MFA.
+
+When the required challenge cannot start, such as when the user has yet to enroll or the challenge route is unavailable, OIDC refuses the login and logs the reason. Apps using passkeys, custom TOTP or another second-factor policy must bind their own implementation:
 
 ```php
 $this->app->bind(SecondFactorChallengeContract::class, SsoSecondFactorChallengeService::class);
@@ -209,6 +214,8 @@ The package registers `POST /auth/oidc/backchannel-logout` (route `oidc.backchan
 - with `sid`, only the sessions that came from that IdP session;
 - with `sub` alone, every session of the user authenticated at or before the logout.
 
+Rejected requests count toward `oidc.backchannel_logout.rate_limit` (600 per minute per sender IP by default, `null` disables it). Further rejections from that IP return `429` with `Retry-After` and omit the diagnostic log message. Every valid logout still runs during a burst. Behind a reverse proxy, configure Laravel's `TrustProxies` with the actual proxy addresses so rejected requests are counted against the sender's IP.
+
 **The table is the source of truth; the cache is only an accelerator.** A cache hit ends the session at once, but a cache miss is never read as "not revoked": only the table answers that, so `cache:clear`, eviction or a cache per server never loses a logout. If the table cannot be read, the session is treated as revoked (fail closed) and the error is logged.
 
 A logout row, including one with only a session ID, stays active for at least the Laravel `session.lifetime` in effect when it is written. The row can live longer to satisfy `oidc.backchannel_logout.revocation_ttl` or to cover the logout token's expiry plus the greater of 120 seconds and the JWT clock leeway. The application chooses its database retention ceiling through `oidc.backchannel_logout.max_retention_seconds`. It defaults to 30 days. Increase it only to cover longer sessions or replay windows required by the application. With `oidc.enabled=true`, the package refuses to boot if `session.lifetime` exceeds the ceiling. The runtime session check also ends OIDC sessions if their configured lifetime exceeds the ceiling, including when a custom provider repository enables SSO. The logout endpoint refuses tokens whose replay window exceeds the ceiling. Each cache entry expires within 24 hours, and the database can still revoke a session after its cache entry expires. Schedule the prune command hourly to remove rows after their retention window.
@@ -230,6 +237,8 @@ Off by default. Back-channel logout already ends server sessions; front-channel 
 3. Let the response be framed by the IdP. The endpoint sends `Content-Security-Policy: frame-ancestors <issuer origin>` and `Cache-Control: no-store`; an app middleware that forces `X-Frame-Options: DENY` or `frame-ancestors 'none'` on every response must skip this route.
 
 The endpoint needs both `iss` and `sid`, requires `iss` to equal the configured issuer exactly, and records the logout in the same table with `channel = frontchannel`, so the middleware ends the session as for back-channel logout. It uses no session cookie (a cross-site iframe does not send a `SameSite=lax` cookie) and is rate limited.
+
+Repeated notices for the same issuer and SID return success while the revocation is active. A notice after expiry creates a fresh revocation even if pruning has yet to run. The unique `(issuer, replay_key)` index makes active notices idempotent across servers. The front-channel SID digest has its own namespace, so a signed back-channel token can still record a separate revocation.
 
 ### Erasing a user's OIDC data
 
@@ -264,6 +273,13 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 
 ### Advanced configuration
 
+Older published configuration files and caches get the shipped defaults for
+missing keys, even when an entire nested section is empty. Lists and role
+maps are replaced as a whole. An invalid published value stops application
+boot with an error naming its `oidc.*` key and the expected type. An explicit
+`null` keeps the fallback for optional strings or disables the back-channel
+rejection limit when set on `oidc.backchannel_logout.rate_limit`.
+
 | Config key | Default | Meaning |
 | --- | --- | --- |
 | `oidc.allowed_domains` | `[]` | JIT only for these email domains; empty allows all. |
@@ -274,13 +290,14 @@ $this->app->bind(ProviderConfigurationRepositoryContract::class, DatabaseOidcSet
 | `oidc.users.table` / `email_column` / `active_column` | `users` / `email` / `null` | The users table, its email column and an optional boolean "active" column. |
 | `oidc.break_glass.roles` / `require_two_factor` / `query_parameter` | `['super-admin']` / `true` / `local` | SSO-only mode, see above. |
 | `oidc.roles.*` | disabled | Role mapping, see above. |
-| `oidc.mfa.required` / `amr_values` / `acr_values` / `request_acr_values` | `false` / `['mfa']` / `['urn:qiick:loa:mfa']` / `null` | Second factor, see above. |
+| `oidc.mfa.required` / `trust_provider` / `amr_values` / `acr_values` / `request_acr_values` | `false` / `false` / `[]` / `[]` / `null` | Second factor, see above. |
 | `oidc.mfa.max_age` / `require_requested_acr` | `null` / `false` | Recent login and strict `acr`, see "Second factor (MFA)". |
 | `oidc.post_logout_redirect_uri` | `null` | `null` means the package return route `{APP_URL}/auth/oidc/logged-out`, which checks the logout `state`. Sent on RP-initiated logout. |
 | `oidc.logout.redirect_to` | `/` | Where the post-logout return route sends the browser. |
 | `oidc.userinfo` | `true` | Merge the userinfo claims into the identity. |
 | `oidc.routes.enabled` / `prefix` / `middleware` | `true` / `auth/oidc` / `['web', 'guest']` | The package routes; `middleware` applies to redirect and callback. |
 | `oidc.routes.except` | `[]` | Names of package routes the app registers itself (for example `['oidc.callback']`); every other package route is still registered. |
+| `oidc.backchannel_logout.rate_limit` | `600` | Rejected requests per minute per sender IP. Null disables the limit. |
 | `oidc.backchannel_logout.revocation_ttl` | `null` | Optional minimum retention in seconds. Null uses the app's session lifetime. |
 | `oidc.backchannel_logout.max_retention_seconds` | `2592000` | App-selected database retention ceiling in seconds. It must cover `session.lifetime` converted from minutes and the longest accepted logout replay window. |
 | `oidc.frontchannel_logout.enabled` (`OIDC_FRONTCHANNEL_LOGOUT`) | `false` | Turns on the front-channel logout endpoint, see above. |
@@ -317,6 +334,7 @@ The package ships no UI. An app that edits SSO in an admin page (Externa and Exc
 | Require verified email | `oidc.require_verified_email` | boolean |
 | Allowed email domains | `oidc.allowed_domains` | list of domains; empty allows all |
 | MFA required | `oidc.mfa.required` | boolean |
+| Trust IdP MFA | `oidc.mfa.trust_provider` | boolean, off by default |
 | Accepted `amr` / `acr` values | `oidc.mfa.amr_values` / `acr_values` | lists of strings |
 | Requested `acr_values` | `oidc.mfa.request_acr_values` | space-separated string or empty |
 | Refuse a login without a requested `acr` | `oidc.mfa.require_requested_acr` | boolean |
@@ -356,22 +374,23 @@ What the package defends against, and what it leaves to the app and the IdP. Dec
 | Forged or replayed login response | `state` checked and single-use per pending login (at most five per session, ten minutes each); PKCE `S256` on every login (RFC 7636); `nonce` bound to the `id_token` (OIDC Core 3.1.3.7); RFC 9207 `iss` checked whenever present, and required when the IdP advertises it. |
 | Forged or substituted `id_token` | Signature through the IdP's JWKS with an allowlist of algorithms (never `none` or HMAC), RSA keys of 2048 bits or more, EC keys on their own curve; `iss`, `aud`, `azp`, `exp`, `iat`, `at_hash`, `auth_time` against `max_age`; a `crit` header is refused. |
 | Substituted userinfo | Its `sub` must equal the `id_token` `sub` (OIDC Core 5.3.4). A claim in the `id_token` always wins over userinfo, and `amr`, `acr`, `auth_time`, `sid`, `azp` and `nbf` are never taken from userinfo. |
-| Account takeover through email | Auto-link is off by default and needs `email_verified: true` with the default verification policy. Enable it only for an IdP that controls email ownership. Each local user can link at most one identity per issuer. |
-| MFA bypass | Only a signed `amr` / `acr` counts as MFA; a login that asked for an `acr` and got another one runs the app's second factor (or is refused). |
+| Account takeover through email | Auto-link is off by default and needs `email_verified: true` with the default verification policy. Enable it only for an IdP that controls email ownership. A unique key allows each local user to link at most one identity per issuer, including concurrent first logins. |
+| MFA bypass | Trust in IdP MFA is off by default. Once the app opts in, the provider must return a signed `amr` or `acr` from the app's allowlist and satisfy any requested `acr`. Fortify prompts users who enabled TOTP voluntarily when signed proof is absent. If a required local challenge cannot start, OIDC refuses the login and logs the reason with a request identifier. |
 | A logout that is lost | Back-channel and front-channel logouts are stored in `oidc_logout_revocations` before the endpoint answers. **The table is the source of truth; the cache is only an accelerator**, so `cache:clear`, eviction or one cache per server never loses a logout. A failed table read ends the session (fail closed). |
 | Forged front-channel logout | The feature is off by default. The issuer must match the configured issuer. The matching `sid` is the sole proof of the browser notice. Someone who obtains a valid SID can terminate the local sessions tied to it. The effect is limited to session denial of service. |
-| Replayed `logout_token` | Unique `(issuer, jti)`: a second use is refused. |
+| Replayed `logout_token` | The unique `(issuer, replay_key)` index prevents reuse of the signed token's `jti` for its validation window. Front-channel revocations use a separate key namespace. |
+| Suppression of legitimate back-channel logout | The per-sender-IP limit counts only rejected requests. Once a sender exceeds the rejection limit, further rejections return `429` and suppress their diagnostic messages. Valid signed logouts remain accepted during bursts. Set Laravel's `TrustProxies` to the actual reverse proxies to attribute rejected requests to the correct sender. |
 | Session theft from storage | The package encrypts the stored `id_token` with the app key even when Laravel's `SESSION_ENCRYPT` is `false`. Enable `SESSION_ENCRYPT` in the host app to encrypt the entire stored session, including other session data. An unknown OIDC payload version ends the session. |
 | SSRF through discovery | Every server-side call (discovery, JWKS, token, userinfo) goes through `qiick/laravel-outbound`: https only, private, loopback and metadata addresses refused (unless `oidc.http.allow_private_hosts`, which still blocks metadata), the resolved address pinned, response size and time capped. |
 | Open redirect after logout | The post-logout return route redirects only to `oidc.logout.redirect_to` from config, and checks the logout `state` cookie. |
-| Lock-out by a broken IdP | SSO-only mode always keeps break-glass accounts (role plus confirmed second factor), and turning SSO off restores local login. |
+| Lock-out by a broken IdP | Break-glass accounts have a configured role and confirmed second factor. Apps with custom login callbacks apply the [break-glass policy](#sso-only-mode-and-break-glass) in each callback. Turning SSO off restores local login. |
 | Secrets in logs | Tokens, codes, secrets and full claim sets are never logged; the client secret is never printed by `oidc:configure`. |
 
 **Out of scope, left to the app or the IdP:**
 
 - A compromised IdP or a stolen IdP signing key: the package trusts what the IdP signs.
 - The app's own login, second factor and session hardening (cookie flags, session lifetime, `APP_KEY` rotation with `APP_PREVIOUS_KEYS`).
-- Rate limiting of the redirect, callback and back-channel routes (the front-channel route has its own limit): add `throttle` to `oidc.routes.middleware` or the app's route group if needed. A forged `logout_token` costs one signature check and at most one JWKS refetch per cooldown.
+- Rate limiting of the login redirect and callback routes: add `throttle` to `oidc.routes.middleware` or the app's route group if needed.
 - Schedule `oidc:prune-logout-revocations` hourly so expired rows can be removed on the next successful run.
 - Clock drift beyond `oidc.id_token.leeway` and an `app.timezone` other than `UTC`.
 

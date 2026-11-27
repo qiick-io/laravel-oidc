@@ -13,13 +13,13 @@ use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
-use Illuminate\Contracts\Foundation\CachesConfiguration;
 use Illuminate\Contracts\Http\Kernel as HttpKernelContract;
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
+use Qiick\Oidc\Console\CheckOidcCommand;
 use Qiick\Oidc\Console\ConfigureOidcCommand;
 use Qiick\Oidc\Console\ImportLegacySubjectsCommand;
 use Qiick\Oidc\Console\PruneLogoutRevocationsCommand;
@@ -29,6 +29,7 @@ use Qiick\Oidc\Contracts\RoleSynchronizationContract;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
 use Qiick\Oidc\Contracts\UserClaimSynchronizationContract;
 use Qiick\Oidc\Contracts\UserProvisioningContract;
+use Qiick\Oidc\Enums\TokenEndpointAuthMethodEnum;
 use Qiick\Oidc\Erasure\OidcEraser;
 use Qiick\Oidc\Factories\OidcOutboundStackFactory;
 use Qiick\Oidc\Http\Middleware\EnsureOidcSessionIsActiveMiddleware;
@@ -174,6 +175,7 @@ final class OidcServiceProvider extends ServiceProvider
         $this->app->bind(MultiFactorClaimService::class, fn (Application $app): MultiFactorClaimService => new MultiFactorClaimService(
             acceptedAmrValues: $this->stringList($app, 'oidc.mfa.amr_values'),
             acceptedAcrValues: $this->stringList($app, 'oidc.mfa.acr_values'),
+            isProviderTrusted: $this->config($app)->boolean('oidc.mfa.trust_provider', false),
         ));
 
         $this->app->bind(OidcLoginService::class, fn (Application $app): OidcLoginService => new OidcLoginService(
@@ -232,17 +234,21 @@ final class OidcServiceProvider extends ServiceProvider
      */
     private function mergeConfigDefaults(): void
     {
-        if ($this->app instanceof CachesConfiguration && $this->app->configurationIsCached()) {
-            return;
-        }
-
         $config = $this->config($this->app);
         $configured = $config->get('oidc', []);
 
+        if (is_array($configured)) {
+            $config->set('oidc', $this->withDefaults($this->configurationDefaults(), $configured));
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function configurationDefaults(): array
+    {
         /** @var array<string, mixed> $defaults */
         $defaults = require __DIR__.'/../../config/oidc.php';
 
-        $config->set('oidc', $this->withDefaults($defaults, is_array($configured) ? $configured : []));
+        return $defaults;
     }
 
     /**
@@ -255,7 +261,7 @@ final class OidcServiceProvider extends ServiceProvider
         foreach ($defaults as $key => $defaultValue) {
             if (! array_key_exists($key, $configured)) {
                 $configured[$key] = $defaultValue;
-            } elseif (is_array($defaultValue) && ! array_is_list($defaultValue) && is_array($configured[$key]) && ! array_is_list($configured[$key])) {
+            } elseif (is_array($defaultValue) && ! array_is_list($defaultValue) && is_array($configured[$key])) {
                 $configured[$key] = $this->withDefaults($defaultValue, $configured[$key]);
             }
         }
@@ -265,6 +271,8 @@ final class OidcServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->validateConfiguration($this->configurationDefaults(), $this->config($this->app)->array('oidc'), 'oidc');
+
         if ($this->config($this->app)->boolean('oidc.enabled') && ! OidcLogoutRevocation::isSessionLifetimeCovered()) {
             throw new InvalidArgumentException(sprintf(
                 'session.lifetime exceeds oidc.backchannel_logout.max_retention_seconds (%d minutes versus %d seconds). Lower session.lifetime or raise the revocation retention ceiling.',
@@ -307,6 +315,7 @@ final class OidcServiceProvider extends ServiceProvider
             ], 'oidc-config');
 
             $this->commands([
+                CheckOidcCommand::class,
                 ConfigureOidcCommand::class,
                 ImportLegacySubjectsCommand::class,
                 PruneLogoutRevocationsCommand::class,
@@ -316,6 +325,101 @@ final class OidcServiceProvider extends ServiceProvider
                 __DIR__.'/../../database/migrations' => database_path('migrations'),
             ], 'oidc-migrations');
         }
+    }
+
+    /**
+     * Validate the published config after defaults are filled. Read the shipped
+     * types from the config file itself, then check constraints specific to OIDC.
+     * Exception messages name the key without exposing a configured value.
+     *
+     * @param  array<array-key, mixed>  $defaults
+     * @param  array<array-key, mixed>  $configured
+     *
+     * @throws InvalidArgumentException when a configured value is invalid
+     */
+    private function validateConfiguration(array $defaults, array $configured, string $prefix): void
+    {
+        if (array_filter(array_keys($configured), is_int(...)) !== []) {
+            throw new InvalidArgumentException("{$prefix} must be an array of named settings.");
+        }
+
+        foreach ($defaults as $name => $defaultValue) {
+            $key = $prefix.'.'.$name;
+            $value = $configured[$name] ?? null;
+
+            if (is_array($defaultValue) && ! array_is_list($defaultValue)) {
+                if (! is_array($value)) {
+                    throw new InvalidArgumentException("{$key} must be an array of named settings.");
+                }
+
+                $this->validateConfiguration($defaultValue, $value, $key);
+            } else {
+                $this->validateConfigurationValue($key, $defaultValue, $value);
+            }
+        }
+    }
+
+    private function validateConfigurationValue(string $key, mixed $defaultValue, mixed $value): void
+    {
+        [$isValid, $expected] = match ($key) {
+            'oidc.issuer', 'oidc.client_id', 'oidc.client_secret', 'oidc.button_label',
+            'oidc.http.discovery_base', 'oidc.http.server_origin', 'oidc.break_glass.query_parameter',
+            'oidc.roles.claim', 'oidc.routes.prefix', 'oidc.users.email_column' => [
+                $value === null || is_string($value), 'a string or null',
+            ],
+            'oidc.mfa.max_age' => [
+                $value === null || (is_string($value) && trim($value) === '')
+                    || ((is_int($value) || is_string($value)) && filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]) !== false),
+                'a non-negative integer, an integer string, a blank string or null',
+            ],
+            'oidc.backchannel_logout.revocation_ttl', 'oidc.backchannel_logout.rate_limit' => [
+                $value === null || (is_int($value) && $value >= 0), 'a non-negative integer or null',
+            ],
+            'oidc.backchannel_logout.max_retention_seconds', 'oidc.http.max_response_bytes' => [
+                is_int($value) && $value > 0, 'a positive integer',
+            ],
+            'oidc.token_endpoint_auth_method' => [
+                is_string($value) && TokenEndpointAuthMethodEnum::tryFrom(trim($value)) !== null,
+                'client_secret_basic or client_secret_post',
+            ],
+            'oidc.id_token.algorithms' => [
+                $this->isStringList($value) && $value !== [] && array_diff($value, JwtValidatorService::supportedAlgorithms()) === [],
+                'a non-empty list of supported signing algorithms',
+            ],
+            'oidc.roles.map' => [$this->isValidRoleMap($value), 'a map of IdP role names to strings or lists of strings'],
+            default => match (true) {
+                is_bool($defaultValue) => [is_bool($value), 'a boolean'],
+                is_int($defaultValue) => [is_int($value) && $value >= 0, 'a non-negative integer'],
+                is_array($defaultValue) => [$this->isStringList($value), 'a list of strings'],
+                $defaultValue === null => [$value === null || is_string($value), 'a string or null'],
+                default => [is_string($value), 'a string'],
+            },
+        };
+
+        if (! $isValid) {
+            throw new InvalidArgumentException("{$key} must be {$expected}.");
+        }
+    }
+
+    /** @phpstan-assert-if-true list<string> $value */
+    private function isStringList(mixed $value): bool
+    {
+        return is_array($value) && array_is_list($value) && array_filter($value, is_string(...)) === $value;
+    }
+
+    private function isValidRoleMap(mixed $value): bool
+    {
+        if (! is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $identityProviderRole => $localRoles) {
+            if (! is_string($identityProviderRole) || (! is_string($localRoles) && ! $this->isStringList($localRoles))) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

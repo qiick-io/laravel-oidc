@@ -32,50 +32,70 @@ arch('events are readonly')
     ->expect('Qiick\Oidc\Events')
     ->toBeReadonly();
 
-/**
- * Every class in src/ is either in the per-class mutation gate
- * (scripts/mutate-per-class.sh) or listed here as having nothing to mutate,
- * so a new class cannot silently stay out of the gate. Interfaces have no
- * code and are skipped.
- */
-it('keeps every class with code in the mutation gate', function (): void {
-    $classesWithoutMutations = [
-        // Only promoted constructor properties or cases: pest --mutate creates no mutant.
-        'Qiick\Oidc\Data\LogoutTokenData',
-        'Qiick\Oidc\Data\OidcOutboundStackData',
-        'Qiick\Oidc\Enums\LoginRefusalReasonEnum',
-        'Qiick\Oidc\Enums\TokenEndpointAuthMethodEnum',
-        'Qiick\Oidc\Erasure\OrganisationScopeUnsupportedException',
-        'Qiick\Oidc\Events\OidcIdentityLinkedEvent',
-        'Qiick\Oidc\Events\OidcLoginSucceededEvent',
-        'Qiick\Oidc\Events\OidcLogoutReceivedEvent',
-        'Qiick\Oidc\Events\OidcUserProvisionedEvent',
-        'Qiick\Oidc\Events\SubjectErasedEvent',
-        'Qiick\Oidc\Exceptions\IdentityProviderRequestException',
-        'Qiick\Oidc\Exceptions\InvalidCallbackException',
-        'Qiick\Oidc\Exceptions\InvalidTokenException',
-        'Qiick\Oidc\Exceptions\OidcException',
-        'Qiick\Oidc\Exceptions\OidcNotConfiguredException',
-        'Qiick\Oidc\Services\NullUserClaimSynchronizationService',
-    ];
+it('declares the Illuminate components imported by package code as runtime requirements', function (): void {
+    $packageRoot = dirname(__DIR__, 2);
+    $manifest = json_decode((string) file_get_contents($packageRoot.'/composer.json'), true, flags: JSON_THROW_ON_ERROR);
+    $components = [];
 
-    preg_match_all("/^  '(Qiick\\\\Oidc\\\\[^']+)'$/m", (string) file_get_contents(__DIR__.'/../../scripts/mutate-per-class.sh'), $matches);
-    $gatedClasses = $matches[1];
+    foreach (['src', 'routes', 'config', 'database'] as $directory) {
+        $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($packageRoot.'/'.$directory, FilesystemIterator::SKIP_DOTS));
 
-    $sourceDirectory = realpath(__DIR__.'/../../src');
-    $sourceClasses = [];
-
-    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($sourceDirectory, FilesystemIterator::SKIP_DOTS)) as $sourceFile) {
-        $className = 'Qiick\Oidc\\'.str_replace(['/', '.php'], ['\\', ''], substr($sourceFile->getPathname(), strlen($sourceDirectory) + 1));
-
-        if (! interface_exists($className)) {
-            $sourceClasses[] = $className;
+        foreach ($files as $file) {
+            if ($file->getExtension() === 'php') {
+                preg_match_all('/^use Illuminate\\\\([A-Z][A-Za-z]+)\\\\/m', (string) file_get_contents($file->getPathname()), $matches);
+                array_push($components, ...$matches[1]);
+            }
         }
     }
 
-    sort($sourceClasses);
-    $expectedClasses = [...$gatedClasses, ...$classesWithoutMutations];
-    sort($expectedClasses);
+    // Foundation belongs to the Laravel host application and has no split component.
+    $componentNames = array_diff(array_unique($components), ['Foundation']);
+    $requiredPackages = array_map(fn (string $component): string => 'illuminate/'.strtolower($component), $componentNames);
 
-    expect($expectedClasses)->toBe($sourceClasses);
+    expect($requiredPackages)->not->toBeEmpty();
+    expect(array_values(array_diff($requiredPackages, array_keys($manifest['require']))))->toBe([]);
+});
+
+/**
+ * A method with executable statements puts its class in the mutation
+ * inventory, including an enum or data class that gains behaviour.
+ */
+it('keeps every class with code in the mutation gate', function (): void {
+    preg_match_all("/^  '(Qiick\\\\Oidc\\\\[^']+)'$/m", (string) file_get_contents(__DIR__.'/../../scripts/mutate-per-class.sh'), $matches);
+    $gatedClasses = $matches[1];
+
+    $hasExecutableMethod = static function (string $source): bool {
+        $tokens = array_values(array_filter(PhpToken::tokenize($source), fn (PhpToken $token): bool => ! $token->isIgnorable()));
+        $isInSignature = false;
+
+        foreach ($tokens as $position => $token) {
+            if ($token->is(T_FUNCTION)) {
+                $isInSignature = true;
+            }
+
+            if ($isInSignature && $token->is(['{', ';'])) {
+                if ($token->is('{') && ! $tokens[$position + 1]->is('}')) {
+                    return true;
+                }
+
+                $isInSignature = false;
+            }
+        }
+
+        return false;
+    };
+    $sourceDirectory = (string) realpath(__DIR__.'/../../src');
+    $executableClasses = [];
+
+    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($sourceDirectory, FilesystemIterator::SKIP_DOTS)) as $sourceFile) {
+        if ($sourceFile->getExtension() === 'php' && $hasExecutableMethod((string) file_get_contents($sourceFile->getPathname()))) {
+            $relativePath = substr($sourceFile->getPathname(), strlen($sourceDirectory) + 1);
+            $executableClasses[] = 'Qiick\Oidc\\'.str_replace(['/', '.php'], ['\\', ''], $relativePath);
+        }
+    }
+
+    sort($executableClasses);
+    sort($gatedClasses);
+
+    expect($gatedClasses)->toBe($executableClasses);
 });
