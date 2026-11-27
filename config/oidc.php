@@ -170,12 +170,10 @@ return [
     ],
 
     /*
-     * Second factor. When the app requires 2FA for a user, an SSO login counts
-     * only if the IdP says MFA happened: an `amr` value (RFC 8176) in
-     * `amr_values`, or an `acr` in `acr_values`. Otherwise the app runs its
-     * own TOTP or passkey challenge after the callback (Laravel Fortify is
-     * supported out of the box). Apps bind SecondFactorChallengeContract to
-     * read their own "2FA required" setting; `required` is the default.
+     * The default preserves a user's self-enrolled Laravel Fortify TOTP.
+     * Signed `amr` (RFC 8176) or `acr` matching the configured values satisfies
+     * MFA. Apps with their own policy or challenge can bind
+     * SecondFactorChallengeContract.
      */
     'mfa' => [
 

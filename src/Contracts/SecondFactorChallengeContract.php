@@ -10,12 +10,12 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * The app's own second factor, used when the app requires 2FA and the IdP
- * cannot prove MFA happened (design section 4, "MFA").
+ * The app's own second factor for a user whose IdP login lacks signed MFA
+ * proof (design section 4, "MFA").
  *
- * The default reads `oidc.mfa.required` and starts Laravel Fortify's
- * two-factor challenge. Externa and Excubia App bind an implementation that
- * reads their `two_factor_required` setting.
+ * The default starts Laravel Fortify's challenge when 2FA is required by
+ * `oidc.mfa.required` or the user has enabled it for their own account. Apps
+ * can bind an implementation that reads their own enrollment policy.
  */
 interface SecondFactorChallengeContract
 {
