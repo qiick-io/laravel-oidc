@@ -88,49 +88,45 @@ it('names every class in the public API list or marks it internal', function ():
 });
 
 /**
- * Every class in src/ is either in the per-class mutation gate
- * (scripts/mutate-per-class.sh) or listed here as having nothing to mutate,
- * so a new class cannot silently stay out of the gate. Interfaces have no
- * code and are skipped.
+ * A method with executable statements puts its class in the mutation
+ * inventory, including an enum or data class that gains behaviour.
  */
 it('keeps every class with code in the mutation gate', function (): void {
-    $classesWithoutMutations = [
-        // Only promoted constructor properties or cases: pest --mutate creates no mutant.
-        'Qiick\Oidc\Data\LogoutTokenData',
-        'Qiick\Oidc\Data\OidcOutboundStackData',
-        'Qiick\Oidc\Enums\LoginRefusalReasonEnum',
-        'Qiick\Oidc\Enums\TokenEndpointAuthMethodEnum',
-        'Qiick\Oidc\Erasure\OrganisationScopeUnsupportedException',
-        'Qiick\Oidc\Events\OidcIdentityLinkedEvent',
-        'Qiick\Oidc\Events\OidcLoginSucceededEvent',
-        'Qiick\Oidc\Events\OidcLogoutReceivedEvent',
-        'Qiick\Oidc\Events\OidcUserProvisionedEvent',
-        'Qiick\Oidc\Events\SubjectErasedEvent',
-        'Qiick\Oidc\Exceptions\IdentityProviderRequestException',
-        'Qiick\Oidc\Exceptions\InvalidCallbackException',
-        'Qiick\Oidc\Exceptions\InvalidTokenException',
-        'Qiick\Oidc\Exceptions\OidcException',
-        'Qiick\Oidc\Exceptions\OidcNotConfiguredException',
-        'Qiick\Oidc\Services\NullUserClaimSynchronizationService',
-    ];
-
     preg_match_all("/^  '(Qiick\\\\Oidc\\\\[^']+)'$/m", (string) file_get_contents(__DIR__.'/../../scripts/mutate-per-class.sh'), $matches);
     $gatedClasses = $matches[1];
 
-    $sourceDirectory = realpath(__DIR__.'/../../src');
-    $sourceClasses = [];
+    $hasExecutableMethod = static function (string $source): bool {
+        $tokens = array_values(array_filter(PhpToken::tokenize($source), fn (PhpToken $token): bool => ! $token->isIgnorable()));
+        $isInSignature = false;
+
+        foreach ($tokens as $position => $token) {
+            if ($token->is(T_FUNCTION)) {
+                $isInSignature = true;
+            }
+
+            if ($isInSignature && $token->is(['{', ';'])) {
+                if ($token->is('{') && ! $tokens[$position + 1]->is('}')) {
+                    return true;
+                }
+
+                $isInSignature = false;
+            }
+        }
+
+        return false;
+    };
+    $sourceDirectory = (string) realpath(__DIR__.'/../../src');
+    $executableClasses = [];
 
     foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($sourceDirectory, FilesystemIterator::SKIP_DOTS)) as $sourceFile) {
-        $className = 'Qiick\Oidc\\'.str_replace(['/', '.php'], ['\\', ''], substr($sourceFile->getPathname(), strlen($sourceDirectory) + 1));
-
-        if (! interface_exists($className)) {
-            $sourceClasses[] = $className;
+        if ($sourceFile->getExtension() === 'php' && $hasExecutableMethod((string) file_get_contents($sourceFile->getPathname()))) {
+            $relativePath = substr($sourceFile->getPathname(), strlen($sourceDirectory) + 1);
+            $executableClasses[] = 'Qiick\Oidc\\'.str_replace(['/', '.php'], ['\\', ''], $relativePath);
         }
     }
 
-    sort($sourceClasses);
-    $expectedClasses = [...$gatedClasses, ...$classesWithoutMutations];
-    sort($expectedClasses);
+    sort($executableClasses);
+    sort($gatedClasses);
 
-    expect($expectedClasses)->toBe($sourceClasses);
+    expect($gatedClasses)->toBe($executableClasses);
 });
