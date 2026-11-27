@@ -260,14 +260,14 @@ it('refuses a logout whose replay window would exceed the retention ceiling', fu
     expect(OidcLogoutRevocation::query()->sole()->expires_at->getTimestamp())->toBe($latestAllowedExpiry + 120);
 });
 
-it('keeps the revocation until a fractional exp, rounded up, plus two minutes', function (): void {
+it('keeps the revocation until a fractional exp, rounded up, plus two minutes', function (float $fraction): void {
     Date::setTestNow(Date::now()->startOfSecond());
     $tokenExpiresAt = Date::now()->addHours(23)->getTimestamp();
 
-    postLogoutToken($this, $this->identityProvider, ['exp' => $tokenExpiresAt + 0.5])->assertOk();
+    postLogoutToken($this, $this->identityProvider, ['exp' => $tokenExpiresAt + $fraction])->assertOk();
 
     expect(OidcLogoutRevocation::query()->sole()->expires_at->getTimestamp())->toBe($tokenExpiresAt + 1 + 120);
-});
+})->with(['quarter second' => 0.25, 'half second' => 0.5]);
 
 it('cycles the remember token of the linked user, and only a set one, without touching updated_at', function (?string $rememberToken): void {
     Date::setTestNow('2026-11-24 09:00:00');

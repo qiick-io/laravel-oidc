@@ -124,7 +124,10 @@ it('keeps front-channel SID keys separate from signed back-channel JTI keys', fu
         'logout_token' => $this->identityProvider->sign($this->identityProvider->logoutTokenClaims(['jti' => $sessionId]), ['typ' => 'logout+jwt']),
     ])->assertOk();
 
-    expect(OidcLogoutRevocation::query()->distinct()->count('replay_key'))->toBe(2);
+    $frontChannelRevocation = OidcLogoutRevocation::query()->where('channel', 'frontchannel')->sole();
+
+    expect($frontChannelRevocation->replay_key)->toStartWith('front:')
+        ->and(OidcLogoutRevocation::query()->distinct()->count('replay_key'))->toBe(2);
 });
 
 it('refuses front-channel logout without both iss and sid', function (string $query): void {
