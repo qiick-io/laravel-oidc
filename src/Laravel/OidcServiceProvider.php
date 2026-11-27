@@ -19,6 +19,7 @@ use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
+use Qiick\Oidc\Console\CheckOidcCommand;
 use Qiick\Oidc\Console\ConfigureOidcCommand;
 use Qiick\Oidc\Console\ImportLegacySubjectsCommand;
 use Qiick\Oidc\Console\PruneLogoutRevocationsCommand;
@@ -174,6 +175,7 @@ final class OidcServiceProvider extends ServiceProvider
         $this->app->bind(MultiFactorClaimService::class, fn (Application $app): MultiFactorClaimService => new MultiFactorClaimService(
             acceptedAmrValues: $this->stringList($app, 'oidc.mfa.amr_values'),
             acceptedAcrValues: $this->stringList($app, 'oidc.mfa.acr_values'),
+            isProviderTrusted: $this->config($app)->boolean('oidc.mfa.trust_provider', false),
         ));
 
         $this->app->bind(OidcLoginService::class, fn (Application $app): OidcLoginService => new OidcLoginService(
@@ -313,6 +315,7 @@ final class OidcServiceProvider extends ServiceProvider
             ], 'oidc-config');
 
             $this->commands([
+                CheckOidcCommand::class,
                 ConfigureOidcCommand::class,
                 ImportLegacySubjectsCommand::class,
                 PruneLogoutRevocationsCommand::class,

@@ -8,7 +8,14 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use Qiick\Oidc\Contracts\RoleSynchronizationContract;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
+use Qiick\Oidc\Contracts\UserClaimSynchronizationContract;
+use Qiick\Oidc\Events\OidcUserProvisionedEvent;
 use Qiick\Oidc\Services\BackChannelLogoutService;
 use Qiick\Oidc\Services\FortifySecondFactorChallengeService;
 use Qiick\Oidc\Services\IdentitySessionService;
@@ -60,20 +67,33 @@ it('signs in directly when the app does not require 2FA', function (): void {
 it('accepts MFA proven by the IdP', function (array $configOverrides, array $claims): void {
     bindAppSecondFactor();
 
-    ssoLogin($this, fakeProvider($configOverrides), $claims)->assertRedirect('/');
+    ssoLogin($this, fakeProvider(['mfa.trust_provider' => true, ...$configOverrides]), $claims)->assertRedirect('/');
 
     expect(auth()->id())->toBe($this->user->id);
 })->with([
-    'amr mfa (RFC 8176)' => [[], ['amr' => ['pwd', 'mfa']]],
+    'amr mfa (RFC 8176)' => [['mfa.amr_values' => ['mfa']], ['amr' => ['pwd', 'mfa']]],
     'amr otp when accepted' => [['mfa.amr_values' => ['otp', 'hwk']], ['amr' => ['pwd', 'otp']]],
     'acr when accepted' => [['mfa.acr_values' => ['gold']], ['acr' => 'gold']],
-    'signaculum acr mfa (default)' => [[], ['acr' => 'urn:qiick:loa:mfa']],
+    'configured Signaculum acr' => [['mfa.acr_values' => ['urn:qiick:loa:mfa']], ['acr' => 'urn:qiick:loa:mfa']],
+]);
+
+it('requires local MFA until the app opts in and configures accepted IdP claims', function (array $configOverrides, array $claims): void {
+    bindAppSecondFactor();
+
+    ssoLogin($this, fakeProvider($configOverrides), $claims)->assertRedirect('/two-factor-challenge');
+
+    $this->assertGuest();
+})->with([
+    'signed AMR by default' => [[], ['amr' => ['mfa']]],
+    'signed ACR by default' => [[], ['acr' => 'urn:qiick:loa:mfa']],
+    'published allowlist without opt-in' => [['mfa.amr_values' => ['mfa']], ['amr' => ['mfa']]],
+    'opt-in without an allowlist' => [['mfa.trust_provider' => true], ['amr' => ['mfa']]],
 ]);
 
 it('runs the app second factor when the IdP did not prove MFA', function (array $claims): void {
     bindAppSecondFactor();
 
-    ssoLogin($this, fakeProvider(['mfa.acr_values' => ['gold']]), $claims)->assertRedirect('/two-factor-challenge');
+    ssoLogin($this, fakeProvider(['mfa.trust_provider' => true, 'mfa.amr_values' => ['mfa'], 'mfa.acr_values' => ['gold']]), $claims)->assertRedirect('/two-factor-challenge');
 
     expect(auth()->check())->toBeFalse()
         ->and(session('login.id'))->toBe($this->user->id)
@@ -89,7 +109,7 @@ it('runs the app second factor when the IdP did not prove MFA', function (array 
 
 it('never trusts amr from the unsigned userinfo response', function (): void {
     bindAppSecondFactor();
-    $identityProvider = fakeProvider();
+    $identityProvider = fakeProvider(['mfa.trust_provider' => true, 'mfa.amr_values' => ['mfa'], 'mfa.acr_values' => ['gold']]);
     $authorizationUrl = (string) $this->get('/auth/oidc/redirect')->headers->get('Location');
 
     $this->get($identityProvider->authorize($authorizationUrl, ['amr' => ['pwd']], ['amr' => ['mfa'], 'acr' => 'gold']))
@@ -121,12 +141,79 @@ it('drops the pending identity when another user signs in or it expired', functi
         ->and(session()->has(IdentitySessionService::PENDING_SESSION_KEY))->toBeFalse();
 })->with(['another user', 'expired']);
 
-it('signs in when the user has no second factor to challenge', function (): void {
+it('refuses and logs a required second factor that cannot be started', function (): void {
     bindAppSecondFactor(hasSecondFactor: false);
+    Log::spy();
 
-    ssoLogin($this, fakeProvider())->assertRedirect('/');
+    ssoLogin($this, fakeProvider())->assertRedirect('/login')->assertSessionHasErrors([
+        'email' => 'A required second factor could not be started. Contact your administrator.',
+    ]);
 
-    expect(auth()->id())->toBe($this->user->id);
+    $this->assertGuest();
+    expect(session()->has(IdentitySessionService::PENDING_SESSION_KEY))->toBeFalse();
+    Log::shouldHaveReceived('warning')->with(
+        'OIDC login refused because the required second-factor challenge is unavailable.',
+        Mockery::on(fn (array $context): bool => array_keys($context) === ['reason', 'request_id']
+            && $context['reason'] === 'second_factor_unavailable'
+            && Str::isUuid($context['request_id'])),
+    )->once();
+});
+
+it('rolls back JIT provisioning and mapped roles when required MFA cannot start', function (): void {
+    bindAppSecondFactor(hasSecondFactor: false);
+    Event::fake([OidcUserProvisionedEvent::class]);
+    $roleSynchronization = Mockery::mock(RoleSynchronizationContract::class);
+    $roleSynchronization->shouldReceive('synchronize')->once()->andReturnUsing(function (): void {
+        DB::table('users')->where('email', 'ada@example.com')->update(['name' => 'Role granted']);
+    });
+    app()->instance(RoleSynchronizationContract::class, $roleSynchronization);
+
+    $identityProvider = fakeProvider([
+        'jit' => true,
+        'roles.enabled' => true,
+        'roles.claim' => 'realm_access.roles',
+        'roles.map' => ['member' => 'reader'],
+    ]);
+    ssoLogin($this, $identityProvider, [
+        'sub' => 'new-user', 'email' => 'new@example.com', 'realm_access' => ['roles' => ['member']],
+    ])->assertRedirect('/login')->assertSessionHasErrors('email');
+
+    $this->assertGuest();
+    $this->assertDatabaseMissing('users', ['email' => 'new@example.com']);
+    $this->assertDatabaseMissing('user_identities', ['subject' => 'new-user']);
+    $this->assertDatabaseHas('users', ['email' => 'ada@example.com', 'name' => 'Ada']);
+    Event::assertNotDispatched(OidcUserProvisionedEvent::class);
+});
+
+it('keeps a JIT user when the required MFA challenge starts', function (): void {
+    bindAppSecondFactor();
+    Event::fake([OidcUserProvisionedEvent::class]);
+    $identityProvider = fakeProvider(['jit' => true]);
+
+    ssoLogin($this, $identityProvider, ['sub' => 'new-user', 'email' => 'new@example.com'])
+        ->assertRedirect('/two-factor-challenge');
+
+    $this->assertGuest();
+    $this->assertDatabaseHas('user_identities', ['subject' => 'new-user']);
+    expect(session('login.id'))->toBe(User::query()->where('email', 'new@example.com')->value('id'));
+    Event::assertDispatched(OidcUserProvisionedEvent::class);
+});
+
+it('applies synchronized claims before evaluating the local MFA policy', function (): void {
+    $claimSynchronization = Mockery::mock(UserClaimSynchronizationContract::class);
+    $claimSynchronization->shouldReceive('synchronize')->once()->andReturnUsing(function (User $user): void {
+        $user->name = 'Requires MFA';
+    });
+    app()->instance(UserClaimSynchronizationContract::class, $claimSynchronization);
+
+    $secondFactor = Mockery::mock(SecondFactorChallengeContract::class);
+    $secondFactor->shouldReceive('isRequired')->once()->andReturnUsing(fn (User $user): bool => $user->name === 'Requires MFA');
+    $secondFactor->shouldReceive('challenge')->once()->andReturnNull();
+    app()->instance(SecondFactorChallengeContract::class, $secondFactor);
+
+    ssoLogin($this, fakeProvider())->assertRedirect('/login')->assertSessionHasErrors('email');
+
+    $this->assertGuest();
 });
 
 it('asks the IdP for a stronger login when configured', function (): void {

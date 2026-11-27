@@ -41,10 +41,13 @@ php artisan oidc:configure --issuer=https://idp.example.com/realms/acme --client
 - signing algorithms and JWKS keys, client type, redirect URI;
 - that `app.timezone` is `UTC` (a warning otherwise, see "Timestamps are UTC");
 - that the cache store can make each login `state` single-use (a failure for the array driver outside tests);
+- that IdP MFA allowlists have an explicit trust setting, and that required MFA has trusted claims or usable local Fortify enrollment when using the default challenge;
 - when front-channel logout is on, that its route is registered;
 - in SSO-only mode, that a break-glass account exists.
 
 It prints the URIs to register at the IdP: the redirect URI, the post-logout redirect URI and the back-channel logout URI, plus the front-channel logout URI when front-channel logout is on. `--json` prints a machine-readable report for agents. `--write-env` writes `OIDC_ENABLED`, `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` to `.env`, only when every check passed. The exit code is `0` without failures. The client secret is never printed.
+
+Run `php artisan oidc:check` in the deploy pipeline to validate the active setup without writing `.env` or using option overrides. It exits non-zero on a failed check. A custom second-factor adapter must be verified with a login to exercise its own enrollment rules.
 
 Apps that use [Laravel Boost](https://github.com/laravel/boost) also get the package's agent guidelines (`resources/boost/guidelines/core.blade.php`).
 
@@ -70,7 +73,7 @@ Every key in `config/oidc.php` has an env var. They are defaults: an app can ove
 | Auto-link (`oidc.auto_link`) | **off** | Opt in per provider. Existing Externa/Excubia installs that always auto-linked must set `OIDC_AUTO_LINK=true` (or their settings UI) after migration if they still need email linking. |
 | Verified email (`oidc.require_verified_email`) | **on** | Auto-link and JIT need `email_verified: true`. Per-provider opt-out for IdPs that never send the claim (Entra ID). |
 | Remember-me for SSO (`oidc.remember`) | **off** | A remember cookie would outlive the IdP session and a back-channel logout. |
-| 2FA after SSO | App challenge when `id_token` lacks accepted `amr` / `acr` | See “Second factor (MFA)” below; release notes must say SSO does not skip the app's 2FA. |
+| 2FA after SSO | The app's challenge runs when required. Trust in IdP MFA is off by default. | Opt in with `oidc.mfa.trust_provider` and configure the accepted claims for the chosen IdP. |
 
 ### Timestamps are UTC
 
@@ -144,9 +147,11 @@ The default `RoleSynchronizationContract` calls spatie/laravel-permission's `has
 
 ### Second factor (MFA)
 
-When the app requires 2FA for a user, an SSO login counts only if the signed `id_token` proves MFA: an `amr` value in `oidc.mfa.amr_values` (default `['mfa']`, RFC 8176), or an `acr` in `oidc.mfa.acr_values` (default `['urn:qiick:loa:mfa']`, Signaculum). Signaculum also emits `urn:qiick:loa:pwd` for password-only logins when `acr` was requested; that value is not accepted as MFA. Otherwise the callback hands over to the app's own challenge instead of signing the user in. The challenge must end with `Auth::login()`, and the package then completes the SSO session (identity for logout). `amr` and `acr` are never taken from the unsigned userinfo response. `amr` is always present on Signaculum id_tokens.
+The app's second factor runs whenever its policy requires one. The default `SecondFactorChallengeContract` also requires it for a user who enabled Fortify TOTP voluntarily, even when `oidc.mfa.required` is `false`. Fortify starts the challenge through `two-factor.login` with `login.id` and `login.remember`. The successful challenge calls `Auth::login()` to complete the SSO session.
 
-The default `SecondFactorChallengeContract` starts Laravel Fortify's two-factor challenge (`login.id` / `login.remember` and the `two-factor.login` route) for a user with an active TOTP secret whose signed token lacks MFA proof. This also applies when the user opted in and `oidc.mfa.required` is `false`. A user without a second factor is signed in, and the app's own enrollment rules apply, as after a password login. Apps can bind their own implementation to apply their enrollment policy or run a different challenge:
+OIDC accepts IdP MFA only when the app opts in with `oidc.mfa.trust_provider = true` and the signed ID token contains a configured `mfa.amr_values` entry (RFC 8176) or an `mfa.acr_values` entry. Both lists are empty by default. Choose the values for the configured provider. Only signed claims count. Set `oidc.mfa.max_age` if the app requires recent authentication before it accepts IdP MFA.
+
+When the required challenge cannot start, such as when the user has yet to enroll or the challenge route is unavailable, OIDC refuses the login and logs the reason. Apps using passkeys, custom TOTP or another second-factor policy must bind their own implementation:
 
 ```php
 $this->app->bind(SecondFactorChallengeContract::class, SsoSecondFactorChallengeService::class);
@@ -285,7 +290,7 @@ rejection limit when set on `oidc.backchannel_logout.rate_limit`.
 | `oidc.users.table` / `email_column` / `active_column` | `users` / `email` / `null` | The users table, its email column and an optional boolean "active" column. |
 | `oidc.break_glass.roles` / `require_two_factor` / `query_parameter` | `['super-admin']` / `true` / `local` | SSO-only mode, see above. |
 | `oidc.roles.*` | disabled | Role mapping, see above. |
-| `oidc.mfa.required` / `amr_values` / `acr_values` / `request_acr_values` | `false` / `['mfa']` / `['urn:qiick:loa:mfa']` / `null` | Second factor, see above. |
+| `oidc.mfa.required` / `trust_provider` / `amr_values` / `acr_values` / `request_acr_values` | `false` / `false` / `[]` / `[]` / `null` | Second factor, see above. |
 | `oidc.mfa.max_age` / `require_requested_acr` | `null` / `false` | Recent login and strict `acr`, see "Second factor (MFA)". |
 | `oidc.post_logout_redirect_uri` | `null` | `null` means the package return route `{APP_URL}/auth/oidc/logged-out`, which checks the logout `state`. Sent on RP-initiated logout. |
 | `oidc.logout.redirect_to` | `/` | Where the post-logout return route sends the browser. |
@@ -329,6 +334,7 @@ The package ships no UI. An app that edits SSO in an admin page (Externa and Exc
 | Require verified email | `oidc.require_verified_email` | boolean |
 | Allowed email domains | `oidc.allowed_domains` | list of domains; empty allows all |
 | MFA required | `oidc.mfa.required` | boolean |
+| Trust IdP MFA | `oidc.mfa.trust_provider` | boolean, off by default |
 | Accepted `amr` / `acr` values | `oidc.mfa.amr_values` / `acr_values` | lists of strings |
 | Requested `acr_values` | `oidc.mfa.request_acr_values` | space-separated string or empty |
 | Refuse a login without a requested `acr` | `oidc.mfa.require_requested_acr` | boolean |
@@ -369,7 +375,7 @@ What the package defends against, and what it leaves to the app and the IdP. Dec
 | Forged or substituted `id_token` | Signature through the IdP's JWKS with an allowlist of algorithms (never `none` or HMAC), RSA keys of 2048 bits or more, EC keys on their own curve; `iss`, `aud`, `azp`, `exp`, `iat`, `at_hash`, `auth_time` against `max_age`; a `crit` header is refused. |
 | Substituted userinfo | Its `sub` must equal the `id_token` `sub` (OIDC Core 5.3.4). A claim in the `id_token` always wins over userinfo, and `amr`, `acr`, `auth_time`, `sid`, `azp` and `nbf` are never taken from userinfo. |
 | Account takeover through email | Auto-link is off by default and needs `email_verified: true`; one user links to at most one identity per issuer (unique key), and concurrent first logins cannot link twice. |
-| MFA bypass | Only a signed `amr` / `acr` counts as MFA; a login that asked for an `acr` and got another one runs the app's second factor (or is refused). |
+| MFA bypass | Trust in IdP MFA is off by default. An explicitly trusted provider must return a signed `amr` or `acr` from the app's allowlist and satisfy any requested `acr`. The local challenge protects users who enabled Fortify TOTP voluntarily. If a required challenge cannot start, OIDC refuses the login and logs the reason. |
 | A logout that is lost | Back-channel and front-channel logouts are stored in `oidc_logout_revocations` before the endpoint answers. **The table is the source of truth; the cache is only an accelerator**, so `cache:clear`, eviction or one cache per server never loses a logout. A failed table read ends the session (fail closed). |
 | Replayed `logout_token` | Unique `(issuer, jti)`: a second use is refused. |
 | Session theft from storage | The `id_token` kept for logout is encrypted with the app key; access and refresh tokens are not stored. An unknown session payload version ends the session. |

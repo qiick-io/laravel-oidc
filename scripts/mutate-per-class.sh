@@ -94,6 +94,7 @@ classes=(
   'Qiick\Oidc\Enums\LoginRefusalReasonEnum'
   'Qiick\Oidc\Erasure\ErasureReport'
   'Qiick\Oidc\Erasure\OidcEraser'
+  'Qiick\Oidc\Console\CheckOidcCommand'
 )
 
 status=0

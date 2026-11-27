@@ -10,7 +10,13 @@ use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
+use Qiick\Oidc\Contracts\ProviderConfigurationRepositoryContract;
+use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
+use Qiick\Oidc\Services\FortifySecondFactorChallengeService;
 use Qiick\Oidc\Testing\FakeIdentityProvider;
+use Qiick\Oidc\Tests\Support\Fortify\FakeFortify;
+use Qiick\Oidc\Tests\Support\Fortify\FakeTwoFactorAuthenticatable;
+use Qiick\Oidc\Tests\Support\Fortify\UserWithTwoFactor;
 use Qiick\Oidc\Tests\Support\UserWithRoles;
 
 /**
@@ -87,6 +93,112 @@ it('fails without issuer and client id', function (): void {
     [$exitCode, $report] = configureOidc();
 
     expect($exitCode)->toBe(1)->and(statusesByCheck($report))->toBe(['settings' => 'failure']);
+});
+
+it('fails the deploy check for allowed IdP claims while trust is off', function (string $key, string $value): void {
+    FakeIdentityProvider::fake(configOverrides: [$key => [$value]]);
+
+    $this->artisan('oidc:check')->expectsOutputToContain('oidc.mfa.trust_provider')->assertExitCode(1);
+})->with([
+    'amr' => ['mfa.amr_values', 'mfa'],
+    'acr' => ['mfa.acr_values', 'urn:qiick:loa:mfa'],
+]);
+
+it('reports when required MFA has no usable provider or local challenge', function (): void {
+    FakeIdentityProvider::fake(configOverrides: ['mfa.required' => true]);
+
+    [$exitCode, $report] = configureOidc();
+
+    expect($exitCode)->toBe(1)
+        ->and(statusesByCheck($report)['local MFA'])->toBe('failure');
+});
+
+it('requires the configured user model to support Fortify even when its route exists', function (): void {
+    FakeIdentityProvider::fake(configOverrides: ['mfa.required' => true]);
+    Route::get('/two-factor-challenge', fn () => 'challenge')->name('two-factor.login');
+    Route::getRoutes()->refreshNameLookups();
+    app()->instance(SecondFactorChallengeContract::class, new FortifySecondFactorChallengeService(
+        true,
+        FakeFortify::class,
+        FakeTwoFactorAuthenticatable::class,
+    ));
+
+    $this->artisan('oidc:check')->expectsOutputToContain('no trusted IdP claims or usable local Fortify enrollment')->assertExitCode(1);
+});
+
+it('passes the deploy check with explicit Signaculum MFA trust', function (): void {
+    FakeIdentityProvider::fake(configOverrides: [
+        'mfa.required' => true,
+        'mfa.trust_provider' => true,
+        'mfa.amr_values' => ['mfa'],
+        'mfa.acr_values' => ['urn:qiick:loa:mfa'],
+    ]);
+
+    $this->artisan('oidc:check')->assertExitCode(0);
+});
+
+it('checks whether a required local Fortify challenge has an enrolled user', function (?string $secret, bool $isConfirmed, ?string $activeColumn, int $exitCode): void {
+    FakeIdentityProvider::fake(configOverrides: [
+        'mfa.required' => true,
+        'users.model' => UserWithTwoFactor::class,
+        'users.active_column' => $activeColumn,
+    ]);
+    Schema::table('users', function (Blueprint $table): void {
+        $table->text('two_factor_secret')->nullable();
+        $table->timestamp('two_factor_confirmed_at')->nullable();
+    });
+    Route::get('/two-factor-challenge', fn () => 'challenge')->name('two-factor.login');
+    Route::getRoutes()->refreshNameLookups();
+    FakeFortify::$isConfirmationRequired = true;
+    app()->instance(SecondFactorChallengeContract::class, new FortifySecondFactorChallengeService(
+        true,
+        FakeFortify::class,
+        FakeTwoFactorAuthenticatable::class,
+    ));
+    localUser(attributes: [
+        'two_factor_secret' => $secret,
+        'two_factor_confirmed_at' => $isConfirmed ? Date::now() : null,
+    ]);
+
+    $this->artisan('oidc:check')->assertExitCode($exitCode);
+})->with([
+    'enrolled' => ['totp-secret', true, null, 0],
+    'no enrollment' => [null, false, null, 1],
+    'unconfirmed enrollment' => ['totp-secret', false, null, 1],
+    'only an inactive user is enrolled' => ['totp-secret', true, 'email_verified_at', 1],
+]);
+
+it('checks an enabled installation with incomplete provider settings', function (): void {
+    Config::set('oidc.enabled', true);
+
+    $this->artisan('oidc:check')->expectsOutputToContain('Issuer and client id are required')->assertExitCode(1);
+});
+
+it('passes the deploy check while OIDC is disabled', function (): void {
+    Http::fake();
+
+    $this->artisan('oidc:check')->expectsOutput('OIDC is disabled.')->assertExitCode(0);
+
+    Http::assertNothingSent();
+});
+
+it('checks the provider when the application enables OIDC through its own repository', function (): void {
+    FakeIdentityProvider::fake(configOverrides: ['mfa.amr_values' => ['mfa']]);
+    $configuration = app(ProviderConfigurationRepositoryContract::class)->configuration();
+    Config::set('oidc.enabled', false);
+    $repository = Mockery::mock(ProviderConfigurationRepositoryContract::class);
+    $repository->shouldReceive('isEnabled')->andReturnTrue();
+    $repository->shouldReceive('configuration')->andReturn($configuration);
+    app()->instance(ProviderConfigurationRepositoryContract::class, $repository);
+
+    $this->artisan('oidc:check')->expectsOutputToContain('oidc.mfa.trust_provider')->assertExitCode(1);
+});
+
+it('leaves custom second-factor enrollment to the application', function (): void {
+    FakeIdentityProvider::fake(configOverrides: ['mfa.required' => true]);
+    app()->instance(SecondFactorChallengeContract::class, Mockery::mock(SecondFactorChallengeContract::class));
+
+    $this->artisan('oidc:check')->assertExitCode(0);
 });
 
 it('fails on a discovery problem and on algorithms the package cannot accept', function (array $discoveryOverrides, string $failedCheck): void {

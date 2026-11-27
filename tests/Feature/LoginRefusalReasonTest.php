@@ -20,5 +20,6 @@ it('keeps the public reason codes and default login refusal messages', function 
         'email_not_verified' => 'SSO login requires a verified email from the identity provider.',
         'domain_not_allowed' => 'Registration is restricted to allowed email domains.',
         'inactive_user' => 'This account is inactive.',
+        'second_factor_unavailable' => 'A required second factor could not be started. Contact your administrator.',
     ]);
 });

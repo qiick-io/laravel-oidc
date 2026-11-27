@@ -55,9 +55,28 @@ final readonly class FortifySecondFactorChallengeService implements SecondFactor
         return new RedirectResponse(route('two-factor.login'));
     }
 
+    /**
+     * The deploy check uses the same confirmation rule as the live challenge.
+     *
+     * @param  class-string<Model>  $userModel
+     *
+     * @internal
+     */
+    public function hasAvailableEnrollment(string $userModel, ?string $activeColumn): bool
+    {
+        if (! Route::has('two-factor.login') || ! $this->hasFortifyUserModel($userModel)) {
+            return false;
+        }
+
+        return $userModel::query()->whereNotNull('two_factor_secret')->cursor()->contains(
+            fn (Model $user): bool => ($activeColumn === null || $user->getAttribute($activeColumn))
+                && $this->hasConfirmedFortifySecondFactor($user),
+        );
+    }
+
     private function hasConfirmedFortifySecondFactor(Model $user): bool
     {
-        if (! class_exists($this->fortifyClass) || ! in_array($this->twoFactorTrait, class_uses_recursive($user), true)) {
+        if (! $this->hasFortifyUserModel($user)) {
             return false;
         }
 
@@ -69,5 +88,11 @@ final readonly class FortifySecondFactorChallengeService implements SecondFactor
         $isConfirmationRequired = is_callable($confirmationCheck) && $confirmationCheck() === true;
 
         return ! $isConfirmationRequired || $user->getAttribute('two_factor_confirmed_at') !== null;
+    }
+
+    /** @param Model|class-string<Model> $userModel */
+    private function hasFortifyUserModel(Model|string $userModel): bool
+    {
+        return class_exists($this->fortifyClass) && in_array($this->twoFactorTrait, class_uses_recursive($userModel), true);
     }
 }

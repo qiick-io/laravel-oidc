@@ -171,21 +171,22 @@ return [
 
     /*
      * The default preserves a user's self-enrolled Laravel Fortify TOTP.
-     * Signed `amr` (RFC 8176) or `acr` matching the configured values satisfies
-     * MFA. Apps with their own policy or challenge can bind
-     * SecondFactorChallengeContract.
+     * Enable provider trust and list its accepted signed `amr` (RFC 8176) or
+     * `acr` values to let its MFA satisfy the app's second factor.
      */
     'mfa' => [
 
         'required' => false,
 
-        'amr_values' => ['mfa'],
+        'trust_provider' => false,
+
+        'amr_values' => [],
 
         /*
          * Accepted `acr` values that count as MFA (Signaculum: `urn:qiick:loa:mfa`).
          * Password-only Signaculum value is `urn:qiick:loa:pwd` and is not listed here.
          */
-        'acr_values' => ['urn:qiick:loa:mfa'],
+        'acr_values' => [],
 
         /*
          * Sent as `acr_values` on the authorization request to ask the IdP
