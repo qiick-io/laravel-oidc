@@ -2,14 +2,12 @@
 
 declare(strict_types=1);
 
-use Illuminate\Http\Client\Factory as HttpFactory;
 use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Services\IdentityProviderHttpService;
 use Qiick\Outbound\Http\HttpRequestOptions;
-use Qiick\Outbound\Http\OutboundHttpLimits;
+use Qiick\Outbound\Http\OutboundHttpStackData;
 use Qiick\Outbound\Http\OutboundRequest;
 use Qiick\Outbound\Http\PinnedHttpClient;
-use Qiick\Outbound\Ssrf\RemoteUrlGuard;
 use Qiick\Outbound\Ssrf\UrlGuardOptions;
 use Qiick\Outbound\Testing\FakeHostResolver;
 
@@ -46,12 +44,7 @@ final class OidcRealTransportServer
             ->with('app.test', [$this->pinAddress])
             ->with('evil.test', [$this->pinAddress]);
 
-        $guard = new RemoteUrlGuard($resolver, allowPrivateHosts: true, httpsOnly: false);
-        $this->client = new PinnedHttpClient(
-            new HttpFactory,
-            $guard,
-            new OutboundHttpLimits,
-        );
+        $this->client = OutboundHttpStackData::make($resolver, allowPrivateHosts: true, httpsOnly: false)->client;
         $this->identityProviderHttp = new IdentityProviderHttpService(
             $this->client,
             new UrlGuardOptions(httpsOnly: false, allowPrivateHosts: true),

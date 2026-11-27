@@ -17,6 +17,13 @@ The betas edit the `create_…` migrations instead of adding forward ones (packa
 
 Then read the sections of the versions you skip: they list the behaviour changes to announce and the code an app may have to change.
 
+## Unreleased
+
+- Update `qiick/laravel-outbound` and the application lockfile. OIDC requires
+  `^0.2.0-beta.4 || ^1.0` for its isolated IdP HTTP stack. If your
+  application pins Outbound 0.1, update that constraint and follow
+  Outbound's upgrade notes for any webhook tables you use.
+
 ## 1.0.0-beta.8 (from 1.0.0-beta.7)
 
 - Recreate the beta package tables using the procedure above. The identity owner key becomes nullable for anonymised rows, and logout revocations add a replay fingerprint. Preserve linked identities from a backup and expire OIDC sessions when replacing the logout revocation table.

@@ -10,9 +10,7 @@ use Qiick\Oidc\Exceptions\IdentityProviderRequestException;
 use Qiick\Oidc\Services\IdentityProviderHttpService;
 use Qiick\Oidc\Tests\Support\OidcSsrfTestGuard;
 use Qiick\Outbound\Contracts\HostResolver;
-use Qiick\Outbound\Http\OutboundHttpLimits;
-use Qiick\Outbound\Http\PinnedHttpClient;
-use Qiick\Outbound\Ssrf\RemoteUrlGuard;
+use Qiick\Outbound\Http\OutboundHttpStackData;
 use Qiick\Outbound\Ssrf\UrlGuardOptions;
 
 /**
@@ -256,15 +254,10 @@ function identityProviderHttpWithResolver(callable $resolve): IdentityProviderHt
         }
     };
 
-    $guard = new RemoteUrlGuard($resolver, allowPrivateHosts: false, httpsOnly: false);
     $options = new UrlGuardOptions(httpsOnly: true, allowPrivateHosts: false);
-    $client = new PinnedHttpClient(
-        app(HttpFactory::class),
-        $guard,
-        new OutboundHttpLimits,
-    );
+    $outbound = OutboundHttpStackData::make($resolver, httpsOnly: false, httpFactory: app(HttpFactory::class));
 
-    return new IdentityProviderHttpService($client, $options, 5);
+    return new IdentityProviderHttpService($outbound->client, $options, 5);
 }
 
 it('resolves once per request and sends it to the address the guard checked', function (): void {
