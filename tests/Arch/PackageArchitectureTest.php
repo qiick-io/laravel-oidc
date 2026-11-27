@@ -32,6 +32,30 @@ arch('events are readonly')
     ->expect('Qiick\Oidc\Events')
     ->toBeReadonly();
 
+it('declares the Illuminate components imported by package code as runtime requirements', function (): void {
+    $packageRoot = dirname(__DIR__, 2);
+    $manifest = json_decode((string) file_get_contents($packageRoot.'/composer.json'), true, flags: JSON_THROW_ON_ERROR);
+    $components = [];
+
+    foreach (['src', 'routes', 'config', 'database'] as $directory) {
+        $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($packageRoot.'/'.$directory, FilesystemIterator::SKIP_DOTS));
+
+        foreach ($files as $file) {
+            if ($file->getExtension() === 'php') {
+                preg_match_all('/^use Illuminate\\\\([A-Z][A-Za-z]+)\\\\/m', (string) file_get_contents($file->getPathname()), $matches);
+                array_push($components, ...$matches[1]);
+            }
+        }
+    }
+
+    // Foundation belongs to the Laravel host application and has no split component.
+    $componentNames = array_diff(array_unique($components), ['Foundation']);
+    $requiredPackages = array_map(fn (string $component): string => 'illuminate/'.strtolower($component), $componentNames);
+
+    expect($requiredPackages)->not->toBeEmpty();
+    expect(array_values(array_diff($requiredPackages, array_keys($manifest['require']))))->toBe([]);
+});
+
 /**
  * docs/PUBLIC-API.md freezes the public API at 1.0: every class in src/ is
  * either named there (by its short name, or by a pattern such as
