@@ -22,7 +22,7 @@ One answer per topic for every qiick package and product (decision of 2026-11-24
 - **F25 Strict Laravel:** products boot with strict models, destructive commands prohibited and HTTPS forced in production, immutable dates and the password defaults; every PHP repo's tests stop stray HTTP requests and processes.
 - **F27 Public APIs:** an API is versioned in its path (`/api/v1`), described by a hand-written OpenAPI file that a test compares with the routes, answers errors in the F11 shape, and retires a version only after announcing it with `Deprecation` and `Sunset` headers.
 - **F28 UI quality:** a product with a UI calls the shared `ui-quality` and drift checks, and proves its screens in a browser test in light and dark.
-- **F15–F17** (repository settings, labels and project, agent rules) are in the repository rules, **F19–F24, F26, F29 and F30** (security policy, secrets, expand / contract, backup, signed tags, supply chain, observability, privacy, runbooks) in the security, data and operations rules.
+- **F15–F17** (repository settings, labels and project, agent rules) are in the repository rules. **F19–F24, F26 and F29–F33** (security, supply chain, privacy and operations) are in the security, data and operations rules.
 
 With a `conventions` object in `qiick-standards.json`, `app-ui-drift / standards` runs the static checks of these rules; an exception is a `conventions.divergences` entry with `reason`, `decision` and `review_by`.
 
@@ -99,7 +99,7 @@ A divergence skips its check. It fails when it lacks a field, when `review_by` h
 
 ## F6 Commands: `<package>:<verb>`, `--dry-run` when deleting
 
-**Rule.** Every Artisan command is `<package>:<verb>` or `<package>:<verb>-<object>`, kebab-case, one colon: `outbound:prune-payloads`, `instituta:create-key`, `externa:sync-permissions`. Apps use their short name (`externa`, `excubia`). A command that deletes or erases data has `--dry-run`, which reports what it would delete and changes nothing.
+**Rule.** Every Artisan command is `<package>:<verb>` or `<package>:<verb>-<object>`, kebab-case, one colon: `outbound:prune-deliveries`, `instituta:create-key`, `externa:sync-permissions`. Apps use their short name (`externa`, `excubia`). A command that deletes or erases data has `--dry-run`, which reports what it would delete and changes nothing.
 
 **Why.** `outbound:webhooks:prune` and `instituta:key:create` nest a second namespace; externa-core spreads its commands over `files:`, `ai:`, `users:`, `permissions:` and others, so `php artisan list <app>` does not show what the app owns. `oidc:prune-logout-revocations` and several product prune commands could not be previewed before a first run in production.
 
@@ -192,6 +192,8 @@ A divergence skips its check. It fails when it lacks a field, when `review_by` h
 | `docs/dependencies.md`                | the dependency register: every `require` entry with its reason, maintainer, licence, risk and exit plan                                                            | the dependency register rule (app-ui#226) |
 
 `README.md`, `SECURITY.md`, `CONTRIBUTING.md` and `LICENSE` are there already in every package. When a repo adopts the conventions, the sync writes `docs/public-api.md` and `docs/security-checklist.md` from `standards/templates/` once, as starting points.
+
+Products use the F12 properties and named tests as evidence for inherited controls in the [F34 ASVS register](operations.md#f34-asvs-50-l2). The product verifies the package version and configuration it actually uses.
 
 **Why.** On 2026-11-24 the public API list existed in three of seven packages under two names (`public-api.md`, `PUBLIC-API.md`), the deprecation policy lived in a README, an UPGRADING file or nowhere (analysis X-g), a security checklist mapped to tests existed only in http-basics, and laravel-oidc and laravel-outbound had no upgrade section for some released versions. A reviewer or a product could not find the same thing in the same place twice.
 
