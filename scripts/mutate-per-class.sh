@@ -72,6 +72,7 @@ classes=(
   'Qiick\Oidc\Testing\FakeIdentityProvider'
   'Qiick\Oidc\Erasure\ErasureReport'
   'Qiick\Oidc\Erasure\OidcEraser'
+  'Qiick\Oidc\Console\CheckOidcCommand'
 )
 
 status=0

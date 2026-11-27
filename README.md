@@ -41,10 +41,13 @@ php artisan oidc:configure --issuer=https://idp.example.com/realms/acme --client
 - signing algorithms and JWKS keys, client type, redirect URI;
 - that `app.timezone` is `UTC` (a warning otherwise, see "Timestamps are UTC");
 - that the cache store can make each login `state` single-use (a failure for the array driver outside tests);
+- that IdP MFA allowlists have an explicit trust setting, and that required MFA has trusted claims or usable local Fortify enrollment when using the default challenge;
 - when front-channel logout is on, that its route is registered;
 - in SSO-only mode, that a break-glass account exists.
 
 It prints the URIs to register at the IdP: the redirect URI, the post-logout redirect URI and the back-channel logout URI, plus the front-channel logout URI when front-channel logout is on. `--json` prints a machine-readable report for agents. `--write-env` writes `OIDC_ENABLED`, `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` to `.env`, only when every check passed. The exit code is `0` without failures. The client secret is never printed.
+
+Run `php artisan oidc:check` in the deploy pipeline to validate the active setup without writing `.env` or using option overrides. It exits non-zero on a failed check. A custom second-factor adapter must be verified with a login to exercise its own enrollment rules.
 
 Apps that use [Laravel Boost](https://github.com/laravel/boost) also get the package's agent guidelines (`resources/boost/guidelines/core.blade.php`).
 

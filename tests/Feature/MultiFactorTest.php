@@ -8,8 +8,14 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use Qiick\Oidc\Contracts\RoleSynchronizationContract;
 use Qiick\Oidc\Contracts\SecondFactorChallengeContract;
+use Qiick\Oidc\Contracts\UserClaimSynchronizationContract;
+use Qiick\Oidc\Events\OidcUserProvisionedEvent;
 use Qiick\Oidc\Services\BackChannelLogoutService;
 use Qiick\Oidc\Services\FortifySecondFactorChallengeService;
 use Qiick\Oidc\Services\IdentitySessionService;
@@ -147,8 +153,67 @@ it('refuses and logs a required second factor that cannot be started', function 
     expect(session()->has(IdentitySessionService::PENDING_SESSION_KEY))->toBeFalse();
     Log::shouldHaveReceived('warning')->with(
         'OIDC login refused because the required second-factor challenge is unavailable.',
-        ['reason' => 'second_factor_unavailable'],
+        Mockery::on(fn (array $context): bool => array_keys($context) === ['reason', 'request_id']
+            && $context['reason'] === 'second_factor_unavailable'
+            && Str::isUuid($context['request_id'])),
     )->once();
+});
+
+it('rolls back JIT provisioning and mapped roles when required MFA cannot start', function (): void {
+    bindAppSecondFactor(hasSecondFactor: false);
+    Event::fake([OidcUserProvisionedEvent::class]);
+    $roleSynchronization = Mockery::mock(RoleSynchronizationContract::class);
+    $roleSynchronization->shouldReceive('synchronize')->once()->andReturnUsing(function (): void {
+        DB::table('users')->where('email', 'ada@example.com')->update(['name' => 'Role granted']);
+    });
+    app()->instance(RoleSynchronizationContract::class, $roleSynchronization);
+
+    $identityProvider = fakeProvider([
+        'jit' => true,
+        'roles.enabled' => true,
+        'roles.claim' => 'realm_access.roles',
+        'roles.map' => ['member' => 'reader'],
+    ]);
+    ssoLogin($this, $identityProvider, [
+        'sub' => 'new-user', 'email' => 'new@example.com', 'realm_access' => ['roles' => ['member']],
+    ])->assertRedirect('/login')->assertSessionHasErrors('email');
+
+    $this->assertGuest();
+    $this->assertDatabaseMissing('users', ['email' => 'new@example.com']);
+    $this->assertDatabaseMissing('user_identities', ['subject' => 'new-user']);
+    $this->assertDatabaseHas('users', ['email' => 'ada@example.com', 'name' => 'Ada']);
+    Event::assertNotDispatched(OidcUserProvisionedEvent::class);
+});
+
+it('keeps a JIT user when the required MFA challenge starts', function (): void {
+    bindAppSecondFactor();
+    Event::fake([OidcUserProvisionedEvent::class]);
+    $identityProvider = fakeProvider(['jit' => true]);
+
+    ssoLogin($this, $identityProvider, ['sub' => 'new-user', 'email' => 'new@example.com'])
+        ->assertRedirect('/two-factor-challenge');
+
+    $this->assertGuest();
+    $this->assertDatabaseHas('user_identities', ['subject' => 'new-user']);
+    expect(session('login.id'))->toBe(User::query()->where('email', 'new@example.com')->value('id'));
+    Event::assertDispatched(OidcUserProvisionedEvent::class);
+});
+
+it('applies synchronized claims before evaluating the local MFA policy', function (): void {
+    $claimSynchronization = Mockery::mock(UserClaimSynchronizationContract::class);
+    $claimSynchronization->shouldReceive('synchronize')->once()->andReturnUsing(function (User $user): void {
+        $user->name = 'Requires MFA';
+    });
+    app()->instance(UserClaimSynchronizationContract::class, $claimSynchronization);
+
+    $secondFactor = Mockery::mock(SecondFactorChallengeContract::class);
+    $secondFactor->shouldReceive('isRequired')->once()->andReturnUsing(fn (User $user): bool => $user->name === 'Requires MFA');
+    $secondFactor->shouldReceive('challenge')->once()->andReturnNull();
+    app()->instance(SecondFactorChallengeContract::class, $secondFactor);
+
+    ssoLogin($this, fakeProvider())->assertRedirect('/login')->assertSessionHasErrors('email');
+
+    $this->assertGuest();
 });
 
 it('asks the IdP for a stronger login when configured', function (): void {

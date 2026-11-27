@@ -56,7 +56,7 @@ A key added in a minor release always has a default, and a config file published
 ## Routes, commands, events and tables
 
 - Route names under `oidc.routes.prefix` (`auth/oidc`): `oidc.redirect`, `oidc.callback`, `oidc.backchannel-logout`, `oidc.frontchannel-logout`, `oidc.logged-out`, with their paths and HTTP methods.
-- Commands: `oidc:configure` (`--issuer`, `--client-id`, `--client-secret`, `--write-env`, `--json`, and the JSON report keys), `oidc:import-legacy-subjects` (`--column`, `--issuer`, `--dry-run`), `oidc:prune-logout-revocations` (`--chunk`).
+- Commands: `oidc:check` (exit code), `oidc:configure` (`--issuer`, `--client-id`, `--client-secret`, `--write-env`, `--json`, and the JSON report keys), `oidc:import-legacy-subjects` (`--column`, `--issuer`, `--dry-run`), `oidc:prune-logout-revocations` (`--chunk`).
 - Events: the five event classes above, with their public properties.
 - Tables: `user_identities` and `oidc_logout_revocations`, as created by the package migrations. After `1.0.0` the migrations are forward-only and additive.
 - Session keys (`oidc.identity`, `oidc.pending_identity`, `oidc.pending_logins`) and cache keys are internal.

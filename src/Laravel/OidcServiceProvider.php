@@ -20,6 +20,7 @@ use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
+use Qiick\Oidc\Console\CheckOidcCommand;
 use Qiick\Oidc\Console\ConfigureOidcCommand;
 use Qiick\Oidc\Console\ImportLegacySubjectsCommand;
 use Qiick\Oidc\Console\PruneLogoutRevocationsCommand;
@@ -308,6 +309,7 @@ final class OidcServiceProvider extends ServiceProvider
             ], 'oidc-config');
 
             $this->commands([
+                CheckOidcCommand::class,
                 ConfigureOidcCommand::class,
                 ImportLegacySubjectsCommand::class,
                 PruneLogoutRevocationsCommand::class,
