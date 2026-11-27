@@ -68,3 +68,9 @@ The IDs are stable: a removed check keeps its number, marked "withdrawn", and a 
 | SEC-52 | Response bodies are size-capped; IdP errors never echo a body | resource exhaustion, information leak | `IdentityProviderHttpOutboundTest › refuses an oversized JSON response through the size limit`; `DiscoveryTest › surfaces an HTTP error without the response body` |
 | SEC-53 | Browser endpoints from discovery use https and carry no credentials | OIDC Discovery §3 | `DiscoveryTest › refuses browser endpoints with an unsafe scheme`; `OidcOutboundIsolationTest › refuses browser endpoints with credentials through DiscoveryService from the container` |
 | SEC-54 | Installing `qiick/laravel-outbound` cannot loosen the package's SSRF guard or timeouts | standards review | `OidcOutboundIsolationTest › refuses a loopback IdP when OutboundServiceProvider registers after OIDC with private hosts open` |
+
+## Published configuration
+
+| ID | Check | Spec | Tests |
+| --- | --- | --- | --- |
+| SEC-60 | Missing nested settings use shipped defaults and an invalid published value stops boot with the full key | Fleet F1 | `PublishedConfigDefaultsTest › fills an empty published section while keeping explicitly empty lists and null overrides`; `› fills missing nested keys from an older configuration cache`; `› reports the full key when a present config value is invalid at boot` |
