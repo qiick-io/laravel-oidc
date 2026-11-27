@@ -1,0 +1,13 @@
+{
+    "alias": "RP_ALIAS",
+    "description": "laravel-oidc harness RP (RP_ALIAS)",
+    "publish": "no",
+    "client": {
+        "client_id": "rp-conformance-client",
+        "client_secret": "rp-conformance-secret-0000000000000001",
+        "redirect_uri": "http://rp:8000/auth/oidc/callback",
+        "post_logout_redirect_uri": "http://rp:8000/auth/oidc/logged-out",
+        "frontchannel_logout_uri": "http://rp:8000/auth/oidc/frontchannel-logout",
+        "backchannel_logout_uri": "http://rp:8000/auth/oidc/backchannel-logout"
+    }
+}
