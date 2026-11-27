@@ -39,6 +39,7 @@ it('fills nested keys missing from a published config', function (): void {
         ->and(config('oidc.mfa.amr_values'))->toBe(['mfa'])
         ->and(config('oidc.id_token.leeway'))->toBe(60)
         ->and(config('oidc.cache.jwks_ttl'))->toBe(3600)
+        ->and(config('oidc.backchannel_logout.rate_limit'))->toBe(600)
         ->and(config('oidc.backchannel_logout.max_retention_seconds'))->toBe(2_592_000);
 });
 
@@ -91,6 +92,35 @@ it('accepts configured zero, nullable values and replacement lists without norma
         ->and(config('oidc.mfa.max_age'))->toBe('0')
         ->and(config('oidc.post_logout_redirect_uri'))->toBeNull()
         ->and(config('oidc.roles.map'))->toBe(['maintainer' => ['editor', 'viewer']]);
+});
+
+it('keeps the published back-channel rate limit, including explicit opt-out', function (?int $rateLimit): void {
+    Config::set('oidc.backchannel_logout.rate_limit', $rateLimit);
+    app()->register(OidcServiceProvider::class, force: true);
+
+    expect(config('oidc.backchannel_logout.rate_limit'))->toBe($rateLimit);
+})->with(['custom rate' => 120, 'off' => null]);
+
+it('keeps null settings that fall back to an optional string default', function (): void {
+    Config::set([
+        'oidc.break_glass.query_parameter' => null,
+        'oidc.roles.claim' => null,
+        'oidc.routes.prefix' => null,
+        'oidc.users.email_column' => null,
+    ]);
+    app()->register(OidcServiceProvider::class, force: true);
+
+    expect(config('oidc.break_glass.query_parameter'))->toBeNull()
+        ->and(config('oidc.roles.claim'))->toBeNull()
+        ->and(config('oidc.routes.prefix'))->toBeNull()
+        ->and(config('oidc.users.email_column'))->toBeNull();
+});
+
+it('names the key and expected type without printing the invalid value', function (): void {
+    Config::set('oidc.backchannel_logout.rate_limit', 'unexpected-rate');
+
+    expect(fn () => app()->register(OidcServiceProvider::class, force: true))
+        ->toThrow(InvalidArgumentException::class, 'oidc.backchannel_logout.rate_limit must be a non-negative integer or null.');
 });
 
 it('reports the full key when a present config value is invalid at boot', function (string $key, mixed $value): void {

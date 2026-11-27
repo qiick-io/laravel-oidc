@@ -350,33 +350,52 @@ final class OidcServiceProvider extends ServiceProvider
                 }
 
                 $this->validateConfiguration($defaultValue, $value, $key);
-            } elseif (! $this->isValidConfigurationValue($key, $defaultValue, $value)) {
-                throw new InvalidArgumentException("{$key} has an invalid value.");
+            } else {
+                $this->validateConfigurationValue($key, $defaultValue, $value);
             }
         }
     }
 
-    private function isValidConfigurationValue(string $key, mixed $defaultValue, mixed $value): bool
+    private function validateConfigurationValue(string $key, mixed $defaultValue, mixed $value): void
     {
-        return match ($key) {
+        [$isValid, $expected] = match ($key) {
             'oidc.issuer', 'oidc.client_id', 'oidc.client_secret', 'oidc.button_label',
-            'oidc.http.discovery_base', 'oidc.http.server_origin' => $value === null || is_string($value),
-            'oidc.mfa.max_age' => $value === null || (is_string($value) && trim($value) === '')
-                || ((is_int($value) || is_string($value)) && filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]) !== false),
-            'oidc.backchannel_logout.revocation_ttl' => $value === null || (is_int($value) && $value >= 0),
-            'oidc.backchannel_logout.max_retention_seconds', 'oidc.http.max_response_bytes' => is_int($value) && $value > 0,
-            'oidc.token_endpoint_auth_method' => is_string($value) && TokenEndpointAuthMethodEnum::tryFrom(trim($value)) !== null,
-            'oidc.id_token.algorithms' => $this->isStringList($value) && $value !== []
-                && array_diff($value, JwtValidatorService::supportedAlgorithms()) === [],
-            'oidc.roles.map' => $this->isValidRoleMap($value),
+            'oidc.http.discovery_base', 'oidc.http.server_origin', 'oidc.break_glass.query_parameter',
+            'oidc.roles.claim', 'oidc.routes.prefix', 'oidc.users.email_column' => [
+                $value === null || is_string($value), 'a string or null',
+            ],
+            'oidc.mfa.max_age' => [
+                $value === null || (is_string($value) && trim($value) === '')
+                    || ((is_int($value) || is_string($value)) && filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]) !== false),
+                'a non-negative integer, an integer string, a blank string or null',
+            ],
+            'oidc.backchannel_logout.revocation_ttl', 'oidc.backchannel_logout.rate_limit' => [
+                $value === null || (is_int($value) && $value >= 0), 'a non-negative integer or null',
+            ],
+            'oidc.backchannel_logout.max_retention_seconds', 'oidc.http.max_response_bytes' => [
+                is_int($value) && $value > 0, 'a positive integer',
+            ],
+            'oidc.token_endpoint_auth_method' => [
+                is_string($value) && TokenEndpointAuthMethodEnum::tryFrom(trim($value)) !== null,
+                'client_secret_basic or client_secret_post',
+            ],
+            'oidc.id_token.algorithms' => [
+                $this->isStringList($value) && $value !== [] && array_diff($value, JwtValidatorService::supportedAlgorithms()) === [],
+                'a non-empty list of supported signing algorithms',
+            ],
+            'oidc.roles.map' => [$this->isValidRoleMap($value), 'a map of IdP role names to strings or lists of strings'],
             default => match (true) {
-                is_bool($defaultValue) => is_bool($value),
-                is_int($defaultValue) => is_int($value) && $value >= 0,
-                is_array($defaultValue) => $this->isStringList($value),
-                $defaultValue === null => $value === null || is_string($value),
-                default => is_string($value),
+                is_bool($defaultValue) => [is_bool($value), 'a boolean'],
+                is_int($defaultValue) => [is_int($value) && $value >= 0, 'a non-negative integer'],
+                is_array($defaultValue) => [$this->isStringList($value), 'a list of strings'],
+                $defaultValue === null => [$value === null || is_string($value), 'a string or null'],
+                default => [is_string($value), 'a string'],
             },
         };
+
+        if (! $isValid) {
+            throw new InvalidArgumentException("{$key} must be {$expected}.");
+        }
     }
 
     /** @phpstan-assert-if-true list<string> $value */
