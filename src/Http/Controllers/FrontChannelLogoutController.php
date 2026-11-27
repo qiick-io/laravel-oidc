@@ -59,14 +59,13 @@ final class FrontChannelLogoutController
             return $this->error(400, 'Front-channel logout [iss] does not match the configured issuer.');
         }
 
-        // Without a jti there is no replay key to collide with: every call stores a row.
         $sessionRevocation->revoke(new LogoutTokenData(
             issuer: $issuer,
             subject: null,
             sessionId: $sessionId,
             tokenId: null,
             expiresAt: null,
-            channel: 'frontchannel',
+            channel: LogoutTokenData::FrontChannel,
         ));
 
         $issuerOrigin = $this->issuerOrigin($issuer);
