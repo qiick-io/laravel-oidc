@@ -9,9 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
+- SSO now preserves a user's self-enrolled Fortify TOTP even when `oidc.mfa.required` is off. Signed IdP MFA still satisfies the challenge (#42).
 - OIDC requires `qiick/laravel-outbound` v0.2.0-beta.4 or a compatible 1.x
   release for its isolated IdP HTTP stack. Update products pinned to
   Outbound 0.1 before upgrading OIDC.
+
+### Security
+
+- Back-channel logout limits rejected requests per sender IP, with a default of
+  600 per minute (`oidc.backchannel_logout.rate_limit`). Valid logout requests
+  are accepted throughout a burst. A repeated front-channel logout acknowledges
+  an active revocation once and creates a fresh revocation after expiry (#83).
 
 ## [1.0.0-beta.8] - 2026-11-26
 

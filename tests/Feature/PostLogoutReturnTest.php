@@ -36,6 +36,8 @@ function endSessionParametersAndCookie(FakeIdentityProvider $identityProvider): 
 }
 
 it('sends a random state and returns to the package route by default', function (): void {
+    $this->freezeTime();
+
     [$parameters, $stateCookie] = endSessionParametersAndCookie(FakeIdentityProvider::fake());
 
     expect($parameters['post_logout_redirect_uri'])->toBe('http://localhost/auth/oidc/logged-out')

@@ -91,7 +91,7 @@ final readonly class BackChannelLogoutService
             sessionId: $sessionId,
             tokenId: $tokenId,
             expiresAt: is_int($expiresAtClaim) || is_float($expiresAtClaim) ? $expiresAtClaim : null,
-            channel: 'backchannel',
+            channel: LogoutTokenData::BackChannel,
         );
         $this->sessionRevocation->revoke($logout);
 
