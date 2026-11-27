@@ -270,6 +270,9 @@ return [
 
     'backchannel_logout' => [
 
+        /* Register hourly revocation pruning when OIDC is enabled. */
+        'schedule' => true,
+
         /* Rejected requests per minute per sender IP. Null disables the limit. */
         'rate_limit' => 600,
 
