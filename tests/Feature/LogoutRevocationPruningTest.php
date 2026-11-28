@@ -3,10 +3,13 @@
 declare(strict_types=1);
 
 use Carbon\CarbonImmutable;
+use Illuminate\Console\Scheduling\Event;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
+use Qiick\Oidc\Laravel\OidcServiceProvider;
 use Qiick\Oidc\Models\OidcLogoutRevocation;
 
 /*
@@ -54,6 +57,67 @@ it('keeps an expired row younger than the longest configured lifetime', function
 
     expect(OidcLogoutRevocation::query()->count())->toBe(1);
 });
+
+it('reports the same count as real pruning without deleting any rows in a dry run', function (): void {
+    revocationRow('expired-first', '2026-11-24 08:00:00', '2026-11-24 10:00:00');
+    revocationRow('expired-second', '2026-11-24 09:00:00', '2026-11-24 11:00:00');
+    revocationRow('recent', '2026-11-24 11:00:00', '2026-11-24 11:30:00');
+    revocationRow('live', '2026-11-24 09:00:00', '2026-11-24 13:00:00');
+
+    $this->artisan('oidc:prune-logout-revocations', ['--chunk' => 1, '--dry-run' => true])
+        ->expectsOutput('Would delete 2 expired logout revocation(s).')
+        ->assertSuccessful();
+
+    expect(OidcLogoutRevocation::query()->orderBy('id')->pluck('jti')->all())
+        ->toBe(['expired-first', 'expired-second', 'recent', 'live']);
+
+    $this->artisan('oidc:prune-logout-revocations', ['--chunk' => 1])
+        ->expectsOutput('Deleted 2 expired logout revocation(s).')
+        ->assertSuccessful();
+
+    expect(OidcLogoutRevocation::query()->orderBy('id')->pluck('jti')->all())
+        ->toBe(['recent', 'live']);
+});
+
+it('keeps a revocation refreshed after the batch selected it', function (): void {
+    $revocation = revocationRow('refreshing', '2026-11-24 08:00:00', '2026-11-24 10:00:00');
+    DB::listen(function (QueryExecuted $query) use ($revocation): void {
+        if (str_starts_with(strtolower($query->sql), 'select') && str_contains($query->sql, 'oidc_logout_revocations')) {
+            $revocation->update(['received_at' => now(), 'expires_at' => now()->addHours(2)]);
+        }
+    });
+
+    $this->artisan('oidc:prune-logout-revocations', ['--chunk' => 1])
+        ->expectsOutput('Deleted 0 expired logout revocation(s).')
+        ->assertSuccessful();
+
+    expect(OidcLogoutRevocation::query()->whereKey($revocation->id)->exists())->toBeTrue();
+});
+
+it('only schedules pruning when OIDC and its schedule are enabled', function (bool $isOidcEnabled, bool $isScheduleEnabled, bool $shouldSchedulePruning): void {
+    Config::set([
+        'oidc.enabled' => $isOidcEnabled,
+        'oidc.backchannel_logout.schedule' => $isScheduleEnabled,
+    ]);
+    app()->register(OidcServiceProvider::class, force: true);
+
+    $scheduledPrunes = array_values(array_filter(
+        app(Schedule::class)->events(),
+        fn (Event $event): bool => str_contains($event->command ?? '', 'oidc:prune-logout-revocations'),
+    ));
+
+    expect($scheduledPrunes)->toHaveCount($shouldSchedulePruning ? 1 : 0);
+
+    if ($shouldSchedulePruning) {
+        expect($scheduledPrunes[0]->expression)->toBe('0 * * * *')
+            ->and($scheduledPrunes[0]->onOneServer)->toBeTrue()
+            ->and($scheduledPrunes[0]->withoutOverlapping)->toBeTrue();
+    }
+})->with([
+    'both enabled' => [true, true, true],
+    'schedule disabled' => [true, false, false],
+    'OIDC disabled' => [false, true, false],
+]);
 
 it('falls back to batches of 1000, and of at least 1, for an unusable --chunk', function (string $chunk): void {
     revocationRow('expired', '2026-11-24 08:00:00', '2026-11-24 10:00:00');

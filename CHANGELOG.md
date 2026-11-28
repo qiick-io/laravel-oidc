@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Schedule logout revocation pruning hourly when OIDC is enabled, and support `--dry-run` to preview eligible rows.
+
 ## [1.0.0-beta.9] - 2026-11-27
 
 ### Upgrade notes

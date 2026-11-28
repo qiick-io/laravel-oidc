@@ -40,6 +40,7 @@ it('fills nested keys missing from a published config', function (): void {
         ->and(config('oidc.mfa.amr_values'))->toBe([])
         ->and(config('oidc.id_token.leeway'))->toBe(60)
         ->and(config('oidc.cache.jwks_ttl'))->toBe(3600)
+        ->and(config('oidc.backchannel_logout.schedule'))->toBeTrue()
         ->and(config('oidc.backchannel_logout.rate_limit'))->toBe(600)
         ->and(config('oidc.backchannel_logout.max_retention_seconds'))->toBe(2_592_000);
 });
