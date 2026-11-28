@@ -16,6 +16,11 @@ updates:
     groups:
       composer-minor-patch:
         update-types: ["minor", "patch"]
+    # phpseclib 4 moves every class to the phpseclib4 namespace, which the
+    # validator and firebase/php-jwt do not support yet.
+    ignore:
+      - dependency-name: "phpseclib/phpseclib"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     target-branch: "develop"
